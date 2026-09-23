@@ -1,0 +1,14 @@
+# GPT-SoVITS 本地服务的运行依赖。
+#
+# 重要：本服务**应该**用 GPT-SoVITS 自带解释器运行 ——
+# 那个解释器里才有 torch / transformers / soundfile 等模型依赖。
+# 整合包 `runtime/` 已自带 fastapi / uvicorn / pydantic，开箱即可用。
+#
+# 只有当你在自己的 Python 环境里跑（且该环境已装好 GPT-SoVITS 的完整依赖）时，
+# 才需要额外安装下面这些；scripts/start.ps1 / start.sh 会在需要时自动安装。
+fastapi>=0.110,<1.0
+uvicorn[standard]>=0.20,<1.0
+pydantic>=2.6,<3.0
+python-multipart>=0.0.9,<1.0
+# 训练阶段读取官方 YAML 配置模板；官方环境本身已含 PyYAML
+PyYAML>=6.0

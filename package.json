@@ -1,0 +1,27 @@
+{
+  "name": "voice-workbench",
+  "version": "2.0.0",
+  "private": true,
+  "description": "本地语音工作台：MiMo 云端 TTS + GPT-SoVITS 本地推理/训练/批量合成，全部在本机运行",
+  "scripts": {
+    "install:all": "npm install --no-fund --no-audit && npm --prefix app install && npm --prefix server install",
+    "dev": "concurrently -n sovits,server,app -c yellow,magenta,cyan \"npm run dev:sovits -- --no-open\" \"npm --prefix server run dev\" \"npm --prefix app run dev\"",
+    "dev:cloud": "concurrently -n server,app -c magenta,cyan \"npm --prefix server run dev\" \"npm --prefix app run dev\"",
+    "dev:server": "npm --prefix server run dev",
+    "dev:app": "npm --prefix app run dev",
+    "dev:sovits": "node scripts/sovits.mjs",
+    "sovits:check": "node scripts/sovits.mjs --check",
+    "build": "npm --prefix app run build && npm --prefix server run build",
+    "build:app": "npm --prefix app run build",
+    "build:server": "npm --prefix server run build",
+    "start": "npm --prefix server run start",
+    "preview": "npm run build && concurrently -n sovits,server -c yellow,magenta \"npm run dev:sovits -- --no-open\" \"npm --prefix server run start\"",
+    "typecheck": "npm --prefix app run typecheck && npm --prefix server run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=18.17"
+  }
+}

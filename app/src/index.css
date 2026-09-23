@@ -1,0 +1,140 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 33% 99%;
+    --foreground: 240 18% 12%;
+    --card: 0 0% 100%;
+    --card-foreground: 240 18% 12%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 18% 12%;
+    --primary: 258 85% 60%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 250 30% 96%;
+    --secondary-foreground: 258 40% 30%;
+    --muted: 250 24% 96%;
+    --muted-foreground: 245 12% 46%;
+    --accent: 189 90% 94%;
+    --accent-foreground: 191 80% 26%;
+    --destructive: 0 78% 57%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 250 22% 90%;
+    --input: 250 22% 90%;
+    --ring: 258 85% 60%;
+    --radius: 0.75rem;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 245 14% 32%;
+    --sidebar-primary: 258 85% 60%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 250 32% 96%;
+    --sidebar-accent-foreground: 258 45% 32%;
+    --sidebar-border: 250 22% 92%;
+    --sidebar-ring: 258 85% 60%;
+  }
+
+  .dark {
+    --background: 245 24% 8%;
+    --foreground: 240 20% 96%;
+    --card: 245 22% 11%;
+    --card-foreground: 240 20% 96%;
+    --popover: 245 22% 11%;
+    --popover-foreground: 240 20% 96%;
+    --primary: 258 88% 68%;
+    --primary-foreground: 250 40% 10%;
+    --secondary: 245 18% 17%;
+    --secondary-foreground: 240 20% 94%;
+    --muted: 245 18% 17%;
+    --muted-foreground: 245 12% 62%;
+    --accent: 191 45% 20%;
+    --accent-foreground: 186 90% 82%;
+    --destructive: 0 62% 52%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 245 16% 20%;
+    --input: 245 16% 22%;
+    --ring: 258 88% 68%;
+    --sidebar-background: 245 24% 10%;
+    --sidebar-foreground: 240 16% 84%;
+    --sidebar-primary: 258 88% 68%;
+    --sidebar-primary-foreground: 250 40% 10%;
+    --sidebar-accent: 245 18% 17%;
+    --sidebar-accent-foreground: 240 20% 94%;
+    --sidebar-border: 245 16% 18%;
+    --sidebar-ring: 258 88% 68%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family:
+      'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+      'Microsoft YaHei', sans-serif;
+  }
+}
+
+@layer utilities {
+  /* 品牌渐变文字 */
+  .text-gradient {
+    @apply bg-gradient-to-r from-violet-600 via-indigo-500 to-cyan-500 bg-clip-text text-transparent;
+  }
+  .dark .text-gradient {
+    @apply from-violet-400 via-indigo-300 to-cyan-300;
+  }
+
+  /* 音频播放中的动态波形 */
+  .wave-bar {
+    @apply w-1 rounded-full bg-current;
+    animation: wave 1s ease-in-out infinite;
+  }
+
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--border)) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply rounded-full bg-border;
+  }
+  .scrollbar-thin::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}
+
+@keyframes wave {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgb(139 92 246 / 0.45);
+  }
+  70% {
+    box-shadow: 0 0 0 12px rgb(139 92 246 / 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(139 92 246 / 0);
+  }
+}
+
+.recording-pulse {
+  animation: pulse-ring 1.6s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
