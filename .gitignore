@@ -24,6 +24,7 @@ Thumbs.db
 
 # 缓存
 .cache/
+.vite/
 *.tsbuildinfo
 __pycache__/
 *.pyc
