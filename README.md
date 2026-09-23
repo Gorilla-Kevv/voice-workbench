@@ -6,7 +6,9 @@
 - 想开箱即用、音色稳定 → 用 **MiMo（云端）**，填一个 API Key 就能合成；
 - 想做日语/韩语、克隆自己的声音、批量做有声书、或者要数据不出机 → 用 **GPT-SoVITS（本地）**。
 
-> 本项目**只面向本地部署**。线上一版（GitHub Pages 纯静态）保留在原仓库中独立维护，
+> 本项目**只面向本地部署**。线上一版（GitHub Pages 纯静态）保留在
+> [mimo-voice-studio](https://github.com/Gorilla-Kevv/mimo-voice-studio) 独立维护，
+> 站点：https://gorilla-kevv.github.io/mimo-voice-studio/
 > 本仓库不再包含任何线上部署配置，也无需线上服务器或网络资源。
 
 ---

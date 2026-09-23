@@ -1,0 +1,11 @@
+# 统一换行符：版本库内一律存 LF，检出时按平台自动转换，
+# 避免 Windows（CRLF）与 Linux/macOS（LF）来回协作时整片文件被判为改动。
+* text=auto
+
+# 二进制资源不参与换行转换
+*.png binary
+*.ico binary
+*.jpg binary
+*.jpeg binary
+*.woff binary
+*.woff2 binary
