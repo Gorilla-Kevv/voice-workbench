@@ -6,6 +6,43 @@ import { useIsMobile } from '@/hooks/use-mobile';
 import { lookupTerm } from '@/lib/glossary';
 import { cn } from '@/lib/utils';
 
+/**
+ * 毛玻璃（glassmorphism）外观。
+ *
+ * 四层叠加，缺一不像玻璃：
+ *
+ * 1. **半透明底色** —— 让后方内容隐约透出，但不能透到干扰阅读；
+ * 2. **高斯模糊** —— 把透出来的内容柔化成背景纹理，这是「毛」的来源；
+ * 3. **亮色细描边** —— 玻璃边缘的折射感，同时划清浮层与背景的界限；
+ * 4. **柔和投影** —— 把浮层从页面里「抬」起来，避免糊在内容上。
+ *
+ * 两个必须处理的现实问题：
+ *
+ * - **浏览器不支持 backdrop-filter 时**：模糊失效，只剩半透明 —— 文字会直接压在页面内容上，
+ *   对比度不可控。因此用 `supports-[backdrop-filter]:` 在这类浏览器上把底色调实
+ *   （可读性优先于质感）。
+ *
+ * - **深浅主题**：底色走 CSS 变量（`bg-background`），亮/暗自动跟随；
+ *   描边用白色半透明，两种主题下都能描出玻璃边缘，暗色下再减弱一点，避免边缘发灰。
+ */
+const GLASS_SURFACE = cn(
+  // 底色：默认偏实（降级安全），支持模糊时更透
+  'bg-background/85 supports-[backdrop-filter]:bg-background/60',
+  // 高斯模糊 + 轻微增饱和，让透出的色彩不至于发灰
+  'backdrop-blur-md backdrop-saturate-150',
+  // 玻璃边缘与投影
+  'border border-white/25 shadow-lg shadow-black/10',
+  'dark:border-white/15',
+);
+
+/**
+ * 浮层宽度。
+ *
+ * 用 `min()` 而不是固定 rem：窄屏（手机竖屏）上 20rem 会顶到屏幕外，
+ * 这里保证两侧各留 1rem 安全边距，尺寸自适应。
+ */
+const SURFACE_WIDTH = 'max-w-[min(20rem,calc(100vw-2rem))]';
+
 interface TermTipProps {
   /** 术语，需与术语表（lib/glossary）里的键名一致 */
   term: string;
@@ -47,11 +84,18 @@ export function TermTip({ term, children, className }: TermTipProps) {
     </span>
   );
 
+  /**
+   * 正文。
+   *
+   * 刻意不用 opacity 调层次 —— 半透明背景上的半透明文字会双重削弱对比度，
+   * 在毛玻璃上尤其明显。改用主题色：正文用 foreground，次要信息用 muted-foreground，
+   * 这两个变量在亮/暗主题下都保证过对比度。
+   */
   const body = (
-    <div className="space-y-1 text-xs leading-relaxed">
+    <div className="space-y-1 text-xs leading-relaxed text-foreground">
       <p className="font-medium">{entry.term}</p>
-      <p className="opacity-90">{entry.definition}</p>
-      {entry.impact ? <p className="opacity-75">{entry.impact}</p> : null}
+      <p className="text-foreground/90">{entry.definition}</p>
+      {entry.impact ? <p className="text-muted-foreground">{entry.impact}</p> : null}
     </div>
   );
 
@@ -59,7 +103,13 @@ export function TermTip({ term, children, className }: TermTipProps) {
     return (
       <Popover>
         <PopoverTrigger asChild>{trigger}</PopoverTrigger>
-        <PopoverContent className="w-72">{body}</PopoverContent>
+        <PopoverContent
+          align="start"
+          // 触屏上没有精确的指针位置，贴着术语左对齐更自然；内边距也比默认小一点
+          className={cn(GLASS_SURFACE, SURFACE_WIDTH, 'w-auto p-3')}
+        >
+          {body}
+        </PopoverContent>
       </Popover>
     );
   }
@@ -67,7 +117,16 @@ export function TermTip({ term, children, className }: TermTipProps) {
   return (
     <Tooltip>
       <TooltipTrigger asChild>{trigger}</TooltipTrigger>
-      <TooltipContent className="max-w-xs">{body}</TooltipContent>
+      <TooltipContent
+        className={cn(
+          GLASS_SURFACE,
+          SURFACE_WIDTH,
+          // 箭头在毛玻璃上会是实色一块，反而破坏质感 —— 直接去掉
+          '[&>svg]:hidden',
+        )}
+      >
+        {body}
+      </TooltipContent>
     </Tooltip>
   );
 }
