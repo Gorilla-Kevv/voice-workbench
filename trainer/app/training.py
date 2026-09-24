@@ -1,9 +1,13 @@
 """训练流水线编排。
 
-完整对齐官方 WebUI 的两页流程（「0-前置工具」+「1-训练」），共 11 个阶段：
+完整对齐官方 WebUI 的两页流程（「0-前置工具」+「1-训练」），共 12 个阶段：
 
-    import → denoise → slice → asr → list → text → hubert → sv → semantic → s1 → s2
-    语料导入   降噪      切分    识别   清单   分词     HuBERT   说话人   语义      GPT   SoVITS
+    import → uvr → denoise → slice → asr → list → text → hubert → sv → semantic → s1 → s2
+    语料导入  分离    降噪      切分    识别   清单   分词     HuBERT   说话人   语义      GPT   SoVITS
+
+其中 `uvr` 是官方「0a-UVR5 人声伴奏分离 & 去混响去延迟」：官方只给了 Gradio 版，
+我们用 `trainer/tools/uvr_cli.py` 做非交互封装，**算法本体仍全部调用官方**
+`tools/uvr5/vr.py` / `mdxnet.py` / `bsroformer.py`。
 
 几个必须讲清楚的工程事实（都来自官方源码，不是我们的发明）：
 
@@ -54,6 +58,12 @@ class Stage:
 
 STAGES: Tuple[Stage, ...] = (
     Stage("import", "语料导入", "corpus", "收集音频、识别可用的同名文本"),
+    Stage(
+        "uvr",
+        "人声分离 / 去混响",
+        "corpus",
+        "UVR5：人声伴奏分离、去混响、去延迟（tools/uvr_cli.py → 官方 tools/uvr5）",
+    ),
     Stage("denoise", "语音降噪", "corpus", "tools/cmd-denoise.py"),
     Stage("slice", "音频切分", "corpus", "tools/slice_audio.py，切成 5~15 秒片段"),
     Stage("asr", "语音转文本", "corpus", "FunASR / faster-whisper，同时产出训练清单"),
@@ -71,6 +81,8 @@ _STAGE_BY_KEY = {stage.key: stage for stage in STAGES}
 #: 每个阶段的权重，用于把「步骤数」换算成更接近真实耗时的进度
 _STAGE_WEIGHT = {
     "import": 0.02,
+    # UVR5 是按音频逐条做频谱推理的，比切分慢得多，权重给高一些
+    "uvr": 0.10,
     "denoise": 0.06,
     "slice": 0.05,
     "asr": 0.14,
@@ -184,11 +196,14 @@ class TrainEngine:
             )
         home = installation.home
 
-        if request.version not in catalog.VERSIONS:
+        # 同样做大小写不敏感归一化（前端 model id 是小写，版本名是混合大小写）
+        resolved_version = catalog.resolve_version(request.version)
+        if resolved_version is None:
             raise BadRequestError(
                 "未知模型版本：%s" % request.version,
                 hint="可选值：%s" % "、".join(catalog.VERSIONS),
             )
+        request.version = resolved_version
 
         context = self._build_context(request, home, installation)
         skipped: List[str] = []
@@ -233,6 +248,11 @@ class TrainEngine:
 
         # ---------- 组装步骤 ----------
         steps.append(Step(stage=_STAGE_BY_KEY["import"], note="扫描语料并准备工作目录"))
+
+        if request.run_uvr:
+            steps.append(self._step_uvr(request, context))
+        else:
+            skipped.append("人声分离（UVR5）：未勾选")
 
         if request.run_denoise:
             steps.append(self._step_denoise(request, context))
@@ -354,6 +374,8 @@ class TrainEngine:
             return dataset_dir / "sliced"
         if request.run_denoise:
             return dataset_dir / "denoised"
+        if request.run_uvr:
+            return dataset_dir / "uvr_vocal"
         return audio_dir
 
     def _stage_dir(self, request: TrainRequest, context: TrainContext) -> Path:
@@ -373,6 +395,104 @@ class TrainEngine:
 
     # ---------- 各阶段 ----------
 
+    # ---------- UVR5 人声分离 ----------
+
+    def _uvr_vocal_dir(self, context: TrainContext) -> Path:
+        return context.dataset_dir / "uvr_vocal"
+
+    def _uvr_ins_dir(self, context: TrainContext) -> Path:
+        return context.dataset_dir / "uvr_ins"
+
+    def _corpus_root(self, request: TrainRequest, context: TrainContext) -> Path:
+        """预处理链的实际起点：人声分离的输出优先，否则用原始语料。"""
+        if request.run_uvr:
+            return self._uvr_vocal_dir(context)
+        return context.audio_dir
+
+    def _step_uvr(self, request: TrainRequest, context: TrainContext) -> Step:
+        """UVR5 人声/伴奏分离 & 去混响 & 去延迟。
+
+        官方只给了 Gradio 版（`tools/uvr5/webui.py`），没法集成进流水线；
+        我们用 `trainer/tools/uvr_cli.py` 做非交互封装，
+        推理本体仍然是官方的 `tools/uvr5/vr.py` / `mdxnet.py` / `bsroformer.py`，
+        不改动官方任何一行代码。
+        """
+        cli = Path(__file__).resolve().parent.parent / "tools" / "uvr_cli.py"
+        if not cli.is_file():
+            raise BadRequestError(
+                "缺少 UVR5 封装脚本：%s" % cli,
+                hint="请确认 trainer/tools/uvr_cli.py 存在。",
+                code="SCRIPT_MISSING",
+            )
+
+        model = (request.uvr_model or "").strip()
+        if not model:
+            raise BadRequestError(
+                "未指定 UVR5 模型",
+                hint="先调用 GET /v1/uvr/models 拿本机可用模型，再填进 uvr_model。",
+                code="UVR_MODEL_REQUIRED",
+            )
+
+        # 只认磁盘上真实存在的模型。让用户在选择阶段就看到「为什么这个选不了」，
+        # 而不是提交任务后跑一半才炸 —— 模型扫描见 catalog.list_uvr_models。
+        available = catalog.list_uvr_models(context.home)
+        known = next((item for item in available if item["id"] == model), None)
+        if available and known is None:
+            raise BadRequestError(
+                "本机没有 UVR5 模型「%s」" % model,
+                hint="可用模型：%s" % "、".join(item["id"] for item in available),
+                code="UVR_MODEL_MISSING",
+            )
+        if known is not None and not known["available"]:
+            raise BadRequestError(
+                "模型「%s」缺少同名配置文件，无法加载" % model,
+                hint="把对应的 .yaml 放进 %s 后重试。"
+                % (context.home / Path(catalog.UVR5_WEIGHTS_DIR)),
+                code="UVR_CONFIG_MISSING",
+            )
+
+        if not (request.uvr_keep_vocal or request.uvr_keep_ins):
+            raise BadRequestError(
+                "人声分离至少要保留一个输出轨道",
+                hint="做 TTS 语料把 uvr_keep_vocal 设为 true；想同时留伴奏再加 uvr_keep_ins。",
+                code="UVR_NO_OUTPUT",
+            )
+
+        gpu_list = _gpu_list(request.gpu_ids)
+        # _is_half() 的判据其实就是「有没有可用的 GPU」，这里沿用
+        has_gpu = self._is_half()
+        device = ("cuda:%s" % gpu_list[0]) if has_gpu else "cpu"
+
+        cmd = [
+            _py(),
+            "-s",
+            str(cli),
+            "--home",
+            str(context.home),
+            "--model",
+            model,
+            "-i",
+            str(context.audio_dir),
+            "--agg",
+            str(int(request.uvr_agg)),
+            "--format",
+            request.uvr_format,
+            "--device",
+            device,
+        ]
+        if request.uvr_keep_vocal:
+            cmd += ["-o-vocal", str(self._uvr_vocal_dir(context))]
+        if request.uvr_keep_ins:
+            cmd += ["-o-ins", str(self._uvr_ins_dir(context))]
+        if has_gpu:
+            cmd.append("--half")
+
+        return Step(
+            stage=_STAGE_BY_KEY["uvr"],
+            cmd=cmd,
+            env={"_CUDA_VISIBLE_DEVICES": ",".join(gpu_list)},
+        )
+
     def _step_denoise(self, request: TrainRequest, context: TrainContext) -> Step:
         script = self._tool(request, context, "denoise")
         return Step(
@@ -382,7 +502,7 @@ class TrainEngine:
                 "-s",
                 str(script),
                 "-i",
-                str(context.audio_dir),
+                str(self._corpus_root(request, context)),
                 "-o",
                 str(context.dataset_dir / "denoised"),
                 "-p",
@@ -418,11 +538,11 @@ class TrainEngine:
         return Step(stage=_STAGE_BY_KEY["slice"], cmd=shards[0], shards=shards)
 
     def _slice_input(self, request: TrainRequest, context: TrainContext) -> Path:
-        """切分的输入：降噪后的目录优先，否则用原始语料目录。"""
+        """切分的输入：降噪后的目录优先，其次人声分离的输出，否则原始语料目录。"""
         denoised = context.dataset_dir / "denoised"
         if request.run_denoise and denoised.is_dir():
             return denoised
-        return context.audio_dir
+        return self._corpus_root(request, context)
 
     def _step_asr(self, request: TrainRequest, context: TrainContext) -> Step:
         backend = catalog.ASR_BACKENDS[request.asr_backend]
@@ -502,6 +622,23 @@ class TrainEngine:
 
         return steps
 
+    def _resolve_pretrained(self, override: Optional[str], default: str, label: str) -> str:
+        """用户指定的预训练权重优先，否则用整合包自带的官方权重。
+
+        路径错误在**派发前**就拦下：这类问题如果留到训练脚本里，往往要跑到
+        加载权重、甚至存盘时才炸，几百行 traceback 里找真正的原因代价太高。
+        """
+        if not override or not override.strip():
+            return default
+        candidate = Path(override.strip()).expanduser()
+        if not candidate.is_file():
+            raise BadRequestError(
+                "%s 不存在：%s" % (label, candidate),
+                hint="留空即可使用整合包自带的官方权重；自定义时请填绝对路径。",
+                code="PRETRAINED_NOT_FOUND",
+            )
+        return str(candidate)
+
     def _step_s1(self, request: TrainRequest, context: TrainContext, installation: Any) -> Step:
         script = self._ensure_file(context, catalog.S1_TRAIN_SCRIPT, "GPT 训练脚本")
         template = self._ensure_file(context, catalog.s1_config_template(context.version), "GPT 训练配置模板")
@@ -525,7 +662,11 @@ class TrainEngine:
         train["half_weights_save_dir"] = str(installation.path(catalog.GPT_WEIGHT_DIRS[context.version]))
         train["exp_name"] = context.name
 
-        data["pretrained_s1"] = str(installation.path(catalog.PRETRAINED_GPT[context.version]))
+        data["pretrained_s1"] = self._resolve_pretrained(
+            request.pretrained_gpt_path,
+            str(installation.path(catalog.PRETRAINED_GPT[context.version])),
+            "GPT 预训练权重",
+        )
         data["train_semantic_path"] = str(context.dataset_file_semantic)
         data["train_phoneme_path"] = str(context.dataset_file_phoneme)
         data["output_dir"] = str(s1_dir / ("logs_s1_%s" % context.version))
@@ -557,9 +698,17 @@ class TrainEngine:
         )
         train["epochs"] = request.epochs_s2
         train["text_low_lr_rate"] = request.text_low_lr_rate
-        train["pretrained_s2G"] = str(installation.path(catalog.PRETRAINED_SOVITS_G[context.version]))
+        train["pretrained_s2G"] = self._resolve_pretrained(
+            request.pretrained_sovits_path,
+            str(installation.path(catalog.PRETRAINED_SOVITS_G[context.version])),
+            "SoVITS 预训练权重",
+        )
         pretrained_d = catalog.PRETRAINED_SOVITS_D.get(context.version, "")
-        train["pretrained_s2D"] = str(installation.path(pretrained_d)) if pretrained_d else ""
+        default_d = str(installation.path(pretrained_d)) if pretrained_d else ""
+        # 判别器可以留空（官方模板里 v1 就没有），所以只有用户显式指定时才校验
+        train["pretrained_s2D"] = default_d if not request.pretrained_sovits_d_path else self._resolve_pretrained(
+            request.pretrained_sovits_d_path, default_d, "SoVITS 判别器权重"
+        )
         train["if_save_latest"] = request.if_save_latest
         train["if_save_every_weights"] = request.if_save_every_weights
         train["save_every_epoch"] = request.save_every_epoch_s2
@@ -966,6 +1115,10 @@ class TrainEngine:
             "version": context.version,
             "workdir": str(context.workdir),
         }
+        # 训练清单是「标注校对」的入口。ASR 的转写必然有错字，
+        # 而错字会被直接学进模型 —— 必须能把它拉出来逐条听、逐条改。
+        if context.list_path:
+            artifacts["list_file"] = str(context.list_path)
         for kind, directory in (
             ("gpt_model", catalog.GPT_WEIGHT_DIRS[context.version]),
             ("sovits_model", catalog.SOVITS_WEIGHT_DIRS[context.version]),
@@ -1069,6 +1222,9 @@ def step_stages(request: TrainRequest) -> List[JobStage]:
         if stage.key == "asr":
             if request.run_asr:
                 stages.append(JobStage(key=stage.key, label=stage.label))
+            continue
+        if request.run_uvr and stage.key == "uvr":
+            stages.append(JobStage(key=stage.key, label=stage.label))
             continue
         if request.run_denoise and stage.key == "denoise":
             stages.append(JobStage(key=stage.key, label=stage.label))

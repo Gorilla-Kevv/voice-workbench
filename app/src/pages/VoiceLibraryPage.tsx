@@ -111,7 +111,9 @@ export function VoiceLibraryPage() {
     const draft = {
       name: name.trim(),
       prompt_text: promptText.trim(),
-      prompt_lang: promptLang,
+      // 必须兜底：FormData.append 会把 undefined 转成字符串 "undefined"，
+      // 存进音色库后每次合成都会报「不支持合成语种 undefined」。
+      prompt_lang: promptLang || 'zh',
       note: note.trim(),
       tags: tags.split(/[,，\s]+/).filter(Boolean),
     };
@@ -148,7 +150,7 @@ export function VoiceLibraryPage() {
       const result = await sovitsApi.updateVoice(editing.id, {
         name: editing.name,
         prompt_text: editing.prompt_text,
-        prompt_lang: editing.prompt_lang,
+        prompt_lang: editing.prompt_lang || 'zh',
         note: editing.note,
       });
       toast.success('已更新', { description: result.voice.warnings[0] ?? '音色信息已保存' });

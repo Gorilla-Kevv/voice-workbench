@@ -180,14 +180,16 @@ class Pipeline:
         """登记用户意图。真正的加载发生在下一次合成（或显式 warmup）。"""
         with self._build_lock:
             if version:
-                if version not in catalog.VERSIONS:
+                # 大小写不敏感地归一化一次：前端 model id 是小写，版本名是混合大小写
+                resolved = catalog.resolve_version(version)
+                if resolved is None:
                     raise EnvironmentError_(
                         "未知模型版本：%s" % version,
                         hint="可选值：%s" % "、".join(catalog.VERSIONS),
                         code="BAD_VERSION",
                         status=400,
                     )
-                self._target_version = version
+                self._target_version = resolved
                 # 版本变了，之前选定的权重不再适用
                 if gpt is None and sovits is None:
                     self._target_gpt = None

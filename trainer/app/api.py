@@ -24,6 +24,7 @@ import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
+from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
@@ -32,12 +33,14 @@ from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from . import __version__
+from . import annotations
 from .batch import BatchRunner
 from .config import AUDIO_SUFFIXES, Settings
-from .errors import NotFoundError, SovitsError
+from .errors import BadRequestError, NotFoundError, SovitsError
 from .inference import SynthesisEngine
 from .jobs import Job, JobKind, JobState, JobStore
 from .models import (
+    AnnotationSaveRequest,
     BatchRequest,
     CancelRequest,
     HealthResponse,
@@ -216,6 +219,7 @@ def create_app(ctx: Context) -> FastAPI:
     _register_voices(app, ctx)
     _register_tts(app, ctx)
     _register_train(app, ctx)
+    _register_annotations(app, ctx)
     _register_jobs(app, ctx)
     _register_errors(app, ctx)
     return app
@@ -257,6 +261,34 @@ def _register_meta(app: FastAPI, ctx: Context) -> None:
     @app.get("/v1/catalog", tags=["meta"])
     def get_catalog() -> Any:
         return {"ok": True, "catalog": catalog.to_public_catalog()}
+
+    @app.get("/v1/uvr/models", tags=["meta"])
+    def list_uvr_models() -> Any:
+        """列出本机**实际可用**的 UVR5 模型（人声/伴奏分离、去混响、去延迟）。
+
+        官方只给了 Gradio 界面（tools/uvr5/webui.py），没法集成；我们用自己的
+        `trainer/tools/uvr_cli.py` 调官方算法本体，模型清单则从
+        `tools/uvr5/uvr5_weights` 扫描。
+
+        只列磁盘上真实存在的：比如 BS-RoFormer 缺同名的 .yaml 时会被标成
+        `available=false` 并说明原因 —— 这比给一个点下去才报错的下拉框要好。
+        """
+        installation = bootstrap.current()
+        if installation is None:
+            raise SovitsError(
+                "未定位到 GPT-SoVITS 安装目录",
+                hint="设置 GPT_SOVITS_HOME 后重启服务。",
+                code="ENV_NOT_READY",
+                status=503,
+            )
+        models = catalog.list_uvr_models(installation.home)
+        return {
+            "ok": True,
+            "models": models,
+            "total": len(models),
+            "formats": list(catalog.UVR5_FORMATS),
+            "kinds": catalog.UVR5_MODEL_KINDS,
+        }
 
     @app.get("/v1/env", tags=["meta"])
     def get_env() -> Any:
@@ -733,6 +765,106 @@ def _register_train(app: FastAPI, ctx: Context) -> None:
             "rejected": rejected,
             "message": "已保存 %d 个文件，可直接用该目录发起训练" % len(saved),
         }
+
+
+# --------------------------------------------------------------------------
+# 标注校对
+# --------------------------------------------------------------------------
+
+
+def _register_annotations(app: FastAPI, ctx: Context) -> None:
+    """ASR 结果的逐条校对。
+
+    为什么必须有这一步：ASR 的错字会被**直接学进模型**，表现为某些字读音怪异，
+    而且事后极难定位。官方用 `tools/subfix_webui.py`（Gradio）做这件事，
+    集成不进来 —— 于是数据层抽到 `app/annotations.py`，界面由前端承担。
+    """
+
+    def _list_file_of(job_id: str) -> Path:
+        job = ctx.store.get(job_id)
+        if job is None:
+            raise NotFoundError("任务不存在：%s" % job_id)
+        raw = (job.artifacts or {}).get("list_file")
+        if not raw:
+            raise BadRequestError(
+                "该任务没有产出训练清单",
+                hint="只有跑过「语音转文本」或「生成训练清单」的任务才能校对。",
+                code="NO_LIST",
+            )
+        return annotations.resolve_list_path(raw, Path(ctx.settings.data_dir))
+
+    @app.get("/v1/annotations/{job_id}", tags=["train"])
+    def list_annotations(job_id: str) -> Any:
+        path = _list_file_of(job_id)
+        items = annotations.parse_list(path)
+        return {
+            "ok": True,
+            "job_id": job_id,
+            "list_file": str(path),
+            "items": [
+                {
+                    "index": item.index,
+                    "audio_path": item.audio_path,
+                    "audio_url": "/v1/annotations/audio?path=%s" % quote(item.audio_path, safe=""),
+                    "speaker": item.speaker,
+                    "language": item.language,
+                    "text": item.text,
+                    "exists": item.exists,
+                }
+                for item in items
+            ],
+            "total": len(items),
+            "missing_audio": sum(1 for item in items if not item.exists),
+        }
+
+    @app.put("/v1/annotations/{job_id}", tags=["train"])
+    def save_annotations(job_id: str, payload: AnnotationSaveRequest) -> Any:
+        source = _list_file_of(job_id)
+        items = annotations.parse_list(source)
+
+        # 只应用传上来的改动：没传的保持原样。
+        # 几百条的清单全量回传既浪费，也容易因为并发覆盖掉别人的修改。
+        changed = 0
+        for change in payload.items:
+            if 0 <= change.index < len(items):
+                items[change.index].text = change.text
+                items[change.index].skip = change.skip
+                changed += 1
+
+        kept = [item for item in items if not item.skip]
+        dropped = len(items) - len(kept)
+
+        target = source
+        if payload.save_as and payload.save_as.strip():
+            target = annotations.resolve_list_path(
+                payload.save_as.strip(), Path(ctx.settings.data_dir), "另存的清单"
+            )
+        annotations.write_list(target, kept)
+
+        return {
+            "ok": True,
+            "list_file": str(target),
+            "total": len(kept),
+            "changed": changed,
+            "dropped": dropped,
+            "message": "已保存 %d 条%s" % (len(kept), ("，丢弃 %d 条" % dropped) if dropped else ""),
+        }
+
+    @app.get("/v1/annotations/audio", tags=["train"])
+    def get_annotation_audio(path: str) -> Any:
+        """回放清单里某条对应的音频。
+
+        清单存的是绝对路径，而它可能来自用户（`list_file`），
+        所以必须校验落在项目数据目录内 —— 否则一个带 `..` 的路径
+        就能把整块磁盘读出来。
+        """
+        target = annotations.resolve_list_path(path, Path(ctx.settings.data_dir), "音频")
+        if not target.is_file():
+            raise NotFoundError(
+                "音频文件不存在：%s" % target.name,
+                hint="原始音频可能被清理或移动了，这条标注建议直接丢弃。",
+            )
+        return FileResponse(target, media_type=_guess_audio_type(target.suffix), filename=target.name)
 
 
 # --------------------------------------------------------------------------

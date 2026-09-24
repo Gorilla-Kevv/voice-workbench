@@ -17,7 +17,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 # --------------------------------------------------------------------------
 # 模型版本
@@ -84,6 +85,28 @@ TRAIN_LANGUAGES: Tuple[str, ...] = ("zh", "en", "ja", "ko", "yue")
 def languages_for(version: str) -> List[str]:
     """返回指定版本支持的推理语言。"""
     return list(V1_LANGUAGES if version == "v1" else V2_LANGUAGES)
+
+
+def resolve_version(name: str) -> Optional[str]:
+    """大小写不敏感地把版本名解析成规范写法。
+
+    为什么需要：版本名是混合大小写（`v2ProPlus`），而前端 model id 是小写
+    （`gpt-sovits-v2proplus`）。只做 `in VERSIONS` 校验的话，用户会看到
+    「未知模型版本：v2proplus」—— 对着一堆看起来一模一样的选项发懵。
+    解析不出来返回 None，由调用方决定报什么错。
+    """
+    lowered = (name or "").strip().lower()
+    return next((item for item in VERSIONS if item.lower() == lowered), None)
+
+
+def is_supported_language(code: str, version: str = DEFAULT_VERSION) -> bool:
+    """判断语种代码是否被指定版本接受。
+
+    存在的原因是**外部传入的值必须被校验**：音色库曾经直接存下
+    `prompt_lang` 的字面量 `"undefined"`（前端把未填的字段塞进 FormData 时会这样），
+    之后每次合成都报「不支持合成语种 undefined」。写入端与读取端都要用它兜底。
+    """
+    return (code or "").strip().lower() in languages_for(version)
 
 
 def supports_streaming(version: str) -> bool:
@@ -234,12 +257,17 @@ SLICE_DEFAULTS: Dict[str, float] = {
     "n_parts": 1,
 }
 
+# precisions 取自官方 `tools/asr/config.py::asr_dict`，不是猜的：
+#   FunASR 只给了 float32（且该脚本的 -p 参数官方注明「还没接入」，实际不生效）；
+#   faster-whisper 才真正把它传给 WhisperModel(compute_type=...)。
 ASR_BACKENDS: Dict[str, Dict[str, Any]] = {
     "funasr": {
         "script": "tools/asr/funasr_asr.py",
         "label": "FunASR（中文/粤语最佳，含标点）",
         "sizes": ["tiny", "base", "small", "medium", "large"],
         "languages": ["zh", "en", "ja", "ko", "yue"],
+        "precisions": ["float32"],
+        "precision_effective": False,
         "needs_gpu": True,
     },
     "fasterwhisper": {
@@ -247,12 +275,100 @@ ASR_BACKENDS: Dict[str, Dict[str, Any]] = {
         "label": "faster-whisper（多语种，速度快）",
         "sizes": ["tiny", "base", "small", "medium", "large-v2", "large-v3"],
         "languages": ["zh", "en", "ja", "ko", "yue", "auto"],
+        "precisions": ["float32", "float16", "int8"],
+        "precision_effective": True,
         "needs_gpu": True,
     },
 }
 
 DENOISE_SCRIPT = "tools/cmd-denoise.py"
 SLICE_SCRIPT = "tools/slice_audio.py"
+
+# --------------------------------------------------------------------------
+# UVR5 人声/伴奏分离 & 去混响 & 去延迟
+# --------------------------------------------------------------------------
+#
+# 官方只提供了 Gradio 版本（tools/uvr5/webui.py），无法集成进流水线。
+# 但它的算法本体（tools/uvr5/vr.py、mdxnet.py、bsroformer.py）是可以
+# 直接调用的 —— 我们自己在 trainer/tools/uvr_cli.py 里做一层薄封装，
+# 不改动官方任何文件。
+
+UVR5_DIR = "tools/uvr5"
+UVR5_WEIGHTS_DIR = "tools/uvr5/uvr5_weights"
+
+#: 各模型的用途说明（取自官方 webui.py 的界面文案）
+UVR5_MODEL_NOTES: Dict[str, str] = {
+    "HP2_all_vocals": "保留人声：不带和声的素材选它，对主人声的保留比 HP5 好",
+    "HP5_only_main_vocal": "仅保留主人声：带和声时选它，但会削弱主人声",
+    "VR-DeEchoNormal": "去延迟（Normal）",
+    "VR-DeEchoAggressive": "去延迟（Aggressive）—— 比 Normal 更彻底",
+    "VR-DeEchoDeReverb": "去延迟 + 去混响，耗时约为另外两个 DeEcho 的 2 倍",
+    "onnx_dereverb_By_FoxJoy": "MDX-Net 去混响：双通道混响的最佳选择，不能去除单通道混响",
+}
+
+#: 模型名 → 推理类别。决定用哪个官方类来加载（与 webui.py 的分派逻辑一致）
+UVR5_MODEL_KINDS = {
+    "AudioPre": "保留人声 / 仅保留主人声（VR 架构）",
+    "AudioPreDeEcho": "去延迟 / 去混响（VR 架构，vocal 与 ins 是反的）",
+    "Roformer_Loader": "BS-RoFormer（需要同名的 .yaml 配置文件）",
+    "MDXNetDereverb": "MDX-Net 去混响（onnx）",
+}
+
+#: 导出格式（官方 webui.py 的 Radio 选项）
+UVR5_FORMATS: Tuple[str, ...] = ("wav", "flac", "mp3", "m4a")
+
+
+def classify_uvr_model(name: str) -> str:
+    """按模型名判断用哪个官方类加载（与 webui.py 的 if/elif 保持一致）。"""
+    if name == "onnx_dereverb_By_FoxJoy":
+        return "MDXNetDereverb"
+    if "roformer" in name.lower():
+        return "Roformer_Loader"
+    return "AudioPreDeEcho" if "DeEcho" in name else "AudioPre"
+
+
+def list_uvr_models(home: Path) -> List[Dict[str, Any]]:
+    """扫描整合包里**实际存在**的 UVR5 模型。
+
+    只列磁盘上有的：官方整合包里就没有 HP3，而 BS-RoFormer 缺 .yaml 时
+    也只能标注成不可用 —— 让用户看到「为什么这个模型选不了」，
+    比给一个下拉框、点了才报错要好。
+    """
+    root = home / Path(UVR5_WEIGHTS_DIR)
+    if not root.is_dir():
+        return []
+
+    models: List[Dict[str, Any]] = []
+    for entry in sorted(root.iterdir()):
+        if entry.is_dir():
+            if "onnx" not in entry.name:
+                continue
+            name, weight = entry.name, entry / "vocals.onnx"
+        else:
+            suffix = entry.suffix.lower()
+            if suffix not in {".pth", ".ckpt"}:
+                continue
+            name, weight = entry.stem, entry
+        if not weight.is_file():
+            continue
+
+        kind = classify_uvr_model(name)
+        config = root / ("%s.yaml" % name)
+        missing_config = kind == "Roformer_Loader" and not config.is_file()
+        models.append(
+            {
+                "id": name,
+                "kind": kind,
+                "label": name,
+                "note": UVR5_MODEL_NOTES.get(name, ""),
+                "size_mb": round(weight.stat().st_size / 1024 / 1024, 1),
+                #: 去混响/去延迟类只产出「人声」，伴奏分离才有双输出
+                "dual_output": kind in {"AudioPre"},
+                "available": not missing_config,
+                "missing_config": missing_config,
+            }
+        )
+    return models
 
 # --------------------------------------------------------------------------
 # 合成默认参数（对齐官方 api_v2.py 的 TTS_Request 默认值）

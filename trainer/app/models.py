@@ -327,6 +327,7 @@ class TrainRequest(FlexibleModel):
     gpu_ids: str = "0"
 
     # ---------- 阶段开关 ----------
+    run_uvr: bool = Field(False, description="人声/伴奏分离 & 去混响去延迟（UVR5）")
     run_denoise: bool = Field(False, description="语音降噪（tools/cmd-denoise.py）")
     run_slice: bool = Field(True, description="静音切分（tools/slice_audio.py）")
     run_asr: bool = Field(True, description="语音转文本（FunASR / faster-whisper）")
@@ -340,6 +341,26 @@ class TrainRequest(FlexibleModel):
     asr_model_size: str = "large"
     asr_language: str = "zh"
     asr_precision: Literal["float16", "float32", "int8"] = "float16"
+
+    # ---------- UVR5 人声/伴奏分离 ----------
+    uvr_model: str = Field(
+        "HP2_all_vocals",
+        description="模型名（来自 /v1/uvr/models）；HP5 用于带和声，DeEcho 系列用于去延迟/去混响",
+    )
+    uvr_agg: int = Field(10, ge=0, le=20, description="人声提取激进程度，仅 VR 架构模型生效")
+    uvr_format: Literal["wav", "flac", "mp3", "m4a"] = "flac"
+    #: 输出哪些轨道。做 TTS 语料只需要人声；伴奏轨道可选保留（例如想留着做后期）
+    uvr_keep_vocal: bool = True
+    uvr_keep_ins: bool = False
+
+    # ---------- 预训练权重（留空则用整合包自带的官方权重） ----------
+    pretrained_gpt_path: Optional[str] = Field(None, description="覆盖 GPT 预训练权重（s1 的 pretrained_s1）")
+    pretrained_sovits_path: Optional[str] = Field(
+        None, description="覆盖 SoVITS 预训练权重（s2 的 pretrained_s2G）"
+    )
+    pretrained_sovits_d_path: Optional[str] = Field(
+        None, description="覆盖 SoVITS 判别器权重（s2 的 pretrained_s2D，留空用官方默认）"
+    )
 
     # ---------- GPT（s1）训练参数 ----------
     epochs_s1: int = Field(15, ge=1, le=1000)
@@ -361,6 +382,27 @@ class TrainRequest(FlexibleModel):
     dry_run: bool = False
     #: 训练前先验证命令能否构造出来，不真正执行
     plan_only: bool = False
+
+
+class AnnotationChange(FlexibleModel):
+    """单条标注的改动。"""
+
+    index: int = Field(..., ge=0, description="条目序号（对应清单里的行号）")
+    text: str = Field(..., description="修正后的转写文本")
+    #: 标记这条不要：例如音频本身有问题、听不清，或混进了别人的声音
+    skip: bool = False
+
+
+class AnnotationSaveRequest(FlexibleModel):
+    """保存标注校对结果。
+
+    只传改动过的条目，没传的保持原样 —— 几百条的清单全量回传既浪费
+    也容易因为并发覆盖掉别人的修改。
+    """
+
+    items: List[AnnotationChange] = Field(default_factory=list)
+    #: 另存为新的清单文件（留空则覆盖原清单）
+    save_as: Optional[str] = None
 
 
 class TrainResponse(BaseModel):

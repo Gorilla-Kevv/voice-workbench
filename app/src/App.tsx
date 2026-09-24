@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { toast, Toaster } from 'sonner';
 import { AppShell } from '@/components/layout/AppShell';
 import { KeyGate } from '@/components/features/KeyGate';
@@ -9,6 +9,7 @@ import { useSynthesis } from '@/hooks/useSynthesis';
 import { useTheme } from '@/hooks/useTheme';
 import { api } from '@/lib/api';
 import { FALLBACK_PRESET_VOICES, MODE_META } from '@/lib/constants';
+import type { RequestError } from '@/lib/errors';
 import { getProvider } from '@/lib/providers/registry';
 import { sovitsApi } from '@/lib/sovits';
 import { BatchPage } from '@/pages/BatchPage';
@@ -213,15 +214,20 @@ function App() {
     };
   }, []);
 
-  // 合成失败时给出全局提示，避免用户切到后台时错过错误
+  // 合成失败时给出全局提示，避免用户切到后台时错过错误。
+  //
+  // 依赖必须写**具体的 error** 而不是整个 controller：controller 每次渲染都是
+  // 新对象（useSynthesis 返回的是展开字面量），而「已等待 N 秒」的计时器每秒
+  // 都 setState 一次 —— 用整个对象做依赖，这个 toast 就会每秒弹一次，
+  // 直到下一次合成。error 是 state 里独立的引用，只在失败与清除时变化，
+  // 所以天然只弹一次；ref 再兜一层，防同一实例被重复 setState。
+  const announcedErrorRef = useRef<RequestError | null>(null);
   useEffect(() => {
-    for (const controller of [presetController, designController, cloneController]) {
-      if (controller.error) {
-        toast.error('合成失败', { description: controller.error.message });
-        break;
-      }
-    }
-  }, [presetController, designController, cloneController]);
+    const error = presetController.error ?? designController.error ?? cloneController.error;
+    if (!error || error === announcedErrorRef.current) return;
+    announcedErrorRef.current = error;
+    toast.error('合成失败', { description: error.fullMessage });
+  }, [presetController.error, designController.error, cloneController.error]);
 
   const header = useMemo(() => {
     const meta = PAGE_META[active];

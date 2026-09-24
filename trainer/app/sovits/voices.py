@@ -28,6 +28,26 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..errors import BadRequestError, NotFoundError
 from . import catalog
 
+#: 兜底语种。空值、非法值一律回落到它。
+DEFAULT_PROMPT_LANG = "zh"
+
+
+def normalize_prompt_lang(value: Optional[str]) -> str:
+    """把外部传入的参考音频语种收敛成合法值。
+
+    以前写入端只写 `prompt_lang or "zh"` —— 而 `"undefined"` 是**真值**，
+    于是前端把未填的字段塞进 `FormData` 时（它会把 `undefined` 转成字符串），
+    字面量 `"undefined"` 就直接进了音色库，之后每次合成都报
+    「不支持合成语种 undefined」，用户对着报错完全无从下手。
+
+    写入端（create / update / copy_into_library）与读取端（_load）都要过这一层：
+    后者能让**已经存在的脏数据**在下次启动时自动修好，不需要用户重新上传。
+    """
+    code = (value or "").strip().lower()
+    if catalog.is_supported_language(code):
+        return code
+    return DEFAULT_PROMPT_LANG
+
 ALLOWED_SUFFIXES = {".wav", ".mp3", ".flac", ".ogg", ".m4a", ".webm", ".aac", ".wma"}
 MAX_UPLOAD_BYTES = 64 * 1024 * 1024
 
@@ -212,7 +232,7 @@ class VoiceLibrary:
             name=name,
             audio_path=str(audio_path),
             prompt_text=(prompt_text or "").strip(),
-            prompt_lang=prompt_lang or "zh",
+            prompt_lang=normalize_prompt_lang(prompt_lang),
             note=note,
             tags=list(tags or []),
             origin=origin,
@@ -244,7 +264,7 @@ class VoiceLibrary:
             if prompt_text is not None:
                 voice.prompt_text = prompt_text.strip()
             if prompt_lang is not None:
-                voice.prompt_lang = prompt_lang
+                voice.prompt_lang = normalize_prompt_lang(prompt_lang)
             if note is not None:
                 voice.note = note
             if tags is not None:
@@ -312,7 +332,7 @@ class VoiceLibrary:
             name=name,
             audio_path=str(target),
             prompt_text=prompt_text,
-            prompt_lang=prompt_lang,
+            prompt_lang=normalize_prompt_lang(prompt_lang),
             note=note,
             origin="managed",
             duration_s=duration,
@@ -365,14 +385,21 @@ class VoiceLibrary:
             return
         if not isinstance(raw, list):
             return
+        # 「是否需要落盘」必须拿**磁盘上的原始值**判断：内存里的值已经被
+        # normalize_prompt_lang 改好了，拿它去比对永远相等，脏数据就永远写不回去。
+        repaired = False
         for item in raw:
             try:
+                stored_lang = item.get("prompt_lang")
+                lang = normalize_prompt_lang(stored_lang)
+                if stored_lang != lang:
+                    repaired = True
                 voice = Voice(
                     id=item["id"],
                     name=item["name"],
                     audio_path=item["audio_path"],
                     prompt_text=item.get("prompt_text", ""),
-                    prompt_lang=item.get("prompt_lang", "zh"),
+                    prompt_lang=lang,
                     note=item.get("note", ""),
                     tags=list(item.get("tags") or []),
                     origin=item.get("origin", "managed"),
@@ -385,6 +412,11 @@ class VoiceLibrary:
             except KeyError:
                 continue
             self._items[voice.id] = voice
+
+        # 发现历史脏数据（例如字面量 "undefined"）就顺手落盘修正：
+        # 否则备份出去、或拷贝到另一台机器时，脏数据会跟着一起走。
+        if repaired:
+            self._persist()
 
 
 # --------------------------------------------------------------------------

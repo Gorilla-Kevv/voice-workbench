@@ -56,6 +56,91 @@ interface BatchRow {
 const POLL_INTERVAL_MS = 1_200;
 
 /**
+ * 跨页面切换保留的会话状态。
+ *
+ * App 按导航键**条件渲染**页面（切到别的页面时 `BatchPage` 会被卸载），
+ * 所以这些状态不能只活在组件里 —— 否则用户跑完几十条、切去「音色库」
+ * 确认一下参考音频，回来发现结果全没了，只能重跑一遍。
+ *
+ * 刻意只存元数据（文本、参数、结果清单），不碰音频二进制：
+ * 音频仍在服务端的 `trainer/.data/outputs/`，URL 一直有效。
+ */
+interface BatchSession {
+  text: string;
+  voiceId: string;
+  filenameTemplate: string;
+  makeZip: boolean;
+  continueOnError: boolean;
+  splitMethod: string;
+  textLang: string;
+  speed: number;
+  temperature: number;
+  repetitionPenalty: number;
+  showAdvanced: boolean;
+  rows: BatchRow[];
+  expanded: boolean;
+  job: SovitsJob | null;
+  voices: SovitsVoice[];
+}
+
+const INITIAL_SESSION: BatchSession = {
+  text: '',
+  voiceId: '',
+  filenameTemplate: '{index:03d}-{key}',
+  makeZip: true,
+  continueOnError: true,
+  splitMethod: 'cut5',
+  textLang: '',
+  speed: 1,
+  temperature: 1,
+  repetitionPenalty: 1.35,
+  showAdvanced: false,
+  rows: [],
+  expanded: false,
+  job: null,
+  voices: [],
+};
+
+const STORAGE_KEY = 'mimo-voice:batch-session';
+
+function loadSession(): BatchSession {
+  try {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (!raw) return { ...INITIAL_SESSION };
+    // 与默认值合并：旧版本存的数据可能缺字段，直接展开会让后续读到 undefined
+    return { ...INITIAL_SESSION, ...(JSON.parse(raw) as Partial<BatchSession>) };
+  } catch {
+    return { ...INITIAL_SESSION };
+  }
+}
+
+let saveTimer: number | undefined;
+
+function saveSession(session: BatchSession): void {
+  // 防抖：结果清单可能有几百条，每次输入都序列化一遍会明显卡顿。
+  // 停止输入 400ms 后写一次就够了 —— 崩溃/刷新最多丢最后几百毫秒的输入。
+  if (saveTimer !== undefined) window.clearTimeout(saveTimer);
+  saveTimer = window.setTimeout(() => {
+    try {
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(session));
+    } catch {
+      // 隐私模式或配额不足时忽略：会话保留退化成「仅当前浏览器会话内」
+    }
+  }, 400);
+}
+
+function clearSession(): void {
+  try {
+    sessionStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // 同上
+  }
+}
+
+/** 模块作用域：组件卸载后依然存在 */
+let retained: BatchSession = loadSession();
+
+/**
  * 批量合成页。
  *
  * 官方 WebUI 只能「粘贴一段 → 生成 → 下载 → 再粘贴下一段」，做有声书或素材库时
@@ -69,25 +154,49 @@ const POLL_INTERVAL_MS = 1_200;
  * - 提供「试听首条」：音色选错是最常见的返工原因，先花 5 秒验证一下；
  * - 结果里区分「成功 / 失败」，失败条目保留原因与修复建议，而不是整批作废。
  */
+/**
+ * 界面可选的合成语种。
+ *
+ * 官方还有 `all_zh` 之类的「整句不切分」变体，这里只暴露常用取值 ——
+ * 需要精细控制时可以在设置页填完整取值。
+ */
+const LANGUAGES: { id: string; label: string }[] = [
+  { id: 'auto', label: '自动识别' },
+  { id: 'zh', label: '中文' },
+  { id: 'en', label: 'English' },
+  { id: 'ja', label: '日本語' },
+  { id: 'ko', label: '한국어' },
+  { id: 'yue', label: '粤语' },
+];
+const LANG_IDS = LANGUAGES.map((item) => item.id);
+
+/** 兜底语种：用户没选、音色语种又不可用时用它 */
+const FALLBACK_LANG = 'zh';
+
 export function BatchPage({ settings }: BatchPageProps) {
-  const [voices, setVoices] = useState<SovitsVoice[]>([]);
+  // 初值一律取自 retained：切页回来时恢复成离开时的样子
+  const [voices, setVoices] = useState<SovitsVoice[]>(retained.voices);
   const [loadingVoices, setLoadingVoices] = useState(true);
   const [connectionError, setConnectionError] = useState<string | null>(null);
 
-  const [text, setText] = useState('');
-  const [voiceId, setVoiceId] = useState('');
-  const [filenameTemplate, setFilenameTemplate] = useState(settings.batchFilenameTemplate);
-  const [makeZip, setMakeZip] = useState(settings.batchMakeZip);
-  const [continueOnError, setContinueOnError] = useState(true);
-  const [splitMethod, setSplitMethod] = useState('cut5');
-  const [speed, setSpeed] = useState(1);
-  const [temperature, setTemperature] = useState(1);
-  const [repetitionPenalty, setRepetitionPenalty] = useState(1.35);
-  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [text, setText] = useState(retained.text);
+  const [voiceId, setVoiceId] = useState(retained.voiceId);
+  const [filenameTemplate, setFilenameTemplate] = useState(
+    retained.filenameTemplate || settings.batchFilenameTemplate,
+  );
+  const [makeZip, setMakeZip] = useState(retained.makeZip);
+  const [continueOnError, setContinueOnError] = useState(retained.continueOnError);
+  const [splitMethod, setSplitMethod] = useState(retained.splitMethod);
+  /** 空串表示「跟随音色语种」 */
+  const [textLang, setTextLang] = useState(retained.textLang);
+  const [speed, setSpeed] = useState(retained.speed);
+  const [temperature, setTemperature] = useState(retained.temperature);
+  const [repetitionPenalty, setRepetitionPenalty] = useState(retained.repetitionPenalty);
+  const [showAdvanced, setShowAdvanced] = useState(retained.showAdvanced);
 
-  const [rows, setRows] = useState<BatchRow[]>([]);
-  const [expanded, setExpanded] = useState(false);
-  const [job, setJob] = useState<SovitsJob | null>(null);
+  const [rows, setRows] = useState<BatchRow[]>(retained.rows);
+  const [expanded, setExpanded] = useState(retained.expanded);
+  const [job, setJob] = useState<SovitsJob | null>(retained.job);
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const pollRef = useRef<number | null>(null);
@@ -116,6 +225,47 @@ export function BatchPage({ settings }: BatchPageProps) {
     void loadVoices();
   }, [loadVoices]);
 
+  // 把会话持续写回模块作用域。
+  //
+  // App 切页时本组件会被卸载，组件 state 随之消失；这里让 retained 始终等于
+  // 当前 state，于是卸载前最后一次写入就已经是最新的，回来时直接用它做初值。
+  useEffect(() => {
+    retained = {
+      text,
+      voiceId,
+      filenameTemplate,
+      makeZip,
+      continueOnError,
+      splitMethod,
+      textLang,
+      speed,
+      temperature,
+      repetitionPenalty,
+      showAdvanced,
+      rows,
+      expanded,
+      job,
+      voices,
+    };
+    saveSession(retained);
+  }, [
+    text,
+    voiceId,
+    filenameTemplate,
+    makeZip,
+    continueOnError,
+    splitMethod,
+    textLang,
+    speed,
+    temperature,
+    repetitionPenalty,
+    showAdvanced,
+    rows,
+    expanded,
+    job,
+    voices,
+  ]);
+
   // 清理轮询定时器，避免离开页面后仍在打请求
   useEffect(
     () => () => {
@@ -138,6 +288,25 @@ export function BatchPage({ settings }: BatchPageProps) {
   );
 
   const selectedVoice = voices.find((voice) => voice.id === voiceId) ?? null;
+
+  /**
+   * 实际使用的合成语种：用户选择 → 音色语种（需合法）→ zh。
+   *
+   * 这里刻意校验音色的语种而不是直接拿来用：历史数据里存在字面量
+   * `"undefined"`（前端曾把未填的字段塞进 FormData），
+   * 直接透传会让每次合成都报「不支持合成语种 undefined」。
+   */
+  const effectiveLang = useMemo(() => {
+    if (textLang && LANG_IDS.includes(textLang)) return textLang;
+    const voiceLang = selectedVoice?.prompt_lang ?? '';
+    if (LANG_IDS.includes(voiceLang)) return voiceLang;
+    return FALLBACK_LANG;
+  }, [textLang, selectedVoice]);
+
+  /** 参考音频语种同理：脏值宁可留空让服务端兜底，也不要透传 */
+  const safePromptLang = LANG_IDS.includes(selectedVoice?.prompt_lang ?? '')
+    ? selectedVoice?.prompt_lang
+    : undefined;
 
   // ------------------------------------------------------------------
   // 文本导入
@@ -179,8 +348,8 @@ export function BatchPage({ settings }: BatchPageProps) {
       return {
         text: content,
         voice: voiceId || undefined,
-        text_lang: selectedVoice?.prompt_lang || 'zh',
-        prompt_lang: selectedVoice?.prompt_lang || undefined,
+        text_lang: effectiveLang,
+        prompt_lang: safePromptLang,
         filename_template: filenameTemplate || '{index:03d}',
         make_zip: makeZip,
         continue_on_error: continueOnError,
@@ -195,7 +364,8 @@ export function BatchPage({ settings }: BatchPageProps) {
     [
       lines,
       voiceId,
-      selectedVoice,
+      effectiveLang,
+      safePromptLang,
       filenameTemplate,
       makeZip,
       continueOnError,
@@ -303,6 +473,43 @@ export function BatchPage({ settings }: BatchPageProps) {
     }
   }, []);
 
+  /** 跟踪某个任务直到终态。抽出来是为了「离开页面再回来」时能接着跟。 */
+  const startPolling = useCallback(
+    (jobId: string) => {
+      stopPolling();
+      setBusy(true);
+      pollRef.current = window.setInterval(() => {
+        void (async () => {
+          try {
+            const { job: current } = await sovitsApi.getJob(jobId);
+            setJob(current);
+            if (['succeeded', 'failed', 'cancelled'].includes(current.state)) {
+              stopPolling();
+              setBusy(false);
+              // 终态时重新拉一次完整数据（含逐条结果与日志）
+              const full = await sovitsApi.getJob(jobId);
+              finishFromJob(full.job);
+            }
+          } catch {
+            stopPolling();
+            setBusy(false);
+            toast.error('轮询任务状态失败，请到「任务」中查看结果');
+          }
+        })();
+      }, POLL_INTERVAL_MS);
+    },
+    [stopPolling, finishFromJob],
+  );
+
+  // 回到本页时，若上次的任务还在服务端跑，接着轮询。
+  // 少了这一步，界面会永远停在「进行中」，用户会以为卡死。
+  useEffect(() => {
+    const pending = retained.job;
+    if (pending && (pending.state === 'running' || pending.state === 'queued')) {
+      startPolling(pending.id);
+    }
+  }, [startPolling]);
+
   const handleStart = useCallback(async () => {
     if (lines.length === 0) {
       toast.warning('请先输入要合成的文本');
@@ -327,27 +534,7 @@ export function BatchPage({ settings }: BatchPageProps) {
         return;
       }
       toast.info('已提交批量任务', { description: `${lines.length} 条文本正在串行合成` });
-
-      stopPolling();
-      pollRef.current = window.setInterval(() => {
-        void (async () => {
-          try {
-            const { job: current } = await sovitsApi.getJob(jobId);
-            setJob(current);
-            if (['succeeded', 'failed', 'cancelled'].includes(current.state)) {
-              stopPolling();
-              setBusy(false);
-              // 终态时重新拉一次完整数据（含逐条结果与日志）
-              const full = await sovitsApi.getJob(jobId);
-              finishFromJob(full.job);
-            }
-          } catch {
-            stopPolling();
-            setBusy(false);
-            toast.error('轮询任务状态失败，请到「任务」中查看结果');
-          }
-        })();
-      }, POLL_INTERVAL_MS);
+      startPolling(jobId);
     } catch (error) {
       const requestError = error as RequestError;
       toast.error('提交失败', {
@@ -355,7 +542,23 @@ export function BatchPage({ settings }: BatchPageProps) {
       });
       setBusy(false);
     }
-  }, [lines.length, voiceId, buildPayload, stopPolling, finishFromJob]);
+  }, [lines.length, voiceId, buildPayload, startPolling]);
+
+  /**
+   * 丢弃本次结果，但保留文本清单与参数。
+   *
+   * 结果现在会跨页面、跨刷新保留，所以「清空」必须显式存在 ——
+   * 否则上一次的几十条会一直挂在页面上，用户想重跑时反而分不清哪批是新的。
+   */
+  const handleClearResults = useCallback(() => {
+    stopPolling();
+    setRows([]);
+    setJob(null);
+    setBusy(false);
+    // 持久化也要清掉，否则刷新浏览器后旧结果又回来了，「清空」等于没生效
+    clearSession();
+    toast.info('已清空本次结果', { description: '文本清单与参数保留，可以直接重新生成' });
+  }, [stopPolling]);
 
   const handleCancel = useCallback(async () => {
     if (!job?.id) return;
@@ -505,6 +708,29 @@ export function BatchPage({ settings }: BatchPageProps) {
                     {selectedVoice.warnings[0]}
                   </p>
                 ) : null}
+              </div>
+
+              <div className="space-y-2">
+                <Label>合成语种</Label>
+                <Select
+                  value={textLang || 'follow'}
+                  onValueChange={(value) => setTextLang(value === 'follow' ? '' : value)}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="follow">跟随音色（{effectiveLang}）</SelectItem>
+                    {LANGUAGES.map((item) => (
+                      <SelectItem key={item.id} value={item.id}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="text-[11px] text-muted-foreground">
+                  默认跟随音色的语种；改成别的可以做跨语言合成 —— 例如用中文音色去读日语文本。
+                </p>
               </div>
 
               <Separator />
@@ -680,6 +906,18 @@ export function BatchPage({ settings }: BatchPageProps) {
                   JSON 清单
                 </Button>
               ) : null}
+              {/* 结果会跨页面与刷新保留，所以必须给出清空的入口，
+                  否则上一次的几十条会一直挂在页面上 */}
+              <Button
+                size="sm"
+                variant="ghost"
+                className="ml-auto"
+                onClick={handleClearResults}
+                disabled={busy}
+              >
+                <XCircle className="mr-1.5 size-3.5" />
+                清空结果
+              </Button>
             </div>
 
             <div className="space-y-2">

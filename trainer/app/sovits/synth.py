@@ -258,14 +258,22 @@ def normalize_text(payload: Dict[str, Any], version: str) -> Tuple[str, str]:
             hint="超长文本请使用批量合成，或先自行切分成多条。",
         )
 
-    text_lang = str(payload.get("text_lang") or payload.get("language") or "zh").strip() or "zh"
+    # 空值回落 zh；非空但非法的值要报错，但必须说清「这个值从哪来、去哪改」。
+    # 实测中用户拿到的是「不支持合成语种 undefined」—— 值其实来自所选音色的
+    # 「参考音频语种」字段被存成了字面量 "undefined"，只报不支持的话，
+    # 用户对着一堆合法取值根本无从下手。
+    text_lang = str(payload.get("text_lang") or payload.get("language") or "").strip().lower()
     supported = catalog.languages_for(version)
-    if text_lang not in supported:
+    if not text_lang:
+        text_lang = "zh"
+    elif text_lang not in supported:
         raise BadRequestError(
-            "版本 %s 不支持合成语种 %s" % (version, text_lang),
+            "版本 %s 不支持合成语种「%s」" % (version, text_lang),
             hint=(
                 "该版本支持的取值：%s\n"
-                "其中韩语（ko）与粤语（yue）需要 v2 及以上版本。"
+                "其中韩语（ko）与粤语（yue）需要 v2 及以上版本。\n"
+                "若你是从界面发起的，这个值通常来自所选音色的「参考音频语种」——\n"
+                "到「音色库」把该音色的语种改成上面的取值即可。"
                 % "、".join(supported)
             ),
             code="UNSUPPORTED_LANGUAGE",

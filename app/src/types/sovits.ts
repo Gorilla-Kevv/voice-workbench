@@ -42,6 +42,14 @@ export interface SovitsAsrBackend {
   script: string;
   sizes: string[];
   languages: string[];
+  /**
+   * 该后端允许的精度取值。
+   * 取自官方 `tools/asr/config.py::asr_dict` —— FunASR 只有 float32，
+   * faster-whisper 才有 float16 / int8。
+   */
+  precisions: string[];
+  /** 该脚本的 -p 参数是否真的生效（FunASR 官方注明「还没接入」） */
+  precision_effective: boolean;
   needs_gpu: boolean;
 }
 
@@ -427,6 +435,47 @@ export interface SovitsJob {
 // 训练
 // --------------------------------------------------------------------------
 
+/** UVR5 模型（人声/伴奏分离、去混响、去延迟） */
+export interface SovitsUvrModel {
+  id: string;
+  kind: 'AudioPre' | 'AudioPreDeEcho' | 'Roformer_Loader' | 'MDXNetDereverb';
+  label: string;
+  note: string;
+  size_mb: number;
+  /** 是否同时产出伴奏轨道（只有 VR 分离模型才有双输出） */
+  dual_output: boolean;
+  available: boolean;
+  missing_config: boolean;
+}
+
+export interface SovitsUvrModelList {
+  ok: boolean;
+  models: SovitsUvrModel[];
+  total: number;
+  formats: string[];
+  kinds: Record<string, string>;
+}
+
+/** 标注校对的一条 */
+export interface SovitsAnnotationItem {
+  index: number;
+  audio_path: string;
+  audio_url: string;
+  speaker: string;
+  language: string;
+  text: string;
+  exists: boolean;
+}
+
+export interface SovitsAnnotationList {
+  ok: boolean;
+  job_id: string;
+  list_file: string;
+  items: SovitsAnnotationItem[];
+  total: number;
+  missing_audio: number;
+}
+
 export interface SovitsTrainPayload {
   name: string;
   source_audio_dir?: string;
@@ -436,6 +485,7 @@ export interface SovitsTrainPayload {
   speaker: string;
   gpu_ids: string;
 
+  run_uvr: boolean;
   run_denoise: boolean;
   run_slice: boolean;
   run_asr: boolean;
@@ -448,6 +498,18 @@ export interface SovitsTrainPayload {
   asr_model_size: string;
   asr_language: string;
   asr_precision: 'float16' | 'float32' | 'int8';
+
+  // ---------- UVR5 人声/伴奏分离 ----------
+  uvr_model: string;
+  uvr_agg: number;
+  uvr_format: 'wav' | 'flac' | 'mp3' | 'm4a';
+  uvr_keep_vocal: boolean;
+  uvr_keep_ins: boolean;
+
+  // ---------- 预训练权重（留空用官方自带） ----------
+  pretrained_gpt_path?: string;
+  pretrained_sovits_path?: string;
+  pretrained_sovits_d_path?: string;
 
   epochs_s1: number;
   batch_size_s1: number;

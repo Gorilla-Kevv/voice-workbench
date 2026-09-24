@@ -110,12 +110,22 @@ export const gptSovitsProvider: TtsProvider = {
   ],
   synthesize: async (params, context) => {
     const endpoint = context.fields?.endpoint?.trim() || DEFAULT_SOVITS_BASE;
-    const version = context.fields?.version?.trim() || undefined;
 
-    // 模型 id 直接映射版本号，让「选择模型」与「切换权重」是同一件事
+    // 模型 id 直接映射版本号，让「选择模型」与「切换权重」是同一件事。
+    //
+    // 但 model id 用的是**小写**（gpt-sovits-v2proplus），而服务端的版本名是
+    // **混合大小写**（v2ProPlus）—— 直接把后缀当版本名传下去，服务端会报
+    // 「未知模型版本：v2proplus」。所以这里做大小写不敏感的匹配。
+    const VERSION_ALIASES = ['v1', 'v2', 'v2Pro', 'v2ProPlus', 'v3', 'v4'];
     const versionFromModel = params.model.replace(/^gpt-sovits-/, '');
-    const resolvedVersion =
-      versionFromModel && versionFromModel !== 'clone' ? versionFromModel : version;
+    const matched = VERSION_ALIASES.find(
+      (item) => item.toLowerCase() === versionFromModel.toLowerCase(),
+    );
+
+    // 页面上选的版本（fields.version）永远优先 —— 它才是用户此刻真正的意图；
+    // model id 只是「没选时的兜底」。
+    const version = context.fields?.version?.trim() || undefined;
+    const resolvedVersion = version ?? matched;
 
     const textLang = params.language?.trim() || undefined;
 

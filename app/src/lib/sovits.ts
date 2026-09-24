@@ -14,9 +14,11 @@ import type {
   SovitsBatchRequest,
   SovitsBatchResponse,
   SovitsCatalog,
+  SovitsAnnotationList,
   SovitsErrorBody,
   SovitsHealth,
   SovitsJob,
+  SovitsUvrModelList,
   SovitsSplitResponse,
   SovitsTTSRequest,
   SovitsTTSResponse,
@@ -148,6 +150,34 @@ export const sovitsApi = {
 
   catalog: (baseUrl?: string): Promise<{ ok: boolean; catalog: SovitsCatalog }> =>
     request('/v1/catalog', { method: 'GET', timeoutMs: 20_000 }, baseUrl),
+
+  /**
+   * 本机**实际可用**的 UVR5 模型。
+   *
+   * 只列磁盘上真实存在的：模型清单是从整合包的
+   * `tools/uvr5/uvr5_weights` 扫出来的，不是写死的常量 ——
+   * 不同整合包自带的模型并不一致。
+   */
+  listUvrModels: (baseUrl?: string): Promise<SovitsUvrModelList> =>
+    request<SovitsUvrModelList>('/v1/uvr/models', { method: 'GET', timeoutMs: 20_000 }, baseUrl),
+
+  listAnnotations: (jobId: string, baseUrl?: string): Promise<SovitsAnnotationList> =>
+    request<SovitsAnnotationList>(
+      `/v1/annotations/${jobId}`,
+      { method: 'GET', timeoutMs: 30_000 },
+      baseUrl,
+    ),
+
+  saveAnnotations: (
+    jobId: string,
+    payload: { items: Array<{ index: number; text: string; skip?: boolean }>; save_as?: string },
+    baseUrl?: string,
+  ): Promise<{ ok: boolean; list_file: string; total: number; changed: number; dropped: number; message: string }> =>
+    request(
+      `/v1/annotations/${jobId}`,
+      { method: 'PUT', body: JSON.stringify(payload), timeoutMs: 30_000 },
+      baseUrl,
+    ),
 
   // ------------------------------------------------------------------
   // 管线与权重
