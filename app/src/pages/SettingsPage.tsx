@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { TermTip } from '@/components/features/TermTip';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
@@ -508,7 +509,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
             <p className="text-xs font-medium text-muted-foreground">批量合成默认值</p>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label htmlFor="batch-template">文件名模板</Label>
+                <Label htmlFor="batch-template">
+                  <TermTip term="文件名模板" />
+                </Label>
                 <Input
                   id="batch-template"
                   value={settings.batchFilenameTemplate}
@@ -560,7 +563,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
 
           <div className="space-y-2">
             <div className="flex items-center justify-between gap-2">
-              <Label htmlFor="api-key">MiMo API Key</Label>
+              <Label htmlFor="api-key">
+                  <TermTip term="API Key">MiMo API Key</TermTip>
+                </Label>
               {dirty ? (
                 <span className="flex items-center gap-1 text-xs text-amber-600 dark:text-amber-400">
                   <span className="size-1.5 rounded-full bg-amber-500" />

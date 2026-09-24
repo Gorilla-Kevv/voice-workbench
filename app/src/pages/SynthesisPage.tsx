@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { TermTip } from '@/components/features/TermTip';
 import { Separator } from '@/components/ui/separator';
 import { TagPicker } from '@/components/features/TagPicker';
 import { VoicePicker } from '@/components/features/VoicePicker';
@@ -180,7 +181,9 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
                 <div className="space-y-2.5">
                   <div className="flex items-center gap-2">
                     <Languages className="size-4 text-muted-foreground" />
-                    <Label className="text-sm">方言与地域腔调</Label>
+                    <Label className="text-sm">
+                <TermTip term="方言">方言与地域腔调</TermTip>
+              </Label>
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {DIALECT_PRESETS.map((item) => {
@@ -260,7 +263,9 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
             {!isSovits ? (
               <>
                 <div className="space-y-2">
-                  <Label>整体风格标签</Label>
+                  <Label>
+                <TermTip term="风格标签">整体风格标签</TermTip>
+              </Label>
                   <TagPicker
                     groups={STYLE_TAGS}
                     selected={styles}

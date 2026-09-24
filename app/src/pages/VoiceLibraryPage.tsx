@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { TermTip } from '@/components/features/TermTip';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
@@ -353,7 +354,9 @@ export function VoiceLibraryPage() {
 
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="voice-name">音色名称</Label>
+              <Label htmlFor="voice-name">
+                  <TermTip term="音色">音色名称</TermTip>
+                </Label>
               <Input
                 id="voice-name"
                 value={name}
@@ -363,7 +366,9 @@ export function VoiceLibraryPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="voice-file">参考音频</Label>
+              <Label htmlFor="voice-file">
+                  <TermTip term="参考音频" />
+                </Label>
               <input
                 ref={fileRef}
                 type="file"
@@ -413,7 +418,9 @@ export function VoiceLibraryPage() {
 
             <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
               <div className="space-y-2">
-                <Label htmlFor="voice-prompt">参考文本（逐字转写）</Label>
+                <Label htmlFor="voice-prompt">
+                  <TermTip term="提示文本">参考文本（逐字转写）</TermTip>
+                </Label>
                 <Textarea
                   id="voice-prompt"
                   value={promptText}
@@ -493,7 +500,9 @@ export function VoiceLibraryPage() {
               </div>
               <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
                 <div className="space-y-2">
-                  <Label>参考文本</Label>
+                  <Label>
+                    <TermTip term="提示文本">参考文本</TermTip>
+                  </Label>
                   <Textarea
                     value={editing.prompt_text}
                     onChange={(event) => setEditing({ ...editing, prompt_text: event.target.value })}
@@ -530,7 +539,9 @@ export function VoiceLibraryPage() {
               <Separator />
 
               <div className="space-y-2">
-                <Label>替换参考音频</Label>
+                <Label>
+                  <TermTip term="参考音频">替换参考音频</TermTip>
+                </Label>
                 <input
                   type="file"
                   accept="audio/*"

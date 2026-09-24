@@ -29,6 +29,7 @@ import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { TermTip } from '@/components/features/TermTip';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
 import { cn } from '@/lib/utils';
@@ -64,6 +65,7 @@ const POLL_INTERVAL_MS = 2_000;
 function ParamSlider({
   label,
   hint,
+  term,
   value,
   min,
   max,
@@ -72,6 +74,8 @@ function ParamSlider({
 }: {
   label: string;
   hint?: string;
+  /** 术语表里的键名；给了就给标题加悬浮解释 */
+  term?: string;
   value: number;
   min: number;
   max: number;
@@ -81,7 +85,7 @@ function ParamSlider({
   return (
     <div className="space-y-1.5">
       <div className="flex items-baseline justify-between gap-2">
-        <Label className="text-xs">{label}</Label>
+        <Label className="text-xs">{term ? <TermTip term={term}>{label}</TermTip> : label}</Label>
         <span className="font-mono text-xs tabular-nums text-muted-foreground">{value}</span>
       </div>
       <Slider value={[value]} min={min} max={max} step={step} onValueChange={([next]) => onChange(next)} />
@@ -827,7 +831,9 @@ export function TrainingPage() {
         <CardContent className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-2">
-              <Label htmlFor="train-name">实验名称</Label>
+              <Label htmlFor="train-name">
+                <TermTip term="实验名称" />
+              </Label>
               <Input
                 id="train-name"
                 value={name}
@@ -841,7 +847,9 @@ export function TrainingPage() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="train-dir">语料目录</Label>
+              <Label htmlFor="train-dir">
+                <TermTip term="语料目录" />
+              </Label>
               <div className="flex gap-2">
                 <Input
                   id="train-dir"
@@ -886,7 +894,9 @@ export function TrainingPage() {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="min-w-0 space-y-2">
-              <Label>语料语种</Label>
+              <Label>
+                <TermTip term="语料语种" />
+              </Label>
               <Select
                 value={textLang}
                 onValueChange={(value) => setTextLang(value as typeof textLang)}
@@ -905,7 +915,9 @@ export function TrainingPage() {
             </div>
 
             <div className="min-w-0 space-y-2">
-              <Label>模型版本</Label>
+              <Label>
+                <TermTip term="模型版本" />
+              </Label>
               <Select value={version} onValueChange={setVersion}>
                 <SelectTrigger>
                   <SelectValue>{versionLabel}</SelectValue>
@@ -922,7 +934,9 @@ export function TrainingPage() {
             </div>
 
             <div className="min-w-0 space-y-2">
-              <Label htmlFor="train-speaker">说话人名</Label>
+              <Label htmlFor="train-speaker">
+                <TermTip term="说话人">说话人名</TermTip>
+              </Label>
               <Input
                 id="train-speaker"
                 value={speaker}
@@ -934,7 +948,9 @@ export function TrainingPage() {
             </div>
 
             <div className="min-w-0 space-y-2">
-              <Label htmlFor="train-gpu">GPU 编号</Label>
+              <Label htmlFor="train-gpu">
+                <TermTip term="GPU 编号" />
+              </Label>
               <Input
                 id="train-gpu"
                 value={gpuIds}
@@ -977,7 +993,9 @@ export function TrainingPage() {
                 <>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <div className="min-w-0 space-y-2">
-                      <Label>模型</Label>
+                      <Label>
+                        <TermTip term="UVR5">模型</TermTip>
+                      </Label>
                       <Select value={uvrModel} onValueChange={setUvrModel}>
                         <SelectTrigger>
                           <SelectValue placeholder="选择模型" />
@@ -1008,6 +1026,7 @@ export function TrainingPage() {
 
                     <div className="min-w-0 space-y-3">
                       <ParamSlider
+                        term="激进程度"
                         label="人声提取激进程度"
                         value={uvrAgg}
                         min={0}
@@ -1103,36 +1122,42 @@ export function TrainingPage() {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
             <StageToggle
+              term="语音降噪"
               label="语音降噪"
               hint="去除底噪与轻微混响（tools/cmd-denoise.py）"
               checked={runDenoise}
               onChange={setRunDenoise}
             />
             <StageToggle
+              term="音频切分"
               label="音频切分"
               hint="按静音切成 5~15 秒片段；开启后必须同时开启语音识别"
               checked={runSlice}
               onChange={setRunSlice}
             />
             <StageToggle
+              term="语音转文本"
               label="语音转文本"
               hint="FunASR / faster-whisper 自动生成标注与训练清单"
               checked={runAsr}
               onChange={setRunAsr}
             />
             <StageToggle
+              term="格式化训练集"
               label="格式化训练集"
               hint="文本特征、HuBERT、说话人向量、语义 Token 四步"
               checked={runFormat}
               onChange={setRunFormat}
             />
             <StageToggle
+              term="GPT（语义）训练"
               label="GPT（语义）训练"
               hint="s1_train.py，决定断句与韵律"
               checked={runS1}
               onChange={setRunS1}
             />
             <StageToggle
+              term="SoVITS（声学）训练"
               label="SoVITS（声学）训练"
               hint="s2_train.py，决定音色相似度"
               checked={runS2}
@@ -1145,7 +1170,9 @@ export function TrainingPage() {
               <Separator />
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="min-w-0 space-y-2">
-                  <Label>识别后端</Label>
+                  <Label>
+                    <TermTip term="ASR">识别后端</TermTip>
+                  </Label>
                   <Select
                     value={asrBackend}
                     onValueChange={(value) => setAsrBackend(value as typeof asrBackend)}
@@ -1196,7 +1223,9 @@ export function TrainingPage() {
                   </Select>
                 </div>
                 <div className="min-w-0 space-y-2">
-                  <Label>精度</Label>
+                  <Label>
+                    <TermTip term="精度" />
+                  </Label>
                   <Select
                     value={asrPrecision}
                     onValueChange={(value) => setAsrPrecision(value as typeof asrPrecision)}
@@ -1235,6 +1264,7 @@ export function TrainingPage() {
                 </div>
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                   <ParamSlider
+                    term="静音阈值"
                     label="threshold 静音阈值"
                     value={slice.threshold}
                     min={-60}
@@ -1244,6 +1274,7 @@ export function TrainingPage() {
                     hint="音量低于它才算静音"
                   />
                   <ParamSlider
+                    term="最小长度"
                     label="min_length 最小长度"
                     value={slice.min_length}
                     min={500}
@@ -1253,6 +1284,7 @@ export function TrainingPage() {
                     hint="单位毫秒，太短的段会并入后一段"
                   />
                   <ParamSlider
+                    term="最短间隔"
                     label="min_interval 最短间隔"
                     value={slice.min_interval}
                     min={0}
@@ -1261,6 +1293,7 @@ export function TrainingPage() {
                     onChange={(next) => patchSlice({ min_interval: next })}
                   />
                   <ParamSlider
+                    term="音量曲线精度"
                     label="hop_size 音量曲线精度"
                     value={slice.hop_size}
                     min={1}
@@ -1270,6 +1303,7 @@ export function TrainingPage() {
                     hint="越小越精细，但计算量越大"
                   />
                   <ParamSlider
+                    term="静音保留"
                     label="max_sil_kept 静音保留"
                     value={slice.max_sil_kept}
                     min={0}
@@ -1279,6 +1313,7 @@ export function TrainingPage() {
                     hint="切完后每段首尾最多留多长静音"
                   />
                   <ParamSlider
+                    term="归一化峰值"
                     label="max 归一化峰值"
                     value={slice.max}
                     min={0.5}
@@ -1287,6 +1322,7 @@ export function TrainingPage() {
                     onChange={(next) => patchSlice({ max: next })}
                   />
                   <ParamSlider
+                    term="归一化混合"
                     label="alpha 归一化混合"
                     value={slice.alpha}
                     min={0}
@@ -1296,6 +1332,7 @@ export function TrainingPage() {
                     hint="1 = 完全按峰值归一化，0 = 保持原音量"
                   />
                   <ParamSlider
+                    term="切片进程数"
                     label="n_parts 切片进程数"
                     value={slice.n_parts}
                     min={1}
@@ -1320,11 +1357,12 @@ export function TrainingPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <NumberField label="GPT epoch" value={epochsS1} onChange={setEpochsS1} min={1} max={1000} />
-          <NumberField label="GPT batch" value={batchS1} onChange={setBatchS1} min={1} max={64} />
-          <NumberField label="SoVITS epoch" value={epochsS2} onChange={setEpochsS2} min={1} max={1000} />
-          <NumberField label="SoVITS batch" value={batchS2} onChange={setBatchS2} min={1} max={64} />
+          <NumberField term="epoch" label="GPT epoch" value={epochsS1} onChange={setEpochsS1} min={1} max={1000} />
+          <NumberField term="batch" label="GPT batch" value={batchS1} onChange={setBatchS1} min={1} max={64} />
+          <NumberField term="epoch" label="SoVITS epoch" value={epochsS2} onChange={setEpochsS2} min={1} max={1000} />
+          <NumberField term="batch" label="SoVITS batch" value={batchS2} onChange={setBatchS2} min={1} max={64} />
           <NumberField
+            term="LoRA rank"
             label="LoRA rank（v3/v4）"
             value={loraRank}
             onChange={setLoraRank}
@@ -1343,7 +1381,9 @@ export function TrainingPage() {
             </p>
             <div className="grid gap-3 lg:grid-cols-3">
               <div className="space-y-1.5">
-                <Label className="text-xs">GPT 权重</Label>
+                <Label className="text-xs">
+                  <TermTip term="预训练权重">GPT 权重</TermTip>
+                </Label>
                 <Input
                   value={pretrainedGpt}
                   onChange={(event) => setPretrainedGpt(event.target.value)}
@@ -1353,7 +1393,9 @@ export function TrainingPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">SoVITS 权重</Label>
+                <Label className="text-xs">
+                  <TermTip term="预训练权重">SoVITS 权重</TermTip>
+                </Label>
                 <Input
                   value={pretrainedSovits}
                   onChange={(event) => setPretrainedSovits(event.target.value)}
@@ -1363,7 +1405,9 @@ export function TrainingPage() {
                 />
               </div>
               <div className="space-y-1.5">
-                <Label className="text-xs">SoVITS 判别器（可选）</Label>
+                <Label className="text-xs">
+                  <TermTip term="判别器">SoVITS 判别器（可选）</TermTip>
+                </Label>
                 <Input
                   value={pretrainedSovitsD}
                   onChange={(event) => setPretrainedSovitsD(event.target.value)}
@@ -1583,18 +1627,23 @@ export function TrainingPage() {
 function StageToggle({
   label,
   hint,
+  term,
   checked,
   onChange,
 }: {
   label: string;
   hint: string;
+  /** 术语表里的键名；给了就给标题加悬浮解释 */
+  term?: string;
   checked: boolean;
   onChange: (value: boolean) => void;
 }) {
   return (
     <div className="flex items-start justify-between gap-3 rounded-lg border p-3">
       <div className="min-w-0">
-        <Label className="cursor-pointer text-sm">{label}</Label>
+        <Label className="cursor-pointer text-sm">
+          {term ? <TermTip term={term}>{label}</TermTip> : label}
+        </Label>
         <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">{hint}</p>
       </div>
       <Switch checked={checked} onCheckedChange={onChange} className="mt-0.5 shrink-0" />
@@ -1609,6 +1658,7 @@ function NumberField({
   min,
   max,
   hint,
+  term,
 }: {
   label: string;
   value: number;
@@ -1616,10 +1666,12 @@ function NumberField({
   min: number;
   max: number;
   hint?: string;
+  /** 术语表里的键名；给了就给标题加悬浮解释 */
+  term?: string;
 }) {
   return (
     <div className="space-y-1.5">
-      <Label className="text-xs">{label}</Label>
+      <Label className="text-xs">{term ? <TermTip term={term}>{label}</TermTip> : label}</Label>
       <Input
         type="number"
         className="h-9"

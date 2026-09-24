@@ -28,6 +28,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { TermTip } from '@/components/features/TermTip';
 import { formatBytes, formatDuration } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
 import { SOVITS_PARAM_SPECS } from '@/lib/constants';
@@ -680,7 +681,9 @@ export function BatchPage({ settings }: BatchPageProps) {
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label>参考音色</Label>
+                <Label>
+                  <TermTip term="参考音色" />
+                </Label>
                 <Select value={voiceId} onValueChange={setVoiceId} disabled={loadingVoices}>
                   <SelectTrigger>
                     <SelectValue placeholder={loadingVoices ? '正在加载音色库…' : '请选择音色'} />
@@ -711,7 +714,9 @@ export function BatchPage({ settings }: BatchPageProps) {
               </div>
 
               <div className="space-y-2">
-                <Label>合成语种</Label>
+                <Label>
+                  <TermTip term="合成语种" />
+                </Label>
                 <Select
                   value={textLang || 'follow'}
                   onValueChange={(value) => setTextLang(value === 'follow' ? '' : value)}
@@ -736,7 +741,9 @@ export function BatchPage({ settings }: BatchPageProps) {
               <Separator />
 
               <div className="space-y-2">
-                <Label>文件名模板</Label>
+                <Label>
+                <TermTip term="文件名模板" />
+              </Label>
                 <Input
                   value={filenameTemplate}
                   onChange={(event) => setFilenameTemplate(event.target.value)}
@@ -791,7 +798,9 @@ export function BatchPage({ settings }: BatchPageProps) {
           {showAdvanced ? (
             <div className="grid gap-4 rounded-lg border bg-muted/30 p-4 sm:grid-cols-2 lg:grid-cols-4">
               <div className="space-y-1.5">
-                <Label className="text-xs">文本切分方式</Label>
+                <Label className="text-xs">
+                      <TermTip term="切分方式">文本切分方式</TermTip>
+                    </Label>
                 <Select value={splitMethod} onValueChange={setSplitMethod}>
                   <SelectTrigger className="h-9">
                     <SelectValue />
