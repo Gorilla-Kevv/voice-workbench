@@ -125,7 +125,8 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
         file: state.file,
         model: state.model,
         key: state.key,
-        f0_method: state.f0Method,
+        // 「跟随模型」哨兵值映射回空串（后端按 config.yaml 的 f0_extractor 处理）
+        f0_method: state.f0Method === 'auto' ? '' : state.f0Method,
         quality: state.quality as 'fast' | 'standard' | 'quality' | 'raw',
         slice_segments: sliceSegments,
         separation: { preset: state.separation, secondary: state.secondary, use_cache: true },
@@ -240,7 +241,9 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
                 <Select value={state.f0Method} onValueChange={(v) => patch({ f0Method: v })}>
                   <SelectTrigger className="w-full"><SelectValue placeholder="跟随模型" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">跟随模型</SelectItem>
+                    {/* Radix 禁止空字符串 value：空值留给「清空选择显示占位符」。
+                        「跟随模型」用 auto 哨兵值，提交时再映射回空串 */}
+                    <SelectItem value="auto">跟随模型</SelectItem>
                     {(catalog?.f0_methods ?? []).map((method) => (
                       <SelectItem key={method.key} value={method.key}>{method.label}</SelectItem>
                     ))}

@@ -25,12 +25,20 @@ import { VoiceLibraryPage } from '@/pages/VoiceLibraryPage';
 import type {
   HealthInfo,
   HistoryRecord,
+  ModuleStates,
   NavKey,
   PresetVoice,
   SovitsLinkState,
   SynthesisResult,
   TtsMode,
 } from '@/types';
+
+/**
+ * 新板块（语音变声 / 歌声转换）的侧栏状态。
+ *
+ * 与 `SovitsLinkState` 的差别在「incomplete」这一态：本地服务本身是通的，
+ * 但板块缺源码（vendor）或缺预训练权重 —— 这不是故障，提示该跑什么命令即可。
+ */
 
 /** 各导航页的标题信息 */
 const PAGE_META: Record<NavKey, { title: string; description: string }> = {
@@ -134,6 +142,8 @@ function App() {
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [presets, setPresets] = useState<PresetVoice[]>(FALLBACK_PRESET_VOICES);
   const [sovitsState, setSovitsState] = useState<SovitsLinkState>('checking');
+  // 两个新板块的侧栏状态：与 GPT-SoVITS 同一次探活里顺带得出，不再单独轮询
+  const [moduleStates, setModuleStates] = useState<ModuleStates>({ rvc: 'checking', svc: 'checking' });
 
   const history = useHistory(settings.historyLimit);
   const { add: addHistory, records, loading, remove, clear, loadAudio } = history;
@@ -190,15 +200,25 @@ function App() {
 
     const probe = async () => {
       let healthy = false;
+      let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline' };
       try {
         const result = await sovitsApi.health();
         if (cancelled) return;
         // 环境就绪即视为可用；权重缺失之类的阻断项由各页面自己提示
         healthy = result.ok;
+        if (healthy) {
+          // 两个新板块的判定来自同一次 /health：vendor 与必需权重都齐才算就绪
+          const caps = result.capabilities;
+          nextModules = {
+            rvc: caps?.voice_conversion ? 'ready' : 'incomplete',
+            svc: caps?.singing_conversion ? 'ready' : 'incomplete',
+          };
+        }
       } catch {
         // 连不上就是「还没起来」，与「起来了但没就绪」在这里无需区分
       }
       if (cancelled) return;
+      setModuleStates(nextModules);
 
       if (healthy) {
         setSovitsState('ready');
@@ -274,6 +294,7 @@ function App() {
         onToggleTheme={toggleTheme}
         header={header}
         sovitsState={sovitsState}
+        moduleStates={moduleStates}
       >
         {/* BYOK 模式下，未配置密钥时提前引导；本地服务页面不依赖云端密钥 */}
         {!LOCAL_PAGES.includes(active) ? (

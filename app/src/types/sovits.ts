@@ -183,6 +183,19 @@ export interface SovitsPool {
   ready: boolean;
 }
 
+/**
+ * 新板块（语音变声 / 歌声转换）的侧栏状态。
+ *
+ * 与 `SovitsLinkState` 的差别在「incomplete」这一态：本地服务本身是通的，
+ * 但板块缺源码（vendor）或缺预训练权重 —— 这不是故障，提示该跑什么命令即可。
+ */
+export type ModuleState = 'checking' | 'ready' | 'incomplete' | 'offline';
+
+export interface ModuleStates {
+  rvc: ModuleState;
+  svc: ModuleState;
+}
+
 export interface SovitsHealth {
   ok: boolean;
   schema_version: string;
@@ -203,6 +216,12 @@ export interface SovitsHealth {
     voice_library: boolean;
     text_split_preview: boolean;
     dry_run: boolean;
+    /** UVR5 分离随整合包可用 */
+    separation: boolean;
+    /** 语音变声（RVC）：vendor + 必需权重齐备 */
+    voice_conversion: boolean;
+    /** 歌声转换（DDSP-SVC）：vendor + 必需权重齐备 */
+    singing_conversion: boolean;
   };
   voices: { total: number; usable: number };
   blockers: string[];

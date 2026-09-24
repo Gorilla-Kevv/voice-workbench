@@ -22,7 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { cn } from '@/lib/utils';
-import type { NavKey, SovitsLinkState } from '@/types';
+import type { ModuleStates, NavKey, SovitsLinkState } from '@/types';
 
 interface AppShellProps {
   active: NavKey;
@@ -37,6 +37,8 @@ interface AppShellProps {
   header: { title: string; description: string; model: string };
   /** GPT-SoVITS 本地服务的连接状态 */
   sovitsState?: SovitsLinkState;
+  /** 两个新板块（语音变声 / 歌声转换）的就绪状态，与 GPT-SoVITS 同一次探活得出 */
+  moduleStates?: ModuleStates;
 }
 
 /**
@@ -57,6 +59,36 @@ const SOVITS_STATUS_TEXT: Record<SovitsLinkState, { title: string; hint: string 
   offline: {
     title: 'GPT-SoVITS 本地 · 未连接',
     hint: '请先启动本地服务（运行 start.bat），界面会自动重连',
+  },
+};
+
+/**
+ * 两个新板块的侧栏文案。
+ *
+ * 「incomplete」是它们特有的态：服务是通的，但板块缺源码或缺预训练权重。
+ * 与 GPT-SoVITS 的三态文案刻意保持同一句式，用户不需要重新学习一套提示语。
+ */
+const MODULE_STATUS_TEXT: Record<
+  'rvc' | 'svc',
+  { label: string; states: Record<ModuleStates['rvc'], { title: string; hint: string }> }
+> = {
+  rvc: {
+    label: 'RVC 变声',
+    states: {
+      checking: { title: '语音变声 · 正在连接', hint: '与本地服务同源，冷启动期间不可用' },
+      ready: { title: '语音变声 · 已就绪', hint: 'RVC 引擎待命，模型常驻由引擎调度' },
+      incomplete: { title: '语音变声 · 待补齐', hint: '缺源码或缺权重：git submodule update --init 后运行 scripts/download_models.py' },
+      offline: { title: '语音变声 · 未连接', hint: '本地服务未启动（运行 start.bat），界面会自动重连' },
+    },
+  },
+  svc: {
+    label: 'DDSP-SVC 转换',
+    states: {
+      checking: { title: '歌声转换 · 正在连接', hint: '与本地服务同源，冷启动期间不可用' },
+      ready: { title: '歌声转换 · 已就绪', hint: 'DDSP-SVC 引擎待命，UVR5 分离随整合包可用' },
+      incomplete: { title: '歌声转换 · 待补齐', hint: '缺源码或缺权重：git submodule update --init 后运行 scripts/download_models.py --engine svc' },
+      offline: { title: '歌声转换 · 未连接', hint: '本地服务未启动（运行 start.bat），界面会自动重连' },
+    },
   },
 };
 
@@ -96,6 +128,39 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
   },
 ];
 
+/**
+ * 侧栏状态卡片：三态配色（就绪绿 / 待补齐琥珀 / 未连接灰），文案由调用方给。
+ *
+ * 「待补齐」用琥珀而不是灰是有意的 —— 它是用户可以自己解决的事（跑两条命令），
+ * 不是「服务没起来」这种只能等的故障，视觉上要引导用户去看提示。
+ */
+function LinkCard({ state, title, hint }: { state: ModuleStates['rvc']; title: string; hint: string }) {
+  const ready = state === 'ready';
+  const incomplete = state === 'incomplete';
+  return (
+    <div
+      className={cn(
+        'flex items-start gap-2 rounded-lg border p-2.5 text-xs',
+        ready
+          ? 'bg-emerald-500/5 text-emerald-700 dark:text-emerald-400'
+          : incomplete
+            ? 'bg-amber-500/5 text-amber-700 dark:text-amber-400'
+            : 'bg-muted/50 text-muted-foreground',
+      )}
+    >
+      {state === 'checking' ? (
+        <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
+      ) : (
+        <Server className="mt-0.5 size-3.5 shrink-0" />
+      )}
+      <div>
+        <p className="font-medium">{title}</p>
+        <p className="mt-0.5 opacity-80">{hint}</p>
+      </div>
+    </div>
+  );
+}
+
 /** 应用外壳：左侧导航 + 顶部标题栏 + 内容区 */
 export function AppShell({
   active,
@@ -107,6 +172,7 @@ export function AppShell({
   children,
   header,
   sovitsState = 'offline',
+  moduleStates = { rvc: 'checking', svc: 'checking' },
 }: AppShellProps) {
   const keyReady = hasServerKey || hasUserKey;
   const sovits = SOVITS_STATUS_TEXT[sovitsState];
@@ -190,24 +256,14 @@ export function AppShell({
               </div>
             </div>
 
-            <div
-              className={cn(
-                'flex items-start gap-2 rounded-lg border p-2.5 text-xs',
-                sovitsState === 'ready'
-                  ? 'bg-emerald-500/5 text-emerald-700 dark:text-emerald-400'
-                  : 'bg-muted/50 text-muted-foreground',
-              )}
-            >
-              {sovitsState === 'checking' ? (
-                <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
-              ) : (
-                <Server className="mt-0.5 size-3.5 shrink-0" />
-              )}
-              <div>
-                <p className="font-medium">{sovits.title}</p>
-                <p className="mt-0.5 opacity-80">{sovits.hint}</p>
-              </div>
-            </div>
+            <LinkCard state={sovitsState} title={sovits.title} hint={sovits.hint} />
+
+            {/* 两个新板块：与 GPT-SoVITS 同一份探活数据，同一套卡片样式 */}
+            {(['rvc', 'svc'] as const).map((key) => {
+              const module = MODULE_STATUS_TEXT[key];
+              const state = module.states[moduleStates[key]];
+              return <LinkCard key={key} state={moduleStates[key]} title={state.title} hint={state.hint} />;
+            })}
           </div>
         </div>
       </aside>
