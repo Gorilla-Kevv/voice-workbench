@@ -82,18 +82,27 @@ def build_processor(home: str, model_name: str, agg: int, device: str, is_half: 
     weight = weight_root / ("%s.pth" % model_name)
     if not weight.is_file():
         raise SystemExit("未找到模型权重：%s" % weight)
-    cls = AudioPreDeEcho if "DeEcho" in model_name else AudioPre
+    # 注意判据必须包含 DeReverb：官方 webui 用的 `"DeEcho" not in model_name`
+    # 会把 VR-DeReverb 误判成普通 VR 模型（它不含 DeEcho 子串），加载必然失败。
+    cls = AudioPreDeEcho if ("DeEcho" in model_name or "DeReverb" in model_name) else AudioPre
     return cls(agg=int(agg), model_path=str(weight), device=device, is_half=is_half)
 
 
 def run(item: Path, processor, vocal_root: Path | None, ins_root: Path | None, fmt: str, is_hp3: bool) -> None:
-    """处理单个音频。**一律用关键字参数**，避免两类模型 vocal/ins 顺序相反。"""
+    """处理单个音频。**一律用位置参数**（第 2 位伴奏目录、第 3 位人声目录）。
+
+    两个 VR 类的形参顺序是反的：`AudioPre(music_file, ins_root, vocal_root, ...)`，
+    而 `AudioPreDeEcho(music_file, vocal_root, ins_root, ...)`。
+    用关键字参数只对齐了**名字**，没对齐**内容**：DeEcho 类会在传给人声目录的那个
+    参数里写出 `instrument_*`，于是伴奏进了人声目录 —— 文件名前缀是对的，
+    所以肉眼看不出来。位置参数（与官方 webui.py 一致）对两类都成立。
+    """
     processor._path_audio_(
         str(item),
-        vocal_root=str(vocal_root) if vocal_root else None,
-        ins_root=str(ins_root) if ins_root else None,
-        format=fmt,
-        is_hp3=is_hp3,
+        str(ins_root) if ins_root else None,
+        str(vocal_root) if vocal_root else None,
+        fmt,
+        is_hp3,
     )
 
 

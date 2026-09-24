@@ -15,9 +15,11 @@ import { sovitsApi } from '@/lib/sovits';
 import { BatchPage } from '@/pages/BatchPage';
 import { HistoryPage } from '@/pages/HistoryPage';
 import { SettingsPage } from '@/pages/SettingsPage';
+import { SingingConversionPage } from '@/pages/SingingConversionPage';
 import { TrainingPage } from '@/pages/TrainingPage';
 import { SynthesisPage } from '@/pages/SynthesisPage';
 import { VoiceClonePage } from '@/pages/VoiceClonePage';
+import { VoiceConversionPage } from '@/pages/VoiceConversionPage';
 import { VoiceDesignPage } from '@/pages/VoiceDesignPage';
 import { VoiceLibraryPage } from '@/pages/VoiceLibraryPage';
 import type {
@@ -57,11 +59,19 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: '模型训练',
     description: '用本地 GPU 跑 GPT-SoVITS 全流程：降噪、切分、标注、GPT 与 SoVITS 微调',
   },
+  rvc: {
+    title: '语音变声',
+    description: 'RVC · 说话与配音的音色替换，支持检索索引、权重融合与 LoRA 微调',
+  },
+  svc: {
+    title: '歌声转换',
+    description: 'DDSP-SVC · 歌曲翻唱与歌声变声，联动 UVR5 分离，产出人声 / 伴奏 / 混音三件套',
+  },
   settings: { title: '设置', description: '配置两套模型的服务地址、密钥与合成偏好' },
 };
 
 /** 不依赖云端密钥的页面（走本地服务或纯客户端） */
-const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history'];
+const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc'];
 
 /**
  * 导航键 → MiMo 模型模式。
@@ -243,7 +253,11 @@ function App() {
           ? '本地 GPU 训练'
           : active === 'batch' || active === 'voices'
             ? '本地 GPT-SoVITS'
-            : '客户端配置';
+            : active === 'rvc'
+              ? '本地 RVC · vendor/rvc'
+              : active === 'svc'
+                ? '本地 DDSP-SVC · vendor/ddsp-svc'
+                : '客户端配置';
     return { ...meta, model };
   }, [active, settings.providerId]);
 
@@ -297,6 +311,8 @@ function App() {
           />
         ) : null}
         {active === 'training' ? <TrainingPage /> : null}
+        {active === 'rvc' ? <VoiceConversionPage /> : null}
+        {active === 'svc' ? <SingingConversionPage /> : null}
 
         {active === 'settings' ? (
           <SettingsPage

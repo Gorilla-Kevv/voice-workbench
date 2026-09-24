@@ -47,6 +47,19 @@ GPT-SoVITS 侧的推理参数（切分方式、top_k/top_p、temperature、repet
 语速、fragment_interval、批大小、v3/v4 的采样步数与超采样、参考音频融合、
 分桶与并行推理等）全部透传，未做删减。
 
+### 语音变声与歌声转换（独立入口）
+
+在 GPT-SoVITS 之外，本项目还提供两个相互独立的功能板块，
+与 GPT-SoVITS 共用「本地引擎 + 显存互斥调度」，重合的音频处理下沉为共享内核：
+
+| 板块 | 模型 | 场景 | 亮点 |
+| --- | --- | --- | --- |
+| 语音变声 | [RVC](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI) | 说话 / 配音 / 朗读换音色 | 检索索引增强；**音色融合**（零训练插值）与**底模 + LoRA**（每个音色只训几 MB 适配器）缓解「换音色就要重训」 |
+| 歌声转换 | [DDSP-SVC](https://github.com/yxlllc/DDSP-SVC) | 歌曲翻唱 / 歌声变声 | 显式 F0 建模、转调、四档音质；联动 UVR5 分离，一键产出新人声 / 伴奏 / 混音三件套，分离结果按内容指纹缓存复用 |
+
+细节见 [`docs/VOICE-CONVERSION.md`](docs/VOICE-CONVERSION.md) 与
+[`docs/SINGING-CONVERSION.md`](docs/SINGING-CONVERSION.md)。
+
 ---
 
 ## 架构
@@ -123,6 +136,18 @@ ttstool/
 │   │   │   ├── pipeline.py       # 官方 TTS 管线常驻封装 + 权重热切换
 │   │   │   ├── synth.py          # 统一请求 → 官方 inputs 的翻译与校验
 │   │   │   └── voices.py         # 音色库（参考音频 + 提示文本）
+│   │   ├── audio/                # 共享音频内核（两个新板块与训练共用）
+│   │   │   ├── io.py             # 读写 / 重采样 / 格式归一
+│   │   │   ├── slicer.py         # 静音切分
+│   │   │   ├── uvr5.py           # UVR5 直连层（mdxnet / vr / bsroformer）
+│   │   │   ├── cache.py          # 中间结果缓存（文件指纹 + 模型 + 参数）
+│   │   │   └── mixer.py          # 混音（增益 / 延迟对齐 / 淡入淡出）
+│   │   ├── vc/                   # 语音变声板块（RVC 直连层）
+│   │   ├── svc/                  # 歌声转换板块（DDSP-SVC 直连层）
+│   │   ├── engine.py             # 引擎注册表：独占加载、显存互斥、状态汇总
+│   │   ├── vendor_paths.py       # temporary_context：临时 sys.path + cwd
+│   │   ├── weights.py            # 预训练权重清单与体检
+│   │   ├── routers/              # /v1/engines、/v1/uvr、/v1/vc、/v1/svc 路由
 │   │   ├── inference.py          # 合成执行层
 │   │   ├── batch.py              # 批量合成编排（清单 / ZIP / 逐条容错）
 │   │   ├── training.py           # 训练流水线（11 个阶段）
@@ -132,7 +157,12 @@ ttstool/
 │   ├── requirements.txt
 │   └── .env.example
 ├── GPT-SoVITS-v2pro-20250604/    # 官方整合包（原地保留，仅新增训练产物）
+├── vendor/                       # 上游源码（git submodule，锁 commit）
+│   ├── rvc/                      # RVC-Project/Retrieval-based-Voice-Conversion-WebUI
+│   └── ddsp-svc/                 # yxlllc/DDSP-SVC
+├── models/                       # 预训练权重与训练产物（gitignore，下载脚本按需拉取）
 ├── scripts/                      # 启动脚本（sovits.mjs / start.ps1 / start.sh）
+│   │                             # + download_models.py / smoke_uvr5.py / smoke_vc.py / smoke_svc.py
 ├── docs/                         # 架构、集成与训练文档
 ├── start.bat                     # Windows 一键启动：双击即用
 └── package.json
@@ -333,6 +363,24 @@ npm run sovits:check
 | GET | `/v1/jobs` · `/v1/jobs/{id}` | 任务列表 · 任务详情（含日志） |
 | POST | `/v1/jobs/{id}/cancel` | 取消任务 |
 
+### 新板块（经同一本地服务暴露，网关同样透传）
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/v1/engines` | 四个本地引擎（GPT-SoVITS / RVC / DDSP-SVC / UVR5）的显存互斥状态 |
+| POST | `/v1/engines/unload` | 手动卸载指定引擎并归还显存 |
+| GET | `/v1/uvr/catalog` · `/v1/uvr/cache` | 分离档位与预置 · 缓存盘点 |
+| POST | `/v1/uvr/separate` | UVR5 分离（人声 / 伴奏，可同步等待或任务化） |
+| GET | `/v1/vc/catalog` · `/v1/vc/pipeline` | 变声模型库 · 引擎状态 |
+| POST | `/v1/vc/models/load` · `/v1/vc/models/upload` | 热加载音色 · 导入 .pth/.index |
+| POST | `/v1/vc/convert` | 语音变声（任务化，`wait=true` 可同步） |
+| POST | `/v1/vc/merge` | 多权重音色融合（零训练） |
+| POST | `/v1/vc/train/plan` · `/v1/vc/train` | 训练预检 · 提交训练（full / lora） |
+| GET | `/v1/svc/catalog` · `/v1/svc/pipeline` | 歌声转换音色与档位 · 引擎状态 |
+| POST | `/v1/svc/models/load` · `/v1/svc/models/upload` | 热加载 · 导入 .pt + config.yaml |
+| POST | `/v1/svc/convert` | 干声直接转换 |
+| POST | `/v1/svc/cover` | 翻唱向导：分离 → 转换 → 混音，三件套产物 |
+
 统一响应格式：成功 `{ ok: true, ... }`；失败 `{ ok: false, error: { code, message, retryable, hint } }`。
 `hint` 是面向使用者的「下一步该做什么」，前端会直接展示。
 
@@ -431,5 +479,8 @@ npm run sovits:check
 ## 致谢
 
 - [GPT-SoVITS](https://github.com/RVC-Boss/GPT-SoVITS)（MIT）—— 本地推理与训练的全部能力来源
+- [RVC-Project/Retrieval-based-Voice-Conversion-WebUI](https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI)（MIT）—— 语音变声板块的上游
+- [yxlllc/DDSP-SVC](https://github.com/yxlllc/DDSP-SVC)（MIT）—— 歌声转换板块的上游
+- [UVR5](https://github.com/Anjok07/ultimatevocalremovergui)（MIT）—— 人声 / 伴奏分离（随 GPT-SoVITS 整合包提供）
 - [GPT-SoVITS 语雀指南](https://www.yuque.com/baicaigongchang1145haoyuangong/ib3g1e) —— 数据准备与排障的权威参考
 - 小米 MiMo 语音合成 —— 云端预置音色链路
