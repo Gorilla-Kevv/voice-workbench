@@ -102,6 +102,18 @@ fi
 
 step "使用解释器：${PYTHON}"
 
+# ---------- 1.5 新板块 vendor 预检 ----------
+# 语音变声（vendor/rvc）与歌声转换（vendor/ddsp-svc）是 git submodule。
+# 缺了不阻断启动，但要给出明确的补齐方式。
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+for vendor in vendor/rvc vendor/ddsp-svc; do
+  if [ -d "${ROOT_DIR}/${vendor}" ] && [ -n "$(ls -A "${ROOT_DIR}/${vendor}" 2>/dev/null)" ]; then
+    continue
+  fi
+  warn "未找到 ${vendor}（语音变声 / 歌声转换板块不可用）"
+  echo '      → 执行 git submodule update --init vendor/rvc vendor/ddsp-svc 拉取'
+done
+
 # ---------- 2. 补齐服务依赖 ----------
 SKIP_INSTALL=0
 for arg in "$@"; do

@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from typing import Awaitable, Callable, Optional
 
 from .config import Settings
-from .jobs import Job, JobKind, JobState, JobStore
+from .jobs import Job, JobKind, JobState, JobStore, pool_of
 
 Runner = Callable[[Job, asyncio.Event], Awaitable[dict]]
 
@@ -176,7 +176,7 @@ class Scheduler:
             return  # local 模式不做配额约束
         limit = (
             self.settings.daily_infer_quota
-            if job.kind is JobKind.INFER
+            if pool_of(job.kind) is JobKind.INFER
             else self.settings.daily_train_quota
         )
         if not limit:
@@ -185,7 +185,7 @@ class Scheduler:
         key = (job.owner, job.kind.value, today)
         used = self._usage.get(key, 0)
         if used >= limit:
-            raise quota_exceeded("训练" if job.kind is JobKind.TRAIN else "推理", limit)
+            raise quota_exceeded("训练" if pool_of(job.kind) is JobKind.TRAIN else "推理", limit)
 
     def _bump_quota(self, job: Job) -> None:
         if not self.settings.is_public:
@@ -211,7 +211,7 @@ class Scheduler:
     def submit(self, job: Job) -> Job:
         """入队。失败时抛 AdmissionError，由路由层转为 HTTP 响应。"""
         self._check_quota(job)
-        pool = self.pools[job.kind]
+        pool = self.pools[pool_of(job.kind)]
         if pool.queue is None:
             # 正常情况下 lifecyle 已保证 start() 被调用；这里显式失败，
             # 好过让任务永远停在 queued —— 那是最难查的一类故障。

@@ -145,6 +145,18 @@ if (-not $python) {
 
 Write-Step -Message ('使用解释器：' + $python)
 
+# ---------- 1.5 新板块 vendor 预检 ----------
+# 语音变声（vendor/rvc）与歌声转换（vendor/ddsp-svc）是 git submodule。
+# 缺了不会阻断启动 —— 现有 GPT-SoVITS 链路不受影响 —— 但要明确告诉用户怎么补。
+foreach ($vendor in @('vendor\rvc', 'vendor\ddsp-svc')) {
+    $vendorPath = Join-Path $root $vendor
+    if (Test-Path (Join-Path $vendorPath 'README.md')) { continue }
+    if (Test-Path (Join-Path $vendorPath 'infer-web.py')) { continue }
+    if (Test-Path (Join-Path $vendorPath 'main_reflow.py')) { continue }
+    Write-Warn -Message ('未找到 ' + $vendor + '（语音变声 / 歌声转换板块不可用）')
+    Write-Host '      → 执行 git submodule update --init vendor/rvc vendor/ddsp-svc 拉取' -ForegroundColor Gray
+}
+
 # ---------- 2. 补齐服务依赖 ----------
 if (-not $SkipInstall) {
     Write-Step -Message '检查服务依赖（fastapi / uvicorn / pydantic / python-multipart / PyYAML）'

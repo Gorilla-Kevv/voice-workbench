@@ -8,6 +8,12 @@
  * GPT-SoVITS 的专有契约在 `./sovits`，此处只做聚合。
  */
 
+/** 语音变声板块（RVC）的契约类型 */
+export * from './vc';
+
+/** 歌声转换板块（DDSP-SVC）的契约类型 */
+export * from './svc';
+
 /** 三种 MiMo 语音模型对应的功能模式 */
 export type TtsMode = 'preset' | 'design' | 'clone';
 
@@ -20,7 +26,11 @@ export type NavKey =
   | 'voices'
   | 'history'
   | 'training'
-  | 'settings';
+  | 'settings'
+  /** 语音变声（RVC） */
+  | 'rvc'
+  /** 歌声转换（DDSP-SVC） */
+  | 'svc';
 
 /**
  * 本地模型服务的连接状态。

@@ -1,12 +1,14 @@
 import type { ReactNode } from 'react';
 import {
   AudioLines,
+  Disc3,
   FlaskConical,
   History,
   KeyRound,
   ListMusic,
   Loader2,
   Mic2,
+  MicVocal,
   Moon,
   Palette,
   Server,
@@ -74,6 +76,15 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
       { key: 'voices', label: '音色库', icon: Waves, hint: '参考音频与提示文本' },
       { key: 'batch', label: '批量合成', icon: ListMusic, hint: '一份清单生成一批音频' },
       { key: 'training', label: '模型训练', icon: FlaskConical, hint: '切分 / 标注 / 微调' },
+    ],
+  },
+  {
+    // 两个新板块各占一个独立入口，但共用同一组「本地引擎」——
+    // 分组名体现它们是并列的能力（变声 / 翻唱），而不是一条链路的子页面
+    title: 'AI 变声',
+    items: [
+      { key: 'rvc', label: '语音变声', icon: MicVocal, hint: 'RVC · 说话配音换音色' },
+      { key: 'svc', label: '歌声转换', icon: Disc3, hint: 'DDSP-SVC · 翻唱与歌声' },
     ],
   },
   {

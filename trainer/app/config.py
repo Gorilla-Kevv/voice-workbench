@@ -144,6 +144,22 @@ class Settings:
     # ---------- 跨域 ----------
     allow_origins: List[str] = field(default_factory=list)
 
+    # ---------- 上游（vendor/）与权重 ----------
+    #: 两个上游仓库的位置（git submodule）。留空则用默认值
+    vendor_dir: Path = field(default_factory=lambda: ROOT.parent / "vendor")
+    #: 预训练权重与训练产物的根目录（不进版本库，见 .gitignore）
+    models_dir: Path = field(default_factory=lambda: ROOT.parent / "models")
+
+    # ---------- UVR5 分离默认值 ----------
+    #: 默认分离档位（见 audio/uvr5_catalog.py）
+    uvr_preset: str = "vocal_fast"
+    #: 默认导出格式。wav 兼容性最好，后续环节都要再读一遍
+    uvr_format: str = "wav"
+    #: 人声提取激进程度（0~20，仅 VR 架构生效）
+    uvr_agg: int = 10
+    #: 分离与特征的中间结果是否复用（换音色重跑时跳过，最省时的一环）
+    uvr_cache_enabled: bool = True
+
     # ---------- 存储 ----------
     data_dir: Path = field(default_factory=lambda: ROOT / ".data")
     #: 输出音频保留天数（0 表示不清理）
@@ -180,6 +196,44 @@ class Settings:
     def experiments_dir(self) -> Path:
         return self.data_dir / "experiments"
 
+    # ---------- 新板块的派生目录 ----------
+
+    @property
+    def cache_dir(self) -> Path:
+        """中间结果缓存：分离产物、F0 与内容特征。"""
+        return self.data_dir / "cache"
+
+    @property
+    def vc_dir(self) -> Path:
+        """语音变声（RVC）：模型库、LoRA 适配器、融合产物、实验。"""
+        return self.data_dir / "vc"
+
+    @property
+    def svc_dir(self) -> Path:
+        """歌声转换（DDSP-SVC）：音色模型、实验。"""
+        return self.data_dir / "svc"
+
+    @property
+    def separation_dir(self) -> Path:
+        """分离产物的默认落盘位置（未命中缓存时的独立任务）。"""
+        return self.outputs_dir / "separation"
+
+    @property
+    def rvc_dir(self) -> Path:
+        return self.vendor_dir / "rvc"
+
+    @property
+    def ddsp_dir(self) -> Path:
+        return self.vendor_dir / "ddsp-svc"
+
+    @property
+    def pretrained_dir(self) -> Path:
+        return self.models_dir / "pretrained"
+
+    @property
+    def checkpoints_dir(self) -> Path:
+        return self.models_dir / "checkpoints"
+
     # ---------- 构造 ----------
 
     @classmethod
@@ -213,6 +267,8 @@ class Settings:
 
         home = _env_str("GPT_SOVITS_HOME")
         data_dir = Path(_env_str("TTS_DATA_DIR", str(ROOT / ".data"))).expanduser()
+        vendor_dir = Path(_env_str("VENDOR_DIR", str(ROOT.parent / "vendor"))).expanduser()
+        models_dir = Path(_env_str("MODELS_DIR", str(ROOT.parent / "models"))).expanduser()
 
         raw_half = _env_str("TTS_IS_HALF").lower()
         is_half: Optional[bool] = None
@@ -244,6 +300,12 @@ class Settings:
             daily_train_quota=_env_quota("DAILY_TRAIN_QUOTA", defaults["daily_train_quota"]),
             admin_token=_env_str("ADMIN_TOKEN"),
             allow_origins=_env_list("ALLOW_ORIGINS", defaults["allow_origins"]),
+            vendor_dir=vendor_dir,
+            models_dir=models_dir,
+            uvr_preset=_env_str("UVR_PRESET", "vocal_fast"),
+            uvr_format=_env_str("UVR_FORMAT", "wav"),
+            uvr_agg=_env_int("UVR_AGG", 10),
+            uvr_cache_enabled=_env_bool("UVR_CACHE", True),
             data_dir=data_dir,
             output_retention_days=_env_int("OUTPUT_RETENTION_DAYS", 30),
             dry_run=_env_bool("TTS_DRY_RUN", False),
@@ -289,6 +351,10 @@ class Settings:
             self.outputs_dir,
             self.voices_dir,
             self.experiments_dir,
+            # 两个新板块：缓存、语音变声、歌声转换
+            self.cache_dir,
+            self.vc_dir,
+            self.svc_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -301,6 +367,14 @@ class Settings:
             "port": self.port,
             "gpt_sovits_home": str(self.gpt_sovits_home) if self.gpt_sovits_home else None,
             "data_dir": str(self.data_dir),
+            "vendor_dir": str(self.vendor_dir),
+            "models_dir": str(self.models_dir),
+            "rvc_dir": str(self.rvc_dir),
+            "ddsp_dir": str(self.ddsp_dir),
+            "uvr_preset": self.uvr_preset,
+            "uvr_format": self.uvr_format,
+            "uvr_agg": self.uvr_agg,
+            "uvr_cache_enabled": self.uvr_cache_enabled,
             "default_version": self.default_version,
             "default_prompt_lang": self.default_prompt_lang,
             "device": self.device,

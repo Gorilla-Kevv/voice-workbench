@@ -319,12 +319,18 @@ UVR5_FORMATS: Tuple[str, ...] = ("wav", "flac", "mp3", "m4a")
 
 
 def classify_uvr_model(name: str) -> str:
-    """按模型名判断用哪个官方类加载（与 webui.py 的 if/elif 保持一致）。"""
+    """按模型名判断用哪个官方类加载。
+
+    与 `webui.py` 的分派保持一致，**但补上了 DeReverb**：官方判据是
+    `"DeEcho" not in model_name`，而 `VR-DeReverb` 里没有 `DeEcho` 子串，
+    于是会被当成普通 VR 模型交给 `AudioPre`（4band_v2 + CascadedASPPNet），
+    加载时炸在 state_dict shape 不匹配。这里按 `DeEcho` **或** `DeReverb` 判定。
+    """
     if name == "onnx_dereverb_By_FoxJoy":
         return "MDXNetDereverb"
     if "roformer" in name.lower():
         return "Roformer_Loader"
-    return "AudioPreDeEcho" if "DeEcho" in name else "AudioPre"
+    return "AudioPreDeEcho" if ("DeEcho" in name or "DeReverb" in name) else "AudioPre"
 
 
 def list_uvr_models(home: Path) -> List[Dict[str, Any]]:

@@ -38,6 +38,33 @@ class JobState(str, Enum):
 class JobKind(str, Enum):
     INFER = "infer"
     TRAIN = "train"
+    #: 音源分离（UVR5）。耗时与显卡占用都接近一次推理，归到推理池
+    SEPARATE = "separate"
+    #: 语音变声（RVC）：推理与训练
+    VC_INFER = "vc_infer"
+    VC_TRAIN = "vc_train"
+    #: 歌声转换（DDSP-SVC）：推理（含翻唱向导）与训练
+    SVC_INFER = "svc_infer"
+    SVC_TRAIN = "svc_train"
+
+
+#: 走「推理池」的种类：短任务，秒级~分钟级
+INFER_POOL: frozenset = frozenset(
+    {JobKind.INFER, JobKind.SEPARATE, JobKind.VC_INFER, JobKind.SVC_INFER}
+)
+
+#: 走「训练池」的种类：长任务，独占显卡
+TRAIN_POOL: frozenset = frozenset({JobKind.TRAIN, JobKind.VC_TRAIN, JobKind.SVC_TRAIN})
+
+
+def pool_of(kind: "JobKind") -> JobKind:
+    """任务种类 → 队列池。
+
+    新增的几种任务刻意**不新建池**：池的并发度是按「推理 / 训练」这两类资源语义
+    配的（见 `Settings.max_infer_concurrency`），再按板块拆分只会让"同时能跑几个"
+    变得难以解释。种类仍然细分，因为它决定产物类型、历史筛选与前端文案。
+    """
+    return JobKind.TRAIN if kind in TRAIN_POOL else JobKind.INFER
 
 
 @dataclass

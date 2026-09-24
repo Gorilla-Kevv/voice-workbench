@@ -71,6 +71,8 @@ class HealthResponse(BaseModel):
     runtime: Dict[str, Any] = Field(default_factory=dict)
     pipeline: Dict[str, Any] = Field(default_factory=dict)
     scheduler: Dict[str, Any] = Field(default_factory=dict)
+    #: 引擎占用（GPT-SoVITS / RVC / DDSP-SVC / UVR5 四者互斥）
+    engines: Dict[str, Any] = Field(default_factory=dict)
     capabilities: Dict[str, Any] = Field(default_factory=dict)
     voices: Dict[str, Any] = Field(default_factory=dict)
     blockers: List[str] = Field(default_factory=list)
@@ -439,3 +441,185 @@ class JobListView(BaseModel):
 
 class CancelRequest(BaseModel):
     reason: str = ""
+
+
+# ==========================================================================
+# 音源分离（UVR5）—— 两个新板块共用
+# ==========================================================================
+
+
+class SeparationRequest(FlexibleModel):
+    """一次音源分离请求。
+
+    `source` 与上传文件二选一：`source` 指向本机已有文件（批量/调试用），
+    上传走 multipart（正常使用）。两者都为空时由路由层报 400。
+    """
+
+    #: 本机已有音频路径；与上传文件二选一
+    source: Optional[str] = None
+    #: 分离档位（见 audio/uvr5_catalog.py 的 SEPARATION_PRESETS）
+    preset: str = "vocal_fast"
+    #: 二级处理：none / dereverb / deecho_normal / deecho_aggressive
+    secondary: str = "none"
+    #: 人声提取激进程度（0~20，仅 VR 架构生效）
+    agg: int = Field(default=10, ge=0, le=20)
+    #: 导出格式
+    format: str = "wav"
+    #: 是否复用缓存（换音色重跑同一首歌时跳过分离）
+    use_cache: bool = True
+    #: 返回内联 base64（默认只给 URL）
+    inline_base64: bool = False
+
+
+class SeparationResponse(BaseModel):
+    ok: bool = True
+    #: 同步完成时给出结果；异步时只有 job_id
+    vocal: Optional[str] = None
+    instrumental: Optional[str] = None
+    model: str = ""
+    secondary: str = ""
+    cached: bool = False
+    elapsed_s: float = 0.0
+    job_id: Optional[str] = None
+    urls: Dict[str, str] = Field(default_factory=dict)
+    meta: Dict[str, Any] = Field(default_factory=dict)
+
+
+# ==========================================================================
+# 语音变声（RVC）
+# ==========================================================================
+
+
+class VcConvertRequest(FlexibleModel):
+    """一次语音变声请求。"""
+
+    #: 本机音频路径（与上传文件二选一）
+    source: Optional[str] = None
+    #: 目标音色模型（文件名或 id）
+    model: str = ""
+    #: 变调（半音）
+    f0_up_key: int = 0
+    #: F0 提取方法：rmvpe / pm / harvest / crepe
+    f0_method: str = "rmvpe"
+    #: 检索特征占比 0~1（模型没有 .index 时自动按 0 处理）
+    index_rate: float = 0.3
+    #: ≥3 时对 harvest 的 F0 做中值滤波
+    filter_radius: int = 3
+    #: 输出重采样率，0 表示不重采样
+    resample_sr: int = 0
+    #: 音量包络融合比 0~1
+    rms_mix_rate: float = 0.25
+    #: 清辅音保护 0~0.5
+    protect: float = 0.33
+
+
+class VcMergeRequest(FlexibleModel):
+    """音色融合：多个已有模型按权重插值。"""
+
+    #: 模型文件名列表，至少 2 个
+    models: List[str] = Field(default_factory=list)
+    #: 与 models 一一对应的权重，会自动归一化
+    weights: List[float] = Field(default_factory=list)
+    #: 产物名（不含扩展名）
+    name: str = ""
+
+
+class VcTrainRequest(FlexibleModel):
+    """语音变声的训练请求。字段与 `vc/training.py` 的 TrainRequest 对齐。"""
+
+    name: str = "my-voice"
+    corpus_dir: str = ""
+    sample_rate: str = "40k"
+    version: str = "v2"
+    f0: bool = True
+    f0_method: str = "rmvpe"
+    #: full（全量微调）/ lora（低秩适配器）
+    mode: str = "lora"
+    base_model: str = ""
+    epochs: int = 30
+    save_every: int = 10
+    batch_size: int = 4
+    build_index: bool = True
+    rank: int = 8
+    alpha: float = 16.0
+    learning_rate: float = 1e-4
+    keep_workdir: bool = False
+    plan_only: bool = False
+
+
+# ==========================================================================
+# 歌声转换（DDSP-SVC）
+# ==========================================================================
+
+
+class SvcLoadRequest(FlexibleModel):
+    """加载一个歌声转换音色模型。
+
+    字段刻意不叫 `model_id`：Pydantic 把 `model_` 当作保护命名空间前缀，
+    用它开头会触发 UserWarning（且日后可能与校验逻辑冲突）。
+    """
+
+    #: 模型路径（.pt），同目录必须有 config.yaml
+    path: str = ""
+    #: 也可以是模型清单里的 id
+    model_key: str = ""
+
+
+class SvcConvertRequest(FlexibleModel):
+    """歌声转换 / 翻唱请求。
+
+    `mode=convert` 只做转换（输入应当是干声）；
+    `mode=cover` 走完整向导：分离 → 转换 → 混音。
+    """
+
+    mode: str = "cover"
+    #: 本机已有音频路径（与上传文件二选一）
+    source: Optional[str] = None
+    #: 目标音色模型路径
+    model: str = ""
+    #: 转调（半音）
+    key: float = 0.0
+    #: 说话人编号（多说话人模型）
+    spk_id: int = 1
+    #: 多说话人混合，例如 {"1": 0.5, "2": 0.5}
+    spk_mix: Optional[Dict[str, float]] = None
+    #: F0 提取方法，留空用 config.yaml 的值
+    f0_method: str = ""
+    #: 音质档位：fast / standard / quality / raw
+    quality: str = "standard"
+    #: 共振峰偏移
+    formant_shift: float = 0.0
+    #: 静音阈值（dB），低于此值的片段不发声
+    threshold_db: float = -45.0
+    #: 是否按静音切分（长音频省显存，建议开启）
+    slice_segments: bool = True
+    #: 分离参数（mode=cover 时生效）
+    separation: Dict[str, Any] = Field(default_factory=dict)
+    #: 混音参数（mode=cover 时生效）
+    mix: Dict[str, Any] = Field(default_factory=dict)
+
+
+class SvcConvertResponse(BaseModel):
+    ok: bool = True
+    job_id: Optional[str] = None
+    output: Optional[str] = None
+    urls: Dict[str, str] = Field(default_factory=dict)
+    artifacts: Dict[str, str] = Field(default_factory=dict)
+    stages: List[Dict[str, Any]] = Field(default_factory=list)
+    elapsed_s: float = 0.0
+
+
+# ==========================================================================
+# 引擎状态
+# ==========================================================================
+
+
+class EngineView(BaseModel):
+    ok: bool = True
+    active: Optional[str] = None
+    active_label: Optional[str] = None
+    training: Optional[str] = None
+    free_vram_mb: Optional[int] = None
+    engines: List[Dict[str, Any]] = Field(default_factory=list)
+    reason: str = ""
+    held_s: float = 0.0

@@ -414,7 +414,8 @@ export interface SovitsLogLine {
 
 export interface SovitsJob {
   id: string;
-  kind: 'infer' | 'train';
+  /** 本地服务的四种任务：推理 / 训练 / 分离，以及两个新板块的变声与翻唱 */
+  kind: 'infer' | 'train' | 'separate' | 'vc_infer' | 'vc_train' | 'svc_infer' | 'svc_train';
   name: string;
   state: SovitsJobState;
   progress: number;

@@ -1,0 +1,6 @@
+[submodule "vendor/rvc"]
+	path = vendor/rvc
+	url = https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI.git
+[submodule "vendor/ddsp-svc"]
+	path = vendor/ddsp-svc
+	url = https://github.com/yxlllc/DDSP-SVC.git

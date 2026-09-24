@@ -34,8 +34,12 @@ from fastapi.staticfiles import StaticFiles
 
 from . import __version__
 from . import annotations
+from . import routers
+from .audio.cache import ArtifactCache
+from .audio.uvr5 import Uvr5Engine
 from .batch import BatchRunner
 from .config import AUDIO_SUFFIXES, Settings
+from .engine import EngineRegistry
 from .errors import BadRequestError, NotFoundError, SovitsError
 from .inference import SynthesisEngine
 from .jobs import Job, JobKind, JobState, JobStore
@@ -56,7 +60,10 @@ from .queue import AdmissionError, Scheduler
 from .sovits import bootstrap, catalog
 from .sovits.pipeline import Pipeline
 from .sovits.voices import VoiceLibrary
+from .svc.pipeline import SvcEngine
 from .training import TrainEngine, TrainHooks, step_stages
+from .vc.pipeline import VcEngine
+from . import weights
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 单个语料文件上限
 
@@ -81,6 +88,23 @@ class Context:
         # 允许 /v1/pipeline 在运行期切换安装目录
         self.installation: Optional[bootstrap.Installation] = None
 
+        # ---- 两个新板块的共享设施 ----
+        #
+        # 引擎注册表是显存互斥的唯一仲裁者：GPT-SoVITS（既有链路）登记进来后，
+        # RVC / DDSP-SVC / UVR5 只要都走 acquire()，就不需要互相知道对方的存在。
+        self.engines = EngineRegistry(settings)
+        self.engines.register_unloader("sovits", self.pipeline.unload)
+        self.uvr5 = Uvr5Engine(self.engines, ArtifactCache(settings.cache_dir))
+        self.svc = SvcEngine(settings)
+        self.engines.register_unloader("svc", self.svc.unload)
+        self.vc = VcEngine(settings)
+        self.engines.register_unloader("rvc", self.vc.unload)
+
+    def gpt_home(self):
+        """UVR5 住在 GPT-SoVITS 整合包里，这里统一取它的根目录。"""
+        installation = self.installation or bootstrap.current()
+        return installation.home if installation else None
+
     # ---------- 训练与推理的显存互斥 ----------
 
     def _begin_training(self) -> None:
@@ -89,12 +113,23 @@ class Context:
         训练脚本会自己加载一整套模型；本服务常驻的推理管线如果还占着显存，
         在 8GB 级别的显卡上两者会一起 OOM（这是实测出来的，不是推测）。
         释放而不是「共享」，是因为训练与推理都不可能只用到一半显存。
+
+        这里额外占住引擎注册表的「训练」位：新增的 RVC / DDSP-SVC / UVR5 也走注册表，
+        于是「训练期间拒绝一切推理与分离」这条规则对它们自动生效，
+        不需要每个板块各自记得判断一次。
         """
         self.pipeline.set_training_active(True)
         self.pipeline.unload()
+        try:
+            self.engines.acquire("train", reason="GPT-SoVITS 训练")
+        except AdmissionError:
+            # 训练是最高优先级：即便准入判断保守地拒绝了，也要把位置占住
+            self.engines.release("train")
+            self.engines.acquire("train", reason="GPT-SoVITS 训练")
 
     def _end_training(self) -> None:
         self.pipeline.set_training_active(False)
+        self.engines.release("train")
 
     # ---------- 能力判定 ----------
 
@@ -147,7 +182,18 @@ class Context:
             "voice_library": True,
             "text_split_preview": runtime.has_torch,
             "dry_run": self.settings.dry_run,
+            # 两个新板块：UVR5 分离随整合包可用，歌声转换还要看权重是否就位
+            "separation": bool(installation),
+            "singing_conversion": self._weights_ready("svc"),
+            "voice_conversion": self._weights_ready("rvc"),
         }
+
+    def _weights_ready(self, engine: str) -> bool:
+        """只看**推理必需**的权重是否就位（训练用的底模缺失不算阻断）。"""
+        report = weights.audit(self.settings, engine)
+        missing = set(report["missing"])
+        required = {w.key for w in weights.WEIGHTS if w.engine == engine and w.required}
+        return not (missing & required)
 
     def hints(self) -> List[str]:
         hints: List[str] = []
@@ -166,6 +212,25 @@ class Context:
             hints.append("首次合成需要加载模型（约 30~90 秒），之后会常驻内存")
         if not self.voices.list():
             hints.append("音色库为空：GPT-SoVITS 没有内置音色，请先导入一段 3~10 秒的参考音频")
+        hints.extend(self._extra_hints())
+        return hints
+
+    def _extra_hints(self) -> List[str]:
+        """两个新板块（变声 / 翻唱）的就绪指引。"""
+        hints: List[str] = []
+        from pathlib import Path as _Path  # noqa: PLC0415
+
+        if not _Path(self.settings.rvc_dir).is_dir() or not _Path(self.settings.ddsp_dir).is_dir():
+            hints.append(
+                "语音变声 / 歌声转换的源码未拉取：执行 git submodule update --init vendor/rvc vendor/ddsp-svc"
+            )
+        from . import weights as weights_audit  # noqa: PLC0415
+
+        missing = weights_audit.blockers(self.settings)
+        if missing:
+            hints.append(
+                "新板块缺少 %d 项预训练权重：运行 python scripts/download_models.py 自动补齐" % len(missing)
+            )
         return hints
 
 
@@ -222,6 +287,8 @@ def create_app(ctx: Context) -> FastAPI:
     _register_annotations(app, ctx)
     _register_jobs(app, ctx)
     _register_errors(app, ctx)
+    # 两个新板块（语音变声 / 歌声转换）与共用的音源分离
+    routers.register(app, ctx)
     return app
 
 
@@ -248,6 +315,7 @@ def _register_meta(app: FastAPI, ctx: Context) -> None:
             runtime=probe_current().to_dict(),
             pipeline=ctx.pipeline.status(),
             scheduler=ctx.scheduler.snapshot(),
+            engines=ctx.engines.snapshot(),
             capabilities=ctx.capabilities(),
             voices={
                 "total": len(voices),
@@ -1086,8 +1154,16 @@ def register_runners(ctx: Context) -> None:
         payload = TrainRequest(**job.request)
         return await ctx.training.run(job, payload, cancel_event)
 
+    from .routers.svc import make_svc_runner  # noqa: PLC0415
+    from .routers.uvr import make_separation_runner  # noqa: PLC0415
+    from .routers.vc import make_vc_runner, make_vc_train_runner  # noqa: PLC0415
+
     ctx.scheduler.register(JobKind.INFER, infer_runner)
     ctx.scheduler.register(JobKind.TRAIN, train_runner)
+    ctx.scheduler.register(JobKind.SEPARATE, make_separation_runner(ctx))
+    ctx.scheduler.register(JobKind.SVC_INFER, make_svc_runner(ctx))
+    ctx.scheduler.register(JobKind.VC_INFER, make_vc_runner(ctx))
+    ctx.scheduler.register(JobKind.VC_TRAIN, make_vc_train_runner(ctx))
 
 
 __all__ = ["Context", "create_app", "register_runners"]

@@ -171,6 +171,9 @@ def collect_report(settings: Settings, ctx: Context) -> dict:
         layout = installation.layout.to_dict()
         layout["python_executable"] = installation.python_executable
 
+    from app import weights as weights_audit  # noqa: PLC0415 - server.py 是顶层脚本，只能绝对导入
+
+    capabilities = ctx.capabilities()
     return {
         "version": __version__,
         "settings": settings.to_dict(),
@@ -178,6 +181,30 @@ def collect_report(settings: Settings, ctx: Context) -> dict:
         "runtime": runtime.to_dict(),
         "pipeline": ctx.pipeline.status(),
         "voices": {"total": len(ctx.voices.list())},
+        # 两个新板块：vendor 是否拉取、必需权重是否就位、模型库里有几个音色
+        "extras": {
+            "vendors": {
+                "rvc": {"path": str(settings.rvc_dir), "found": Path(settings.rvc_dir).is_dir()},
+                "svc": {"path": str(settings.ddsp_dir), "found": Path(settings.ddsp_dir).is_dir()},
+            },
+            "missing_weights": {
+                engine: [
+                    w.key
+                    for w in weights_audit.WEIGHTS
+                    if w.engine == engine and w.required and not weights_audit.target_path(w, settings).is_file()
+                ]
+                for engine in ("rvc", "svc")
+            },
+            "models": {
+                "rvc": len(list(Path(settings.vc_dir / "models").glob("*.pth"))),
+                "svc": len(list(Path(settings.svc_dir / "models").glob("*.pt"))),
+            },
+            "capabilities": {
+                "separation": capabilities["separation"],
+                "voice_conversion": capabilities["voice_conversion"],
+                "singing_conversion": capabilities["singing_conversion"],
+            },
+        },
         "blockers": blockers,
         "warnings": settings.warnings(),
         "hints": ctx.hints(),
@@ -235,6 +262,26 @@ def print_report(report: dict) -> None:
           % (pipeline["target_version"], pipeline["target_device"], pipeline["target_is_half"]))
     print("      音色库  : %d 条" % report["voices"]["total"])
     print()
+
+    extras = report.get("extras")
+    if extras:
+        print("  新板块    :")
+        labels = (("rvc", "语音变声"), ("svc", "歌声转换"))
+        for key, label in labels:
+            vendor = extras["vendors"][key]
+            missing = extras["missing_weights"].get(key) or []
+            if not vendor["found"]:
+                status = "缺源码（git submodule update --init）"
+            elif missing:
+                status = "缺权重 %s（scripts/download_models.py --engine %s）" % (
+                    "、".join(missing),
+                    "rvc" if key == "rvc" else "svc",
+                )
+            else:
+                status = "可用（%d 个音色）" % extras["models"][key]
+            print("      %s  : %s" % (label, status))
+        print("      分离    : %s" % ("可用（UVR5 随整合包）" if extras["capabilities"]["separation"] else "不可用"))
+        print()
 
     blockers = report["blockers"]
     if blockers:
