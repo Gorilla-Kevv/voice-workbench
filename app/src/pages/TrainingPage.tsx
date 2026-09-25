@@ -30,6 +30,7 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
+import { FlowGuide } from '@/components/features/FlowGuide';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
 import { cn } from '@/lib/utils';
@@ -60,6 +61,12 @@ const STAGE_LABELS: Record<string, string> = {
 };
 
 const POLL_INTERVAL_MS = 2_000;
+
+/**
+ * 官方明确建议训练使用的版本。
+ * 开发者原话：「只建议 V2 Pro / V2 Pro Plus，前三个别选」—— 其余版本不建议用于训练。
+ */
+const OFFICIAL_VERSIONS = ['v2Pro', 'v2ProPlus'];
 
 /** 数值滑块：标签 + 当前值 + 滑块。切分参数这类「有明确取值范围」的数值都用它。 */
 function ParamSlider({
@@ -926,6 +933,9 @@ export function TrainingPage() {
                   {versionOptions.map((item) => (
                     <SelectItem key={item.id} value={item.id} title={item.note}>
                       {item.label}
+                      {OFFICIAL_VERSIONS.includes(item.id) ? (
+                        <span className="text-emerald-600 dark:text-emerald-400"> · 官方推荐</span>
+                      ) : null}
                       {item.note ? <span className="text-muted-foreground"> · {item.note}</span> : null}
                     </SelectItem>
                   ))}
@@ -1620,6 +1630,10 @@ export function TrainingPage() {
           </p>
         )
       )}
+
+      {/* 官方推荐流程：贴在右边缘，鼠标移过去即展开。训练步骤多且顺序有讲究，
+          光靠表单上的标签不足以让人知道「下一步该干什么」。 */}
+      <FlowGuide page="training" />
     </div>
   );
 }
