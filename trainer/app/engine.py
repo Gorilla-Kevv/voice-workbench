@@ -75,6 +75,9 @@ ENGINES: Dict[str, EngineInfo] = {
     "uvr5": EngineInfo(
         "uvr5", "UVR5 音源分离", 4096, "人声/伴奏分离、去混响、去回声", training=False
     ),
+    "asr": EngineInfo(
+        "asr", "ASR 语音转文本", 2048, "语音转文本：FunASR / faster-whisper，含逐字打标", training=False
+    ),
     "train": EngineInfo(
         "train", "模型训练", 6144, "训练独占显卡期间拒绝一切推理", training=True
     ),

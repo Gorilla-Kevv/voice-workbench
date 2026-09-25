@@ -60,6 +60,17 @@ GPT-SoVITS 侧的推理参数（切分方式、top_k/top_p、temperature、repet
 细节见 [`docs/VOICE-CONVERSION.md`](docs/VOICE-CONVERSION.md) 与
 [`docs/SINGING-CONVERSION.md`](docs/SINGING-CONVERSION.md)。
 
+### 语音转文本（独立入口）
+
+第五个板块，同样与 GPT-SoVITS 共用「本地引擎 + 显存互斥调度」：
+
+| 板块 | 模型 | 场景 | 亮点 |
+| --- | --- | --- | --- |
+| 语音转文本 | [FunASR](https://github.com/modelscope/FunASR) / [faster-whisper](https://github.com/SYSTRAN/faster-whisper) | 参考文本一键转写；批量语料 → 带标注的数据集 | 「导入音色」里点一下把参考音频转成逐字文本；**训练入口**把一批音频转成逐字文本 + 官方格式清单，直接喂给训练流水线 |
+
+两条通道（模型常驻 / 整合包官方脚本）与降级规则、模块边界与调用关系见
+[`docs/ASR.md`](docs/ASR.md)。
+
 ---
 
 ## 架构
@@ -144,10 +155,11 @@ ttstool/
 │   │   │   └── mixer.py          # 混音（增益 / 延迟对齐 / 淡入淡出）
 │   │   ├── vc/                   # 语音变声板块（RVC 直连层）
 │   │   ├── svc/                  # 歌声转换板块（DDSP-SVC 直连层）
+│   │   ├── asr/                  # 语音转文本板块：常驻转写 + 数据集训练入口
 │   │   ├── engine.py             # 引擎注册表：独占加载、显存互斥、状态汇总
 │   │   ├── vendor_paths.py       # temporary_context：临时 sys.path + cwd
 │   │   ├── weights.py            # 预训练权重清单与体检
-│   │   ├── routers/              # /v1/engines、/v1/uvr、/v1/vc、/v1/svc 路由
+│   │   ├── routers/              # /v1/engines、/v1/uvr、/v1/asr、/v1/vc、/v1/svc 路由
 │   │   ├── inference.py          # 合成执行层
 │   │   ├── batch.py              # 批量合成编排（清单 / ZIP / 逐条容错）
 │   │   ├── training.py           # 训练流水线（11 个阶段）
@@ -291,6 +303,11 @@ npm run sovits:check
 
 1. 「音色库」→ 导入音色：上传一段 **3~10 秒**、单人、无背景音的音频，
    并填写它的**逐字转写文本**。（页面会直接回放这段音频，方便你判断素材质量）
+   - 不知道这段音频说了什么，直接点「**一键智能转写（标注 ASR 模型）**」：
+     本地 ASR 会识别出逐字文本并填进文本框，**对照音频核对一遍再保存**即可
+     —— 错字会被直接学进模型；
+   - 想给一批语料打底稿，用「语音转文本」页面的**训练入口**：
+     一批音频 → 逐字文本 + 官方格式清单，产物可直接在「模型训练」里使用。
 2. 「通用合成」→ 在设置页把模型切到 GPT-SoVITS → 选择刚导入的音色 → 合成。
    - 或直接去「批量合成」，那里也能选音色。
 
@@ -367,7 +384,7 @@ npm run sovits:check
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/v1/engines` | 四个本地引擎（GPT-SoVITS / RVC / DDSP-SVC / UVR5）的显存互斥状态 |
+| GET | `/v1/engines` | 五个本地引擎（GPT-SoVITS / RVC / DDSP-SVC / UVR5 / ASR）的显存互斥状态 |
 | POST | `/v1/engines/unload` | 手动卸载指定引擎并归还显存 |
 | GET | `/v1/uvr/catalog` · `/v1/uvr/cache` | 分离档位与预置 · 缓存盘点 |
 | POST | `/v1/uvr/separate` | UVR5 分离（人声 / 伴奏，可同步等待或任务化） |
@@ -380,6 +397,10 @@ npm run sovits:check
 | POST | `/v1/svc/models/load` · `/v1/svc/models/upload` | 热加载 · 导入 .pt + config.yaml |
 | POST | `/v1/svc/convert` | 干声直接转换 |
 | POST | `/v1/svc/cover` | 翻唱向导：分离 → 转换 → 混音，三件套产物 |
+| GET | `/v1/asr/catalog` · `/v1/asr/pipeline` | ASR 能力清单与两条通道体检 · 引擎状态 |
+| POST | `/v1/asr/transcribe` | 单条转写（同步），供音色库的「一键智能转写」 |
+| POST | `/v1/asr/train/plan` · `/v1/asr/train` | 训练入口预检 · 批量音频 → 逐字文本数据集 |
+| GET | `/v1/asr/datasets` | 已生成的数据集盘点 |
 
 统一响应格式：成功 `{ ok: true, ... }`；失败 `{ ok: false, error: { code, message, retryable, hint } }`。
 `hint` 是面向使用者的「下一步该做什么」，前端会直接展示。
@@ -447,6 +468,7 @@ npm run sovits:check
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) —— 三层架构与关键设计取舍
 - [`docs/GPT-SOVITS.md`](docs/GPT-SOVITS.md) —— 从官方仓库移植了哪些能力、文件与参数对照
 - [`docs/TRAINING.md`](docs/TRAINING.md) —— 本地训练完整指南与调参建议
+- [`docs/ASR.md`](docs/ASR.md) —— 语音转文本的模块划分、两条通道与训练入口的调用关系
 - [`trainer/README.md`](trainer/README.md) —— 本地模型服务的分层、接口与排障
 
 ## 常见问题

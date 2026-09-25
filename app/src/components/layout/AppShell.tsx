@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import {
   AudioLines,
+  Captions,
   Disc3,
   FlaskConical,
   History,
@@ -69,7 +70,7 @@ const SOVITS_STATUS_TEXT: Record<SovitsLinkState, { title: string; hint: string 
  * 与 GPT-SoVITS 的三态文案刻意保持同一句式，用户不需要重新学习一套提示语。
  */
 const MODULE_STATUS_TEXT: Record<
-  'rvc' | 'svc',
+  'rvc' | 'svc' | 'asr',
   { label: string; states: Record<ModuleStates['rvc'], { title: string; hint: string }> }
 > = {
   rvc: {
@@ -88,6 +89,15 @@ const MODULE_STATUS_TEXT: Record<
       ready: { title: '歌声转换 · 已就绪', hint: 'DDSP-SVC 引擎待命，UVR5 分离随整合包可用' },
       incomplete: { title: '歌声转换 · 待补齐', hint: '缺源码或缺权重：git submodule update --init 后运行 scripts/download_models.py --engine svc' },
       offline: { title: '歌声转换 · 未连接', hint: '本地服务未启动（运行 start.bat），界面会自动重连' },
+    },
+  },
+  asr: {
+    label: 'ASR 转写',
+    states: {
+      checking: { title: '语音转文本 · 正在连接', hint: '与本地服务同源，冷启动期间不可用' },
+      ready: { title: '语音转文本 · 已就绪', hint: '常驻模型或整合包脚本至少一条通道可用' },
+      incomplete: { title: '语音转文本 · 待补齐', hint: '两条通道都不可用：装 funasr / faster-whisper，或确认整合包里有 tools/asr/ 脚本' },
+      offline: { title: '语音转文本 · 未连接', hint: '本地服务未启动（运行 start.bat），界面会自动重连' },
     },
   },
 };
@@ -118,6 +128,13 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
       { key: 'rvc', label: '语音变声', icon: MicVocal, hint: 'RVC · 说话配音换音色' },
       { key: 'svc', label: '歌声转换', icon: Disc3, hint: 'DDSP-SVC · 翻唱与歌声' },
     ],
+  },
+  {
+    // 语音转文本是独立引擎（FunASR / faster-whisper），与变声、转换不是同一条链路，
+    // 所以单独成组。它在产品上有两个身份：音色库的「打底稿」工具，
+    // 以及「把一批音频变成带标注的数据集」的训练入口。
+    title: '语音与文本',
+    items: [{ key: 'asr', label: '语音转文本', icon: Captions, hint: 'ASR · 音频转逐字文本与训练数据集' }],
   },
   {
     title: '本机',
@@ -172,7 +189,7 @@ export function AppShell({
   children,
   header,
   sovitsState = 'offline',
-  moduleStates = { rvc: 'checking', svc: 'checking' },
+  moduleStates = { rvc: 'checking', svc: 'checking', asr: 'checking' },
 }: AppShellProps) {
   const keyReady = hasServerKey || hasUserKey;
   const sovits = SOVITS_STATUS_TEXT[sovitsState];
@@ -258,8 +275,8 @@ export function AppShell({
 
             <LinkCard state={sovitsState} title={sovits.title} hint={sovits.hint} />
 
-            {/* 两个新板块：与 GPT-SoVITS 同一份探活数据，同一套卡片样式 */}
-            {(['rvc', 'svc'] as const).map((key) => {
+            {/* 各板块：与 GPT-SoVITS 同一份探活数据，同一套卡片样式 */}
+            {(['rvc', 'svc', 'asr'] as const).map((key) => {
               const module = MODULE_STATUS_TEXT[key];
               const state = module.states[moduleStates[key]];
               return <LinkCard key={key} state={moduleStates[key]} title={state.title} hint={state.hint} />;

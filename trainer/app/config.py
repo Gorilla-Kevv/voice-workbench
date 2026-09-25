@@ -160,6 +160,18 @@ class Settings:
     #: 分离与特征的中间结果是否复用（换音色重跑时跳过，最省时的一环）
     uvr_cache_enabled: bool = True
 
+    # ---------- ASR 语音转文本默认值 ----------
+    #: 默认后端；留空表示自动（常驻通道优先，其次整合包里的官方脚本）
+    asr_backend: str = ""
+    #: 官方脚本的尺寸语义（tiny~large）；常驻通道另有模型标识，见 asr/catalog.py
+    asr_size: str = "large"
+    asr_language: str = "zh"
+    asr_precision: str = "float32"
+    #: 常驻通道的设备；"auto" 交给后端自己决定
+    asr_device: str = "auto"
+    #: 同一段音频 + 同一组参数只转写一次（音色库反复导入同一素材时最省时）
+    asr_cache_enabled: bool = True
+
     # ---------- 存储 ----------
     data_dir: Path = field(default_factory=lambda: ROOT / ".data")
     #: 输出音频保留天数（0 表示不清理）
@@ -212,6 +224,11 @@ class Settings:
     def svc_dir(self) -> Path:
         """歌声转换（DDSP-SVC）：音色模型、实验。"""
         return self.data_dir / "svc"
+
+    @property
+    def asr_dir(self) -> Path:
+        """语音转文本（ASR）：数据集、转写工作区、脚本通道产物。"""
+        return self.data_dir / "asr"
 
     @property
     def separation_dir(self) -> Path:
@@ -306,6 +323,12 @@ class Settings:
             uvr_format=_env_str("UVR_FORMAT", "wav"),
             uvr_agg=_env_int("UVR_AGG", 10),
             uvr_cache_enabled=_env_bool("UVR_CACHE", True),
+            asr_backend=_env_str("ASR_BACKEND"),
+            asr_size=_env_str("ASR_SIZE", "large"),
+            asr_language=_env_str("ASR_LANGUAGE", "zh"),
+            asr_precision=_env_str("ASR_PRECISION", "float32"),
+            asr_device=_env_str("ASR_DEVICE", "auto") or "auto",
+            asr_cache_enabled=_env_bool("ASR_CACHE", True),
             data_dir=data_dir,
             output_retention_days=_env_int("OUTPUT_RETENTION_DAYS", 30),
             dry_run=_env_bool("TTS_DRY_RUN", False),
@@ -355,6 +378,8 @@ class Settings:
             self.cache_dir,
             self.vc_dir,
             self.svc_dir,
+            # 语音转文本：数据集与转写工作区
+            self.asr_dir,
         ):
             path.mkdir(parents=True, exist_ok=True)
 
@@ -375,6 +400,13 @@ class Settings:
             "uvr_format": self.uvr_format,
             "uvr_agg": self.uvr_agg,
             "uvr_cache_enabled": self.uvr_cache_enabled,
+            "asr_backend": self.asr_backend or "auto",
+            "asr_size": self.asr_size,
+            "asr_language": self.asr_language,
+            "asr_precision": self.asr_precision,
+            "asr_device": self.asr_device,
+            "asr_cache_enabled": self.asr_cache_enabled,
+            "asr_dir": str(self.asr_dir),
             "default_version": self.default_version,
             "default_prompt_lang": self.default_prompt_lang,
             "device": self.device,

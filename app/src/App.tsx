@@ -12,6 +12,7 @@ import { FALLBACK_PRESET_VOICES, MODE_META } from '@/lib/constants';
 import type { RequestError } from '@/lib/errors';
 import { getProvider } from '@/lib/providers/registry';
 import { sovitsApi } from '@/lib/sovits';
+import { AsrPage } from '@/pages/AsrPage';
 import { BatchPage } from '@/pages/BatchPage';
 import { HistoryPage } from '@/pages/HistoryPage';
 import { SettingsPage } from '@/pages/SettingsPage';
@@ -75,11 +76,15 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: '歌声转换',
     description: 'DDSP-SVC · 歌曲翻唱与歌声变声，联动 UVR5 分离，产出人声 / 伴奏 / 混音三件套',
   },
+  asr: {
+    title: '语音转文本',
+    description: 'ASR · 单条音频立刻出逐字文本，也可把一批音频转成带标注的训练数据集',
+  },
   settings: { title: '设置', description: '配置两套模型的服务地址、密钥与合成偏好' },
 };
 
 /** 不依赖云端密钥的页面（走本地服务或纯客户端） */
-const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc'];
+const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc', 'asr'];
 
 /**
  * 导航键 → MiMo 模型模式。
@@ -142,8 +147,12 @@ function App() {
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [presets, setPresets] = useState<PresetVoice[]>(FALLBACK_PRESET_VOICES);
   const [sovitsState, setSovitsState] = useState<SovitsLinkState>('checking');
-  // 两个新板块的侧栏状态：与 GPT-SoVITS 同一次探活里顺带得出，不再单独轮询
-  const [moduleStates, setModuleStates] = useState<ModuleStates>({ rvc: 'checking', svc: 'checking' });
+  // 各板块的侧栏状态：与 GPT-SoVITS 同一次探活里顺带得出，不再单独轮询
+  const [moduleStates, setModuleStates] = useState<ModuleStates>({
+    rvc: 'checking',
+    svc: 'checking',
+    asr: 'checking',
+  });
 
   const history = useHistory(settings.historyLimit);
   const { add: addHistory, records, loading, remove, clear, loadAudio } = history;
@@ -200,18 +209,21 @@ function App() {
 
     const probe = async () => {
       let healthy = false;
-      let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline' };
+      let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline', asr: 'offline' };
       try {
         const result = await sovitsApi.health();
         if (cancelled) return;
         // 环境就绪即视为可用；权重缺失之类的阻断项由各页面自己提示
         healthy = result.ok;
         if (healthy) {
-          // 两个新板块的判定来自同一次 /health：vendor 与必需权重都齐才算就绪
+          // 各板块的判定来自同一次 /health：vendor 与必需权重都齐才算就绪。
+          // ASR 的语义稍有不同：它没有权重清单，两条通道（常驻依赖 / 整合包脚本）
+          // 至少一条可用即算就绪。
           const caps = result.capabilities;
           nextModules = {
             rvc: caps?.voice_conversion ? 'ready' : 'incomplete',
             svc: caps?.singing_conversion ? 'ready' : 'incomplete',
+            asr: caps?.speech_recognition ? 'ready' : 'incomplete',
           };
         }
       } catch {
@@ -277,7 +289,9 @@ function App() {
               ? '本地 RVC · vendor/rvc'
               : active === 'svc'
                 ? '本地 DDSP-SVC · vendor/ddsp-svc'
-                : '客户端配置';
+                : active === 'asr'
+                  ? '本地 ASR · FunASR / faster-whisper'
+                  : '客户端配置';
     return { ...meta, model };
   }, [active, settings.providerId]);
 
@@ -334,6 +348,7 @@ function App() {
         {active === 'training' ? <TrainingPage /> : null}
         {active === 'rvc' ? <VoiceConversionPage /> : null}
         {active === 'svc' ? <SingingConversionPage /> : null}
+        {active === 'asr' ? <AsrPage /> : null}
 
         {active === 'settings' ? (
           <SettingsPage

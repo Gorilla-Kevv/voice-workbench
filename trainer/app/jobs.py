@@ -46,11 +46,15 @@ class JobKind(str, Enum):
     #: 歌声转换（DDSP-SVC）：推理（含翻唱向导）与训练
     SVC_INFER = "svc_infer"
     SVC_TRAIN = "svc_train"
+    #: 语音转文本（ASR）：批量音频 → 逐字文本数据集。
+    #: 名字里带 train，是因为它是「训练入口」—— 产出的是**训练数据**，不是模型权重。
+    #: 它实际做的是逐条推理，因此归在推理池，而不是训练池（见 routers/asr.py 的说明）。
+    ASR_TRAIN = "asr_train"
 
 
 #: 走「推理池」的种类：短任务，秒级~分钟级
 INFER_POOL: frozenset = frozenset(
-    {JobKind.INFER, JobKind.SEPARATE, JobKind.VC_INFER, JobKind.SVC_INFER}
+    {JobKind.INFER, JobKind.SEPARATE, JobKind.VC_INFER, JobKind.SVC_INFER, JobKind.ASR_TRAIN}
 )
 
 #: 走「训练池」的种类：长任务，独占显卡

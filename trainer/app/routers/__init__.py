@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 
-from . import engines, svc, uvr, vc
+from . import asr, engines, svc, uvr, vc
 
 
 def register(app: FastAPI, ctx) -> None:
@@ -22,8 +22,9 @@ def register(app: FastAPI, ctx) -> None:
     """
     engines.register(app, ctx)
     uvr.register(app, ctx)
+    asr.register(app, ctx)
     svc.register(app, ctx)
     vc.register(app, ctx)
 
 
-__all__ = ["register", "engines", "svc", "uvr", "vc"]
+__all__ = ["register", "asr", "engines", "svc", "uvr", "vc"]

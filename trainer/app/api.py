@@ -35,6 +35,7 @@ from fastapi.staticfiles import StaticFiles
 from . import __version__
 from . import annotations
 from . import routers
+from .asr.pipeline import AsrEngine
 from .audio.cache import ArtifactCache
 from .audio.uvr5 import Uvr5Engine
 from .batch import BatchRunner
@@ -99,6 +100,10 @@ class Context:
         self.engines.register_unloader("svc", self.svc.unload)
         self.vc = VcEngine(settings)
         self.engines.register_unloader("rvc", self.vc.unload)
+        # ASR 也吃显存，因此同样登记进注册表：转写期间会请走其它引擎，
+        # 反过来别人在场时转写也会先把它卸掉 —— 规则统一，没有例外。
+        self.asr = AsrEngine(settings)
+        self.engines.register_unloader("asr", self.asr.unload)
 
     def gpt_home(self):
         """UVR5 住在 GPT-SoVITS 整合包里，这里统一取它的根目录。"""
@@ -186,7 +191,25 @@ class Context:
             "separation": bool(installation),
             "singing_conversion": self._weights_ready("svc"),
             "voice_conversion": self._weights_ready("rvc"),
+            "speech_recognition": self._asr_ready(),
         }
+
+    def _asr_ready(self) -> bool:
+        """ASR 就绪 = 至少有一条通道能用。
+
+        刻意用 `module_present()`（只查包在不在）而不是真导入：`/health` 会被
+        前端反复轮询，而 `import funasr` 顺带拉起 torch，几秒钟就过去了。
+        """
+        from .asr import bootstrap as asr_bootstrap  # noqa: PLC0415
+        from .asr import catalog as asr_catalog  # noqa: PLC0415
+
+        for backend in asr_catalog.BACKENDS:
+            if asr_bootstrap.script_available(self.settings, backend):
+                return True
+            module = asr_catalog.resident_channel_module(backend)
+            if module and asr_bootstrap.module_present(module):
+                return True
+        return False
 
     def _weights_ready(self, engine: str) -> bool:
         """只看**推理必需**的权重是否就位（训练用的底模缺失不算阻断）。"""
@@ -1154,6 +1177,7 @@ def register_runners(ctx: Context) -> None:
         payload = TrainRequest(**job.request)
         return await ctx.training.run(job, payload, cancel_event)
 
+    from .routers.asr import make_asr_train_runner  # noqa: PLC0415
     from .routers.svc import make_svc_runner  # noqa: PLC0415
     from .routers.uvr import make_separation_runner  # noqa: PLC0415
     from .routers.vc import make_vc_runner, make_vc_train_runner  # noqa: PLC0415
@@ -1164,6 +1188,7 @@ def register_runners(ctx: Context) -> None:
     ctx.scheduler.register(JobKind.SVC_INFER, make_svc_runner(ctx))
     ctx.scheduler.register(JobKind.VC_INFER, make_vc_runner(ctx))
     ctx.scheduler.register(JobKind.VC_TRAIN, make_vc_train_runner(ctx))
+    ctx.scheduler.register(JobKind.ASR_TRAIN, make_asr_train_runner(ctx))
 
 
 __all__ = ["Context", "create_app", "register_runners"]

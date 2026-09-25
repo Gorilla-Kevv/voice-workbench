@@ -260,20 +260,29 @@ SLICE_DEFAULTS: Dict[str, float] = {
 # precisions 取自官方 `tools/asr/config.py::asr_dict`，不是猜的：
 #   FunASR 只给了 float32（且该脚本的 -p 参数官方注明「还没接入」，实际不生效）；
 #   faster-whisper 才真正把它传给 WhisperModel(compute_type=...)。
+#: 2026-09 对照整合包（GPT-SoVITS-v2pro-20250604）内的官方脚本逐项核对过：
+#: 这里每一项的取值都必须落在脚本 argparse 的 `choices` 里，否则脚本会以
+#: 「invalid choice」直接退出，而不是优雅降级。
 ASR_BACKENDS: Dict[str, Dict[str, Any]] = {
     "funasr": {
         "script": "tools/asr/funasr_asr.py",
         "label": "FunASR（中文/粤语最佳，含标点）",
-        "sizes": ["tiny", "base", "small", "medium", "large"],
-        "languages": ["zh", "en", "ja", "ko", "yue"],
-        "precisions": ["float32"],
+        # 官方脚本的 `-s` 只是占位：模型由 `create_model()` 固定为 Paraformer-large。
+        # 曾经这里列了 tiny~large 五个值，但只有 large 是有意义的。
+        "sizes": ["large"],
+        # 官方 `-l` 的 choices 是 zh / yue / auto，但 `create_model()` 只处理 zh 与 yue，
+        # 传 auto 会在构造模型时抛 `ValueError`。因此只列真正可用的两个。
+        "languages": ["zh", "yue"],
+        "precisions": ["float32", "float16"],
         "precision_effective": False,
         "needs_gpu": True,
     },
     "fasterwhisper": {
         "script": "tools/asr/fasterwhisper_asr.py",
         "label": "faster-whisper（多语种，速度快）",
-        "sizes": ["tiny", "base", "small", "medium", "large-v2", "large-v3"],
+        # `-s` 的 choices 来自官方 `tools/asr/config.py::get_models()`；
+        # 脚本另外把 "large" 归一成 "large-v3"，所以 large 也保留。
+        "sizes": ["medium", "medium.en", "large", "large-v2", "large-v3", "large-v3-turbo"],
         "languages": ["zh", "en", "ja", "ko", "yue", "auto"],
         "precisions": ["float32", "float16", "int8"],
         "precision_effective": True,

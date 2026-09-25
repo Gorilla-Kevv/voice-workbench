@@ -194,6 +194,8 @@ export type ModuleState = 'checking' | 'ready' | 'incomplete' | 'offline';
 export interface ModuleStates {
   rvc: ModuleState;
   svc: ModuleState;
+  /** 语音转文本（ASR）：「待补齐」表示两条通道都不可用 */
+  asr: ModuleState;
 }
 
 export interface SovitsHealth {
@@ -222,6 +224,12 @@ export interface SovitsHealth {
     voice_conversion: boolean;
     /** 歌声转换（DDSP-SVC）：vendor + 必需权重齐备 */
     singing_conversion: boolean;
+    /**
+     * 语音转文本（ASR）：常驻依赖已安装，或整合包里的官方脚本在位。
+     *
+     * 与其它板块不同 —— ASR 没有权重清单，「两条通道至少一条可用」即算就绪。
+     */
+    speech_recognition: boolean;
   };
   voices: { total: number; usable: number };
   blockers: string[];

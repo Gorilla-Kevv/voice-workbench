@@ -14,6 +14,9 @@ export * from './vc';
 /** 歌声转换板块（DDSP-SVC）的契约类型 */
 export * from './svc';
 
+/** 语音转文本板块（ASR）的契约类型 */
+export * from './asr';
+
 /** 三种 MiMo 语音模型对应的功能模式 */
 export type TtsMode = 'preset' | 'design' | 'clone';
 
@@ -30,7 +33,9 @@ export type NavKey =
   /** 语音变声（RVC） */
   | 'rvc'
   /** 歌声转换（DDSP-SVC） */
-  | 'svc';
+  | 'svc'
+  /** 语音转文本（ASR） */
+  | 'asr';
 
 /**
  * 本地模型服务的连接状态。

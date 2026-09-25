@@ -9,6 +9,7 @@ import {
   Plus,
   RefreshCw,
   Server,
+  Sparkles,
   Trash2,
   Upload,
 } from 'lucide-react';
@@ -32,6 +33,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
+import { asrApi } from '@/lib/asr';
 import { formatBytes, formatDuration, formatRelativeTime } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
@@ -59,6 +61,8 @@ export function VoiceLibraryPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  /** 「一键智能转写」的独立忙碌态：它与「保存音色」互不阻塞 */
+  const [transcribing, setTranscribing] = useState(false);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [editing, setEditing] = useState<SovitsVoice | null>(null);
@@ -72,6 +76,46 @@ export function VoiceLibraryPage() {
   const [file, setFile] = useState<File | null>(null);
   const [externalPath, setExternalPath] = useState('');
   const fileRef = useRef<HTMLInputElement | null>(null);
+
+  /**
+   * 一键智能转写：把已选中的参考音频交给 ASR，结果直接填进「参考文本」。
+   *
+   * 为什么值得做成一个按钮：参考文本必须逐字正确 —— 错字会被**直接学进模型**，
+   * 表现为某些字读音怪异，事后极难定位；而边听边打字既慢又必然出错。
+   *
+   * 只传语种，其余参数交给服务端的场景预设（reference）：参考音频只有 3~10 秒，
+   * 参数取向是「逐字准确」，不该让用户在这里做 tiny/large 的取舍。
+   */
+  const handleTranscribe = useCallback(async () => {
+    if (!file && !externalPath.trim()) {
+      toast.warning('请先选择参考音频，或填写一个本机路径');
+      return;
+    }
+    setTranscribing(true);
+    try {
+      const result = await asrApi.transcribe({
+        file: file ?? undefined,
+        source: file ? undefined : externalPath.trim(),
+        language: promptLang || 'zh',
+      });
+      if (!result.text) {
+        toast.warning('未识别到文本', {
+          description: result.warning ?? '试着手动填写，或换一段更干净、更清晰的人声。',
+        });
+        return;
+      }
+      setPromptText(result.text);
+      toast.success('已转写并填入参考文本', {
+        description: `${result.channel === 'resident' ? '常驻模型' : '官方脚本'} · ${result.backend} · ${result.elapsed_s} 秒${
+          result.cached ? ' · 命中缓存' : ''
+        }`,
+      });
+    } catch (err) {
+      toast.error('智能转写失败', { description: (err as RequestError).fullMessage });
+    } finally {
+      setTranscribing(false);
+    }
+  }, [file, externalPath, promptLang]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -418,9 +462,33 @@ export function VoiceLibraryPage() {
 
             <div className="grid gap-3 sm:grid-cols-[1fr_140px]">
               <div className="space-y-2">
-                <Label htmlFor="voice-prompt">
-                  <TermTip term="提示文本">参考文本（逐字转写）</TermTip>
-                </Label>
+                <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+                  <Label htmlFor="voice-prompt">
+                    <TermTip term="提示文本">参考文本（逐字转写）</TermTip>
+                  </Label>
+                  {/*
+                    一键智能转写：把上面已选中的参考音频交给本地 ASR，
+                    结果直接填进这个文本框。文案里保留「标注 ASR 模型」，
+                    是为了让用户明确知道这段文字是**模型识别**出来的，必须自己核对 ——
+                    错字会被直接学进音色。
+                  */}
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="h-7 px-2 text-xs"
+                    title="用本地 ASR 模型识别参考音频，自动填入逐字转写文本。识别结果需要人工核对。"
+                    disabled={transcribing || submitting || (!file && !externalPath.trim())}
+                    onClick={() => void handleTranscribe()}
+                  >
+                    {transcribing ? (
+                      <Loader2 className="mr-1 size-3 animate-spin" />
+                    ) : (
+                      <Sparkles className="mr-1 size-3" />
+                    )}
+                    一键智能转写（标注 ASR 模型）
+                  </Button>
+                </div>
                 <Textarea
                   id="voice-prompt"
                   value={promptText}
@@ -429,7 +497,7 @@ export function VoiceLibraryPage() {
                   className="min-h-[72px]"
                 />
                 <p className="text-[11px] text-muted-foreground">
-                  缺少参考文本会导致相似度明显下降，v3/v4 模型还会直接报错
+                  缺少参考文本会导致相似度明显下降，v3/v4 模型还会直接报错；自动转写的结果请对照音频核对一遍
                 </p>
               </div>
               <div className="space-y-2">

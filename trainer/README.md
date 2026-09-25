@@ -67,6 +67,7 @@ trainer/
 │   ├── training.py           # 训练流水线：11 个阶段，全部调用官方脚本
 │   ├── api.py                # HTTP 路由
 │   ├── jobs.py / queue.py    # 任务持久化与调度（进度 / 日志 / 取消）
+│   ├── asr/                  # 语音转文本板块：catalog / bootstrap / pipeline / training
 │   ├── discovery.py          # 整合包定位与权重盘点
 │   └── runtime.py            # 运行环境探测（启动前子进程 / 运行中进程内）
 ├── requirements.txt
@@ -96,6 +97,7 @@ trainer/
 ├── outputs/               # 合成产物；批量任务在 outputs/batch/<任务号>/
 ├── jobs/                  # 任务元数据（服务重启后仍可查历史与日志）
 ├── uploads/               # 上传的语料
+├── asr/                   # 语音转文本：datasets/ 数据集、work/ 中间 wav、script/ 脚本通道产物
 └── experiments/<实验名>/   # 训练实验：dataset/ 配置 日志 检查点
 ```
 
