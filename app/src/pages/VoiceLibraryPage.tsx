@@ -501,7 +501,9 @@ export function VoiceLibraryPage() {
                 </p>
               </div>
               <div className="space-y-2">
-                <Label>参考音频语种</Label>
+                <Label>
+                            <TermTip term="参考音频语种" />
+                          </Label>
                 <Select value={promptLang} onValueChange={setPromptLang}>
                   <SelectTrigger>
                     <SelectValue />
@@ -578,7 +580,9 @@ export function VoiceLibraryPage() {
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label>语种</Label>
+                  <Label>
+                            <TermTip term="参考音频语种">语种</TermTip>
+                          </Label>
                   <Select
                     value={editing.prompt_lang}
                     onValueChange={(value) => setEditing({ ...editing, prompt_lang: value })}

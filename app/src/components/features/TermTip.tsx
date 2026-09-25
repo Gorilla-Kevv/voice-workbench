@@ -96,6 +96,12 @@ export function TermTip({ term, children, className }: TermTipProps) {
       <p className="font-medium">{entry.term}</p>
       <p className="text-foreground/90">{entry.definition}</p>
       {entry.impact ? <p className="text-muted-foreground">{entry.impact}</p> : null}
+      {/* 示例单独成块：等宽字体 + 左侧色条，和正文区分开，便于一眼抓到具体数值 */}
+      {entry.example ? (
+        <p className="mt-1.5 rounded-r border-l-2 border-violet-400/70 bg-violet-500/10 px-2 py-1 font-mono text-[11px] leading-snug text-foreground/90">
+          {entry.example}
+        </p>
+      ) : null}
     </div>
   );
 

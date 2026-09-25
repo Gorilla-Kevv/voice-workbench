@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
@@ -366,7 +367,9 @@ export function AsrPage() {
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="space-y-2">
-            <Label>场景预设</Label>
+            <Label>
+                    <TermTip term="场景预设" />
+                  </Label>
             <div className="flex flex-wrap gap-2">
               {(catalog?.presets ?? []).map((item) => (
                 <Button
@@ -384,7 +387,9 @@ export function AsrPage() {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="space-y-1.5">
-              <Label>后端</Label>
+              <Label>
+                    <TermTip term="ASR">后端</TermTip>
+                  </Label>
               <Select value={backend} onValueChange={handleBackendChange}>
                 <SelectTrigger>
                   <SelectValue placeholder="选择后端" />
@@ -399,7 +404,9 @@ export function AsrPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>模型尺寸</Label>
+              <Label>
+                    <TermTip term="模型规模">模型尺寸</TermTip>
+                  </Label>
               <Select value={size} onValueChange={setSize}>
                 <SelectTrigger>
                   <SelectValue placeholder="尺寸" />
@@ -414,7 +421,9 @@ export function AsrPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>语种</Label>
+              <Label>
+                    <TermTip term="语料语种">语种</TermTip>
+                  </Label>
               <Select value={language} onValueChange={setLanguage}>
                 <SelectTrigger>
                   <SelectValue placeholder="语种" />
@@ -429,7 +438,9 @@ export function AsrPage() {
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>精度</Label>
+              <Label>
+                    <TermTip term="精度" />
+                  </Label>
               <Select value={precision} onValueChange={setPrecision}>
                 <SelectTrigger>
                   <SelectValue placeholder="精度" />
@@ -452,7 +463,9 @@ export function AsrPage() {
           ) : null}
 
           <div className="space-y-1.5 sm:max-w-xs">
-            <Label>优先通道</Label>
+            <Label>
+                    <TermTip term="优先通道" />
+                  </Label>
             <Select value={channelPref || 'auto'} onValueChange={(value) => setChannelPref(value === 'auto' ? '' : value)}>
               <SelectTrigger>
                 <SelectValue />
@@ -577,11 +590,15 @@ export function AsrPage() {
         <CardContent className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="asr-ds-name">数据集名称</Label>
+              <Label htmlFor="asr-ds-name">
+                    <TermTip term="数据集">数据集名称</TermTip>
+                  </Label>
               <Input id="asr-ds-name" value={dsName} onChange={(event) => setDsName(event.target.value)} placeholder="例如 播报语料-2026" />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="asr-ds-dir">语料目录（本机路径）</Label>
+              <Label htmlFor="asr-ds-dir">
+                    <TermTip term="语料目录">语料目录（本机路径）</TermTip>
+                  </Label>
               <Input
                 id="asr-ds-dir"
                 value={corpusDir}

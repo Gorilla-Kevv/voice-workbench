@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
@@ -177,7 +178,9 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
             {sourceUrl ? <audio src={sourceUrl} controls preload="metadata" className="mt-1 w-full" /> : null}
 
             <div className="space-y-1.5 pt-2">
-              <Label>人声分离</Label>
+              <Label>
+                  <TermTip term="人声分离" />
+                </Label>
               <Select value={state.separation} onValueChange={(v) => patch({ separation: v })}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -189,7 +192,9 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label>二级处理</Label>
+              <Label>
+                  <TermTip term="二级处理" />
+                </Label>
               <Select value={state.secondary} onValueChange={(v) => patch({ secondary: v })}>
                 <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -202,7 +207,9 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
             </div>
             <div className="flex items-center justify-between rounded-lg border p-3">
               <div>
-                <p className="text-xs font-medium">长音频自动切分</p>
+                <p className="text-xs font-medium">
+                  <TermTip term="长音频自动切分" />
+                </p>
                 <p className="text-[11px] text-muted-foreground">按静音分段推理，避免 8GB 显存峰值溢出</p>
               </div>
               <Switch checked={sliceSegments} onCheckedChange={setSliceSegments} />
@@ -211,7 +218,9 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
 
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label>目标音色</Label>
+              <Label>
+                  <TermTip term="目标音色" />
+                </Label>
               <Select value={state.model} onValueChange={(v) => patch({ model: v })}>
                 <SelectTrigger className="w-full"><SelectValue placeholder="选择一个 .pt 音色" /></SelectTrigger>
                 <SelectContent>
@@ -226,7 +235,9 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>音质</Label>
+                <Label>
+                  <TermTip term="音质" />
+                </Label>
                 <Select value={state.quality} onValueChange={(v) => patch({ quality: v })}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -237,7 +248,9 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label>F0 方法</Label>
+                <Label>
+                  <TermTip term="F0 方法" />
+                </Label>
                 <Select value={state.f0Method} onValueChange={(v) => patch({ f0Method: v })}>
                   <SelectTrigger className="w-full"><SelectValue placeholder="跟随模型" /></SelectTrigger>
                   <SelectContent>

@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -255,7 +256,9 @@ function ConvertCard({
       <CardContent className="space-y-4">
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2">
-            <Label htmlFor="vc-audio">源音频</Label>
+            <Label htmlFor="vc-audio">
+                  <TermTip term="源音频" />
+                </Label>
             <input
               id="vc-audio"
               type="file"
@@ -270,7 +273,9 @@ function ConvertCard({
 
           <div className="space-y-3">
             <div className="space-y-1.5">
-              <Label>目标音色</Label>
+              <Label>
+                  <TermTip term="目标音色" />
+                </Label>
               <Select value={model} onValueChange={setModel}>
                 <SelectTrigger className="w-full">
                   <SelectValue placeholder="选择一个 .pth 音色" />
@@ -287,7 +292,9 @@ function ConvertCard({
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
-                <Label>F0 方法</Label>
+                <Label>
+                  <TermTip term="F0 方法" />
+                </Label>
                 <Select value={f0Method} onValueChange={setF0Method}>
                   <SelectTrigger className="w-full"><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -298,7 +305,9 @@ function ConvertCard({
                 </Select>
               </div>
               <div className="space-y-1.5">
-                <Label>变调（半音）</Label>
+                <Label>
+                  <TermTip term="变调">变调（半音）</TermTip>
+                </Label>
                 <div className="flex items-center gap-2 pt-1">
                   <Slider value={[keyShift]} min={-12} max={12} step={1} onValueChange={(v) => setKeyShift(v[0])} />
                   <span className={`w-8 text-right font-mono text-xs ${accentText}`}>{keyShift > 0 ? `+${keyShift}` : keyShift}</span>
@@ -357,7 +366,9 @@ function WorkshopCard({ catalog, accentSolid, onChanged }: { catalog: VcCatalog 
       <CardContent>
         <Tabs defaultValue="merge">
           <TabsList>
-            <TabsTrigger value="merge">音色融合</TabsTrigger>
+            <TabsTrigger value="merge">
+                <TermTip term="音色融合" />
+              </TabsTrigger>
             <TabsTrigger value="lora">LoRA 微调</TabsTrigger>
           </TabsList>
           <TabsContent value="merge" className="pt-4">
@@ -489,7 +500,9 @@ function LoraTab({ models, accentSolid }: { models: string[]; accentSolid: strin
           <Input id="lora-name" value={name} onChange={(e) => setName(e.target.value)} className="h-8 text-xs" />
         </div>
         <div className="space-y-1.5">
-          <Label>底模（.pth，训练一次后所有音色共用）</Label>
+          <Label>
+                  <TermTip term="底模">底模（.pth，训练一次后所有音色共用）</TermTip>
+                </Label>
           <Select value={base} onValueChange={setBase}>
             <SelectTrigger className="w-full"><SelectValue placeholder="选择底模" /></SelectTrigger>
             <SelectContent>

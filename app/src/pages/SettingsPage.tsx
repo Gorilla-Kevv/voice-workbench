@@ -475,7 +475,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
             ))}
 
             <div className="space-y-2">
-              <Label htmlFor="sovits-default-voice">默认音色 ID</Label>
+              <Label htmlFor="sovits-default-voice">
+                  <TermTip term="默认音色 ID" />
+                </Label>
               <Input
                 id="sovits-default-voice"
                 value={sovitsFields.voice ?? ''}
@@ -490,7 +492,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="sovits-prompt-lang">参考音频语种</Label>
+              <Label htmlFor="sovits-prompt-lang">
+                  <TermTip term="参考音频语种" />
+                </Label>
               <Input
                 id="sovits-prompt-lang"
                 value={sovitsFields.prompt_lang ?? ''}
@@ -736,7 +740,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label className="text-sm">播放增益</Label>
+              <Label className="text-sm">
+                <TermTip term="播放增益" />
+              </Label>
               <span className="text-xs tabular-nums text-muted-foreground">{settings.playbackGain.toFixed(1)}x</span>
             </div>
             <Slider

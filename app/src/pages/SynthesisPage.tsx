@@ -323,7 +323,9 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
 
             {!isSovits ? (
               <div className="space-y-2">
-                <Label htmlFor="instruction">语气指令（可选）</Label>
+                <Label htmlFor="instruction">
+                  <TermTip term="语气指令">语气指令（可选）</TermTip>
+                </Label>
                 <Textarea
                   id="instruction"
                   value={instruction}
