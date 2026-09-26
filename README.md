@@ -465,6 +465,14 @@ npm run sovits:check
 
 ## 文档
 
+**先看这里：**
+
+- [**使用手册（面向使用者）**](docs/USER-GUIDE.md) —— 安装启动、两条模型路线、训练与合成的完整流程、全部参数说明、常见任务操作、故障排查、最佳实践、示例场景
+- [`HANDOFF.md`](HANDOFF.md) —— 开发交接：项目结构、核心接口、关键决策、**已知坑**、下一步清单
+- [`PROGRESS.md`](PROGRESS.md) —— 分阶段进度、改动文件、测试结果与风险
+
+**专项：**
+
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) —— 三层架构与关键设计取舍
 - [`docs/GPT-SOVITS.md`](docs/GPT-SOVITS.md) —— 从官方仓库移植了哪些能力、文件与参数对照
 - [`docs/TRAINING.md`](docs/TRAINING.md) —— 本地训练完整指南与调参建议
