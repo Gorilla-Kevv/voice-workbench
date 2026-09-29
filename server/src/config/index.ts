@@ -86,6 +86,19 @@ export const config = {
     /** 代理请求超时（毫秒）。合成与训练都是长任务 */
     proxyTimeoutMs: num(process.env.SOVITS_PROXY_TIMEOUT_MS, 0),
   },
+  /**
+   * 网易模块本地服务（netease/，第二个 Python 运行时）的接入配置。
+   *
+   * 与 sovits 的关键差别：**没有 supervisor**。netease 是 opt-in 模块
+   * （默认不随 `npm run dev` 启动，因为要独立 venv 和几十 GB 权重），
+   * 生命周期归 `npm run dev:netease`；网关只做探活与透明转发，
+   * 探不到就返回带「如何启动」提示的结构化 503。
+   */
+  netease: {
+    baseUrl: (process.env.NETEASE_URL?.trim() || 'http://127.0.0.1:9882').replace(/\/+$/, ''),
+    /** 代理请求超时（毫秒）。合成/转写都是长任务，0 = 不超时 */
+    proxyTimeoutMs: num(process.env.NETEASE_PROXY_TIMEOUT_MS, 0),
+  },
 } as const;
 
 export const isProduction = config.env === 'production';

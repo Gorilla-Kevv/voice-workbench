@@ -1,9 +1,18 @@
 """训练流水线编排。
 
-完整对齐官方 WebUI 的两页流程（「0-前置工具」+「1-训练」），共 12 个阶段：
+完整对齐官方 WebUI 的两页流程（「0-前置工具」+「1-训练」），共 12 个阶段。
+训练阶段遵循官方建议的顺序：**先 SoVITS 后 GPT**（官方 WebUI 中 SoVITS 是
+1Ba、GPT 是 1Bb，且官方流程指引明确「先等 SoVITS 训练完成，再开 GPT 训练」
+—— SoVITS 收敛快，先用它验证语料质量，发现问题不必白跑更耗时的 GPT）：
 
-    import → uvr → denoise → slice → asr → list → text → hubert → sv → semantic → s1 → s2
-    语料导入  分离    降噪      切分    识别   清单   分词     HuBERT   说话人   语义      GPT   SoVITS
+    import → uvr → denoise → slice → asr → list → text → hubert → sv → semantic → s2 → s1
+    语料导入  分离    降噪      切分    识别   清单   分词     HuBERT   说话人   语义      SoVITS GPT
+
+关于「是否要在 SoVITS 训完后重新提取语义 Token」的评估结论：**不需要**。
+GPT 训练读取的语义 Token（`6-name2semantic.tsv`）由 `prepare_datasets/3-get-semantic.py`
+用 `pretrained_s2G` 环境变量指定的权重当 VQ 编码器提取，而官方 WebUI 与本管线
+（`_steps_format`）传入的都是**官方底模**路径 —— 语义 Token 与 SoVITS 微调产物无关，
+两种训练互不依赖对方的输出，先后顺序只影响「尽早发现语料问题」这一工程考量。
 
 其中 `uvr` 是官方「0a-UVR5 人声伴奏分离 & 去混响去延迟」：官方只给了 Gradio 版，
 我们用 `trainer/tools/uvr_cli.py` 做非交互封装，**算法本体仍全部调用官方**
@@ -72,8 +81,9 @@ STAGES: Tuple[Stage, ...] = (
     Stage("hubert", "HuBERT 特征与重采样", "dataset", "prepare_datasets/2-get-hubert-wav32k.py"),
     Stage("sv", "说话人向量", "dataset", "prepare_datasets/2-get-sv.py（仅 v2Pro / v2ProPlus）"),
     Stage("semantic", "语义 Token", "dataset", "prepare_datasets/3-get-semantic.py"),
-    Stage("s1", "GPT（语义）训练", "train", "s1_train.py"),
+    # 官方顺序：SoVITS（1Ba）在前，GPT（1Bb）在后 —— 收敛快的先跑，尽早验证语料
     Stage("s2", "SoVITS（声学）训练", "train", "s2_train.py"),
+    Stage("s1", "GPT（语义）训练", "train", "s1_train.py"),
 )
 
 _STAGE_BY_KEY = {stage.key: stage for stage in STAGES}
@@ -283,15 +293,16 @@ class TrainEngine:
                 if key in _REQUIRED_DATASET_FILES:
                     self._require_dataset_file(context, key)
 
-        if request.run_s1:
-            steps.append(self._step_s1(request, context, installation))
-        else:
-            skipped.append("GPT（语义）训练：未勾选")
-
+        # 官方建议顺序：先 SoVITS 后 GPT（收敛快，先验证语料，问题不必白跑 GPT）
         if request.run_s2:
             steps.append(self._step_s2(request, context, installation))
         else:
             skipped.append("SoVITS（声学）训练：未勾选")
+
+        if request.run_s1:
+            steps.append(self._step_s1(request, context, installation))
+        else:
+            skipped.append("GPT（语义）训练：未勾选")
 
         if not any(step.stage.key in {"s1", "s2"} for step in steps):
             raise BadRequestError(
@@ -833,6 +844,8 @@ class TrainEngine:
     ) -> Dict[str, Any]:
         total_weight = sum(_STAGE_WEIGHT.get(step.stage.key, 0.05) for step in steps) or 1.0
         done_weight = 0.0
+        # 执行途中就地产出、最终要并进任务产物的数据（目前只有切分盘点）
+        extra_artifacts: Dict[str, Any] = {}
 
         for step in steps:
             if cancel_event.is_set():
@@ -885,6 +898,15 @@ class TrainEngine:
                 raise
 
             self.store.stage(job, step.stage.key, JobState.SUCCEEDED)
+            if step.stage.key == "slice":
+                # 官方要求切分后按「时长从大到小」排查超长条。盘点结果即时并进
+                # 任务产物 —— 切分在流水线前段，挂到终态产物上要等几个小时才能看到
+                summary = self._summarize_slice(job, context)
+                if summary:
+                    extra_artifacts.update(summary)
+                    merged = dict(job.artifacts)
+                    merged.update(summary)
+                    self.store.update(job, artifacts=merged)
             done_weight += _STAGE_WEIGHT.get(step.stage.key, 0.05)
             self.store.update(job, progress=round(done_weight / total_weight, 3))
             self.store.log(
@@ -894,6 +916,7 @@ class TrainEngine:
             )
 
         artifacts = self._collect_artifacts(context)
+        artifacts.update(extra_artifacts)
         for key, value in artifacts.items():
             self.store.log(job, "%s：%s" % (key, value), "success")
         return {"context": context.to_dict(), "skipped": skipped, **artifacts}
@@ -959,6 +982,57 @@ class TrainEngine:
         context.list_path.parent.mkdir(parents=True, exist_ok=True)
         context.list_path.write_text("\n".join(rows) + "\n", encoding="utf-8")
         self.store.log(job, "已生成清单：%s（%d 条）" % (context.list_path, len(rows)))
+
+    def _summarize_slice(self, job: Job, context: TrainContext) -> Dict[str, Any]:
+        """切分结果盘点，返回并进任务产物的 `slice` 摘要。
+
+        官方要求切分输出按「时长从大到小」排查，删掉或手动再切超过约 15 秒的
+        超长条 —— 它们往往意味着静音阈值没切干净，会拖累音频-文本对齐质量。
+        这里替用户把排序与判定做掉：明细按时长降序（超长条天然排在最前面）。
+        """
+        sliced_dir = context.dataset_dir / "sliced"
+        if not sliced_dir.is_dir():
+            return {}
+        files = [path for path in sliced_dir.rglob("*") if path.suffix.lower() in AUDIO_SUFFIXES]
+        if not files:
+            return {}
+
+        measured = sorted(
+            ((_audio_seconds(path), path) for path in files), key=lambda item: item[0], reverse=True
+        )
+        total = sum(duration for duration, _ in measured)
+        overlong = [(path, duration) for duration, path in measured if duration > SLICE_LONG_LIMIT_SECONDS]
+        self.store.log(
+            job,
+            "切分产出 %d 段，合计 %.1f 分钟，最长 %.1f 秒"
+            % (len(measured), total / 60.0, measured[0][0]),
+            "success",
+        )
+        if overlong:
+            preview = "、".join("%s（%.1fs）" % (path.name, duration) for path, duration in overlong[:8])
+            self.store.log(
+                job,
+                "有 %d 段超过官方建议的 %.0f 秒：%s%s。建议删除或手动再切，超长片段会拖累对齐质量。"
+                % (len(overlong), SLICE_LONG_LIMIT_SECONDS, preview, " …" if len(overlong) > 8 else ""),
+                "warn",
+            )
+        else:
+            self.store.log(job, "所有片段均不超过 %.0f 秒，符合官方建议" % SLICE_LONG_LIMIT_SECONDS)
+
+        return {
+            "slice": {
+                "count": len(measured),
+                "total_seconds": round(total, 1),
+                "longest_seconds": round(measured[0][0], 1),
+                "overlong": len(overlong),
+                "overlong_limit": SLICE_LONG_LIMIT_SECONDS,
+                "truncated": len(measured) > _SLICE_DETAIL_LIMIT,
+                "items": [
+                    {"file": path.name, "seconds": round(duration, 2)}
+                    for duration, path in measured[:_SLICE_DETAIL_LIMIT]
+                ],
+            }
+        }
 
     def _assert_list_ready(self, job: Job, context: TrainContext) -> None:
         if not context.list_path.is_file():
@@ -1143,6 +1217,13 @@ class TrainEngine:
 
 #: 关闭格式化时必须已存在的数据集文件
 _REQUIRED_DATASET_FILES = ("text", "semantic")
+
+#: 官方建议的单段时长上限（秒）。切分结果的「超长条」按它判定
+SLICE_LONG_LIMIT_SECONDS = 15.0
+
+#: 任务产物里最多保留多少条切分明细（按最长优先）。
+#: 几百段的全量列表只会把任务记录撑大；用户要处理的恰是最长的那批
+_SLICE_DETAIL_LIMIT = 200
 
 
 def _py() -> str:

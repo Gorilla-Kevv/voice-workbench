@@ -1,0 +1,458 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, AudioLines, Download, Eraser, Flame, Loader2, Mic2, RefreshCw, Sparkles, Waves } from 'lucide-react';
+import { toast } from 'sonner';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { TermTip } from '@/components/features/TermTip';
+import { RequestError } from '@/lib/errors';
+import { neteaseApi } from '@/lib/netease';
+import { resolveAudioUrl } from '@/lib/sovits';
+import { sovitsApi } from '@/lib/sovits';
+import type { NeteaseCatalog, NeteaseEngineStatus, NeteaseTtsResult } from '@/types';
+import type { SovitsVoice } from '@/types';
+
+/** 参考音频来源：本机上传，或复用 GPT-SoVITS 音色库里已有的音色 */
+type RefSource = 'upload' | 'voice';
+
+/** base64 wav → 可播放/可下载的 Blob URL */
+function base64ToUrl(base64: string, mime = 'audio/wav'): string {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return URL.createObjectURL(new Blob([bytes], { type: mime }));
+}
+
+/**
+ * 网易语音合成（Confucius4-TTS）。
+ *
+ * 与 MiMo 克隆页最大的差别只有一条：**不需要参考音频的逐字转写文本**。
+ * 也因此现有音色库里的每条音色都能直接拿来用 —— 只取它的参考音频，
+ * 转写文本不参与合成（页面里明确标注，避免「文本也要跟着改」的误解）。
+ */
+export function NeteaseTtsPage() {
+  const [catalog, setCatalog] = useState<NeteaseCatalog['tts'] | null>(null);
+  const [engine, setEngine] = useState<NeteaseEngineStatus | null>(null);
+  const [text, setText] = useState('这是网易 Confucius4-TTS 的零样本克隆合成：只需三秒参考音频，无需逐字转写文本。');
+  const [lang, setLang] = useState('zh');
+  const [refSource, setRefSource] = useState<RefSource>('upload');
+  const [file, setFile] = useState<File | null>(null);
+  const [voices, setVoices] = useState<SovitsVoice[]>([]);
+  const [voicesLoading, setVoicesLoading] = useState(false);
+  const [voiceId, setVoiceId] = useState<string>('');
+  const [loading, setLoading] = useState(false);
+  const [elapsed, setElapsed] = useState(0);
+  const [error, setError] = useState<RequestError | null>(null);
+  const [result, setResult] = useState<NeteaseTtsResult | null>(null);
+  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [warming, setWarming] = useState(false);
+  const audioUrlRef = useRef<string | null>(null);
+  // 「已等待 N 秒」计时器：跟 useSynthesis 同一模式 —— 挂在 ref 上，
+  // 由提交动作启动/清理，而不是用 effect 监听 loading（会触发级联渲染告警）
+  const timerRef = useRef<number | null>(null);
+
+  const stopTimer = useCallback(() => {
+    if (timerRef.current !== null) {
+      window.clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, []);
+
+  /** 换结果时回收旧 Blob URL，防内存泄漏 */
+  const swapAudioUrl = useCallback((next: string | null) => {
+    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
+    audioUrlRef.current = next;
+    setAudioUrl(next);
+  }, []);
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [catalogResult, pipeline] = await Promise.all([
+          neteaseApi.catalog(),
+          neteaseApi.ttsPipeline().catch(() => null),
+        ]);
+        setCatalog(catalogResult.tts);
+        setEngine(pipeline);
+      } catch (requestError) {
+        // 服务没起 / 装到一半：页面保持可用，状态卡里给出原因（探活轮询由侧栏负责）
+        if (requestError instanceof RequestError) setError(requestError);
+      }
+    })();
+  }, []);
+
+  // 切到「从音色库选择」时按需拉一次音色列表（GPT-SoVITS 侧的服务）
+  useEffect(() => {
+    if (refSource !== 'voice' || voices.length > 0 || voicesLoading) return;
+    setVoicesLoading(true);
+    sovitsApi
+      .listVoices()
+      .then((response) => setVoices(response.voices.filter((voice) => voice.exists)))
+      .catch(() => toast.error('音色库列表获取失败', { description: '需要 GPT-SoVITS 本地服务在线（start.bat 会拉起它）。' }))
+      .finally(() => setVoicesLoading(false));
+  }, [refSource, voices.length, voicesLoading]);
+
+  const install = catalog?.install;
+  const installMissing = install && !install.installed;
+
+  const selectedVoice = useMemo(() => voices.find((voice) => voice.id === voiceId) ?? null, [voices, voiceId]);
+
+  const refreshEngine = useCallback(() => {
+    neteaseApi
+      .ttsPipeline()
+      .then(setEngine)
+      .catch(() => setEngine(null));
+  }, []);
+
+  const handleWarmup = () => {
+    setWarming(true);
+    neteaseApi
+      .ttsWarmup()
+      .then((response) => {
+        if (response.preempted) toast.info(`已卸载另一引擎（${response.preempted}）为 TTS 让位`);
+        toast.success('TTS 引擎已就绪');
+        refreshEngine();
+      })
+      .catch((requestError: unknown) => {
+        if (requestError instanceof RequestError) {
+          toast.error('预热失败', { description: requestError.fullMessage });
+          setError(requestError);
+        }
+      })
+      .finally(() => setWarming(false));
+  };
+
+  const handleUnload = () => {
+    neteaseApi
+      .ttsUnload()
+      .then(() => {
+        toast.success('TTS 引擎已卸载，显存已归还');
+        refreshEngine();
+      })
+      .catch((requestError: unknown) => {
+        if (requestError instanceof RequestError) toast.error('卸载失败', { description: requestError.fullMessage });
+      });
+  };
+
+  const handleSynthesize = () => {
+    const refFile = refSource === 'upload' ? file : null;
+    if (!text.trim()) return;
+    if (refSource === 'upload' && !refFile) {
+      toast.error('请先上传参考音频');
+      return;
+    }
+    if (refSource === 'voice' && !selectedVoice) {
+      toast.error('请先从音色库选择一条音色');
+      return;
+    }
+
+    const run = async () => {
+      setLoading(true);
+      setElapsed(0);
+      stopTimer();
+      timerRef.current = window.setInterval(() => setElapsed((value) => value + 1), 1000);
+      setError(null);
+      try {
+        let upload: File | null = refFile;
+        if (refSource === 'voice' && selectedVoice) {
+          // 音色库音色 → 取它的参考音频（经 GPT-SoVITS 网关），转写文本不参与合成
+          const url = resolveAudioUrl(selectedVoice.audio_path);
+          if (!url) throw new RequestError(400, { code: 'REF_AUDIO_MISSING', message: `音色「${selectedVoice.name}」没有可用的参考音频` });
+          const blob = await fetch(url).then((response) => {
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            return response.blob();
+          });
+          upload = new File([blob], `${selectedVoice.name}.wav`, { type: blob.type || 'audio/wav' });
+        }
+        const response = await neteaseApi.synthesize({
+          text,
+          lang,
+          file: upload,
+        });
+        setResult(response);
+        swapAudioUrl(base64ToUrl(response.audio_base64));
+        if (response.preempted) {
+          toast.info(`已卸载 ${response.preempted} 引擎为本次合成让位`, { description: '回对应页面重新预热即可恢复。' });
+        }
+        toast.success('合成完成', {
+          description: `${response.duration_sec.toFixed(1)} 秒 · ${(response.elapsed_sec).toFixed(1)} 秒生成 · ${response.sample_rate} Hz`,
+        });
+      } catch (requestError) {
+        if (requestError instanceof RequestError) {
+          setError(requestError);
+          toast.error('合成失败', { description: requestError.fullMessage });
+        }
+      } finally {
+        stopTimer();
+        setLoading(false);
+      }
+    };
+    void run();
+  };
+
+  return (
+    <div className="grid gap-5 lg:grid-cols-5">
+      <div className="space-y-5 lg:col-span-3">
+        {/* 引擎状态：安装未就位时这里承担「该做什么」的引导 */}
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Flame className="size-4 text-violet-600 dark:text-violet-400" />
+              引擎状态
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {installMissing ? (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <div className="space-y-1">
+                  <p className="font-medium">权重或依赖未就绪</p>
+                  <ul className="list-inside list-disc space-y-0.5 opacity-90">
+                    {(install?.missing ?? []).slice(0, 3).map((item) => (
+                      <li key={item}>{item}</li>
+                    ))}
+                  </ul>
+                  <p className="opacity-90">
+                    {install?.download_hint
+                      ? `补齐权重：${install.download_hint}`
+                      : '按 netease/README.md 下载权重并建 venv'}
+                    ，然后运行 npm run netease:check 验证（TTS 侧权重实测约 5.4 GB）。
+                  </p>
+                </div>
+              </div>
+            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={engine?.loaded ? 'default' : 'secondary'} className="text-[11px] font-normal">
+                {engine?.loaded ? `已加载 · ${engine.device ?? ''}` : '未加载'}
+              </Badge>
+              {engine?.loaded_for_sec != null ? (
+                <Badge variant="secondary" className="text-[11px] font-normal">
+                  常驻 {Math.round(engine.loaded_for_sec)}s
+                </Badge>
+              ) : null}
+              <div className="ml-auto flex gap-2">
+                <Button size="sm" variant="outline" onClick={handleWarmup} disabled={warming || Boolean(installMissing)}>
+                  {warming ? <Loader2 className="size-3.5 animate-spin" /> : <Flame className="size-3.5" />}
+                  预热引擎
+                </Button>
+                <Button size="sm" variant="ghost" onClick={handleUnload} disabled={!engine?.loaded}>
+                  <Eraser className="size-3.5" />
+                  卸载引擎
+                </Button>
+                <Button size="sm" variant="ghost" onClick={refreshEngine} aria-label="刷新状态">
+                  <RefreshCw className="size-3.5" />
+                </Button>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              与 ASR 引擎共用显存，同一时刻只驻留一个；预热另一个引擎会自动卸载当前引擎。
+            </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Mic2 className="size-4 text-violet-600 dark:text-violet-400" />
+              参考音频
+              <span className="ml-1 text-xs font-normal text-muted-foreground">
+                <TermTip term="零样本克隆" />
+                ：≥3 秒即可，无需逐字转写文本
+              </span>
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Tabs value={refSource} onValueChange={(value) => setRefSource(value as RefSource)}>
+              <TabsList className="w-full">
+                <TabsTrigger value="upload" className="flex-1">上传音频</TabsTrigger>
+                <TabsTrigger value="voice" className="flex-1">从音色库选择</TabsTrigger>
+              </TabsList>
+            </Tabs>
+
+            {refSource === 'upload' ? (
+              <div className="space-y-2">
+                <input
+                  id="netease-tts-file"
+                  type="file"
+                  accept="audio/*"
+                  className="sr-only"
+                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                />
+                <Label
+                  htmlFor="netease-tts-file"
+                  className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-sm text-muted-foreground transition hover:border-violet-400 hover:bg-violet-500/5"
+                >
+                  <Waves className="size-4" />
+                  {file ? `${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）` : '点击选择一段 3 秒以上的音频'}
+                </Label>
+                {file ? (
+                  <audio controls src={URL.createObjectURL(file)} className="w-full" key={file.name + file.size} />
+                ) : null}
+              </div>
+            ) : (
+              <div className="space-y-2">
+                <Select value={voiceId} onValueChange={setVoiceId}>
+                  <SelectTrigger className="w-full">
+                    <SelectValue placeholder={voicesLoading ? '正在加载音色库…' : '选择一条音色'} />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {voices.map((voice) => (
+                      <SelectItem key={voice.id} value={voice.id}>
+                        {voice.name}
+                        {voice.duration_s ? ` · ${voice.duration_s.toFixed(1)}s` : ''}
+                        {voice.prompt_lang ? ` · ${voice.prompt_lang}` : ''}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                {selectedVoice ? (
+                  <div className="flex items-start gap-2 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
+                    <Sparkles className="mt-0.5 size-3.5 shrink-0 text-violet-500" />
+                    <p>
+                      仅借用该音色的<strong>参考音频</strong>；音色库里的逐字转写文本不参与网易合成
+                      （Confucius4-TTS 是<TermTip term="零样本克隆" />，不需要文本）。
+                      合成语种由下方「合成语种」决定，可与参考音频语种不同（跨语种合成）。
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AudioLines className="size-4 text-violet-600 dark:text-violet-400" />
+              合成内容
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="netease-tts-lang">合成语种（14 种；跨语种无口音）</Label>
+              <Select value={lang} onValueChange={setLang}>
+                <SelectTrigger id="netease-tts-lang" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(catalog?.languages ?? [{ code: 'zh', label: '中文' }]).map((item) => (
+                    <SelectItem key={item.code} value={item.code}>
+                      {item.label}（{item.code}）
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="netease-tts-text">目标文本</Label>
+              <Textarea
+                id="netease-tts-text"
+                value={text}
+                onChange={(event) => setText(event.target.value)}
+                rows={5}
+                placeholder="输入需要合成的文本，可用任意受支持语种"
+                className="resize-y leading-relaxed"
+              />
+            </div>
+
+            <Button
+              onClick={handleSynthesize}
+              disabled={loading || !text.trim() || Boolean(installMissing) || (refSource === 'upload' ? !file : !selectedVoice)}
+              className="w-full bg-gradient-to-r from-violet-600 to-indigo-500 text-white shadow-lg shadow-violet-500/20 hover:brightness-110"
+              size="lg"
+            >
+              {loading ? <Loader2 className="size-4 animate-spin" /> : <Sparkles className="size-4" />}
+              {loading ? `正在合成，已等待 ${elapsed} 秒（首次需加载模型）` : '开始合成'}
+            </Button>
+
+            <div className="flex flex-wrap gap-1.5">
+              <Badge variant="secondary" className="text-[11px] font-normal">Confucius4-TTS · 1.3B</Badge>
+              <Badge variant="secondary" className="text-[11px] font-normal">免参考文本</Badge>
+              <Badge variant="secondary" className="text-[11px] font-normal">情感迁移</Badge>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+
+      <div className="space-y-5 lg:col-span-2">
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <AudioLines className="size-4 text-violet-600 dark:text-violet-400" />
+              合成结果
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {error ? (
+              <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
+                <div>
+                  <p className="font-medium text-destructive">{error.message}</p>
+                  {error.hint ? <p className="mt-1 opacity-80">{error.hint}</p> : null}
+                </div>
+              </div>
+            ) : null}
+
+            {result && audioUrl ? (
+              <div className="space-y-3">
+                <audio controls src={audioUrl} className="w-full" autoPlay={false} />
+                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+                  <div className="rounded-lg bg-muted/50 p-2.5">
+                    <p className="opacity-70">时长</p>
+                    <p className="mt-0.5 font-medium text-foreground">{result.duration_sec.toFixed(1)} 秒</p>
+                  </div>
+                  <div className="rounded-lg bg-muted/50 p-2.5">
+                    <p className="opacity-70">生成耗时</p>
+                    <p className="mt-0.5 font-medium text-foreground">{result.elapsed_sec.toFixed(1)} 秒</p>
+                  </div>
+                  <div className="rounded-lg bg-muted/50 p-2.5">
+                    <p className="opacity-70">采样率</p>
+                    <p className="mt-0.5 font-medium text-foreground">{result.sample_rate} Hz</p>
+                  </div>
+                  <div className="rounded-lg bg-muted/50 p-2.5">
+                    <p className="opacity-70">语种</p>
+                    <p className="mt-0.5 font-medium text-foreground">{result.language}</p>
+                  </div>
+                </div>
+                <a href={audioUrl} download={`confucius4-tts-${Date.now()}.wav`} className="block">
+                  <Button variant="outline" className="w-full">
+                    <Download className="size-4" />
+                    下载 WAV
+                  </Button>
+                </a>
+                <p className="text-[11px] text-muted-foreground">产物同时保留在服务端 netease/.data/ 下，便于排障。</p>
+              </div>
+            ) : (
+              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
+                {loading ? (
+                  <span className="inline-flex items-center gap-2">
+                    <Loader2 className="size-4 animate-spin" />
+                    合成中…（首次合成需先加载模型）
+                  </span>
+                ) : (
+                  '选择参考音频并输入文本后，合成结果会在这里播放与下载'
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">与现有模型的关系</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2 text-xs text-muted-foreground">
+            <p>· 中文日常合成仍推荐 GPT-SoVITS（更快）；不想部署任何东西用 MiMo 云端。</p>
+            <p>· 德 / 法 / 西 / 泰等 14 语种、跨语种无口音、免转写克隆、情感迁移 —— 这些是网易模块的价值。</p>
+            <p>· 模型权重与推理全部在本机执行，音频不出本机。</p>
+          </CardContent>
+        </Card>
+      </div>
+    </div>
+  );
+}

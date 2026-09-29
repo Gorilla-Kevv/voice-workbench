@@ -196,6 +196,10 @@ export interface ModuleStates {
   svc: ModuleState;
   /** 语音转文本（ASR）：「待补齐」表示两条通道都不可用 */
   asr: ModuleState;
+  /** 网易模块（Confucius4-TTS）：独立服务（netease/，:9882），「待补齐」= 权重/依赖未就绪 */
+  neteaseTts: ModuleState;
+  /** 网易模块（Confucius4-R2T2）：同上；「未启动」是常态（opt-in 模块，不随主程序拉起） */
+  neteaseAsr: ModuleState;
 }
 
 export interface SovitsHealth {
@@ -437,6 +441,24 @@ export interface SovitsLogLine {
   ts: number;
   level: string;
   text: string;
+}
+
+/** 切分结果盘点（训练任务 artifacts.slice），明细已按「时长从大到小」排序 */
+export interface SovitsSliceReportItem {
+  file: string;
+  seconds: number;
+}
+
+export interface SovitsSliceReport {
+  count: number;
+  total_seconds: number;
+  longest_seconds: number;
+  /** 超过官方建议时长的片段数 */
+  overlong: number;
+  overlong_limit: number;
+  /** 明细超过服务端保留上限时为 true（仍按最长优先截取） */
+  truncated: boolean;
+  items: SovitsSliceReportItem[];
 }
 
 export interface SovitsJob {

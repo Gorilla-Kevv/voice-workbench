@@ -405,40 +405,11 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
           ) : null}
 
           {weights ? (
-            <div className="space-y-2">
-              <p className="text-xs font-medium text-muted-foreground">
-                推理权重（当前版本 {weights.version}）
-              </p>
-              <div className="grid gap-2 sm:grid-cols-2">
-                <div className="rounded-lg border p-3 text-xs">
-                  <p className="flex items-center gap-1.5 font-medium">
-                    <Cpu className="size-3.5" />
-                    GPT（语义模型）
-                  </p>
-                  <p className="mt-1 truncate font-mono text-muted-foreground">
-                    {weights.active.gpt ?? weights.default?.gpt_name ?? '未指定'}
-                  </p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    已训练权重 {weights.gpt.length} 个
-                  </p>
-                </div>
-                <div className="rounded-lg border p-3 text-xs">
-                  <p className="flex items-center gap-1.5 font-medium">
-                    <Cpu className="size-3.5" />
-                    SoVITS（声学模型）
-                  </p>
-                  <p className="mt-1 truncate font-mono text-muted-foreground">
-                    {weights.active.sovits ?? weights.default?.sovits_name ?? '未指定'}
-                  </p>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    已训练权重 {weights.sovits.length} 个
-                  </p>
-                </div>
-              </div>
-              <p className="text-[11px] text-muted-foreground">
-                没有已训练权重时会自动使用官方预训练底模，可直接做零样本克隆
-              </p>
-            </div>
+            <WeightsPanel
+              weights={weights}
+              baseUrl={normalizeBaseUrl(sovitsUrl)}
+              onChanged={() => void probeSovits(sovitsUrl)}
+            />
           ) : null}
 
           <Separator />
@@ -873,6 +844,151 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
           </Button>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+/**
+ * 推理权重选择面板。
+ *
+ * 管线默认「自动使用最新的训练产物」，但用户既看不到当前用的是哪对权重，
+ * 也无法换成别的 —— 训完多个 epoch 权重（`_e8_s320.pth` 这类）后必踩的坑。
+ * 这里把 GPT / SoVITS 两组权重做成下拉：训练产物按时间从新到旧排列，
+ * 并保留官方底模作为零样本克隆的退路。
+ */
+function WeightsPanel({
+  weights,
+  baseUrl,
+  onChanged,
+}: {
+  weights: SovitsWeightList;
+  baseUrl: string;
+  /** 加载成功后通知外层重新探测，刷新「当前生效」状态 */
+  onChanged: () => void;
+}) {
+  // 只在版本变化时重置回默认值：加载后外层会重新探测，
+  // 若无条件重置，用户刚选好的权重会被探测结果冲掉
+  const [gpt, setGpt] = useState(weights.default?.gpt ?? '');
+  const [sovits, setSovits] = useState(weights.default?.sovits ?? '');
+  const [appliedVersion, setAppliedVersion] = useState(weights.version);
+  const [applying, setApplying] = useState(false);
+
+  if (weights.version !== appliedVersion) {
+    setAppliedVersion(weights.version);
+    setGpt(weights.default?.gpt ?? '');
+    setSovits(weights.default?.sovits ?? '');
+  }
+
+  const gptOptions = [
+    ...weights.gpt.map((item) => ({
+      value: item.path,
+      label: `${item.name} · ${item.size_mb}MB`,
+      trained: true,
+    })),
+    ...(weights.pretrained.gpt
+      ? [{ value: weights.pretrained.gpt, label: '官方预训练底模 · 零样本克隆', trained: false }]
+      : []),
+  ];
+  const sovitsOptions = [
+    ...weights.sovits.map((item) => ({
+      value: item.path,
+      label: `${item.name} · ${item.size_mb}MB`,
+      trained: true,
+    })),
+    ...(weights.pretrained.sovits
+      ? [{ value: weights.pretrained.sovits, label: '官方预训练底模 · 零样本克隆', trained: false }]
+      : []),
+  ];
+
+  const handleApply = async () => {
+    setApplying(true);
+    try {
+      await sovitsApi.loadWeights(
+        {
+          version: weights.version,
+          gpt: gpt || undefined,
+          sovits: sovits || undefined,
+          eager: true,
+        },
+        baseUrl,
+      );
+      toast.success('权重已加载', { description: '合成页会立即使用这对权重' });
+      onChanged();
+    } catch (error) {
+      toast.error('权重加载失败', { description: (error as Error).message });
+    } finally {
+      setApplying(false);
+    }
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-medium text-muted-foreground">推理权重（版本 {weights.version}）</p>
+        <Badge variant="outline" className="h-5 text-[10px] font-normal">
+          {weights.active.loaded ? '模型已加载' : '未加载（首次合成时自动加载）'}
+        </Badge>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div className="space-y-1.5 rounded-lg border p-3">
+          <Label className="flex items-center gap-1.5 text-xs font-medium">
+            <Cpu className="size-3.5" />
+            GPT（语义模型）
+          </Label>
+          <Select value={gpt} onValueChange={setGpt}>
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder={gptOptions.length ? '选择权重' : '没有可用权重'} />
+            </SelectTrigger>
+            <SelectContent>
+              {gptOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value} className="text-xs">
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            训练产物 {weights.gpt.length} 个 · 文件名里 e = 轮数、s = 步数，一般选 e 最大的
+          </p>
+        </div>
+
+        <div className="space-y-1.5 rounded-lg border p-3">
+          <Label className="flex items-center gap-1.5 text-xs font-medium">
+            <Cpu className="size-3.5" />
+            SoVITS（声学模型）
+          </Label>
+          <Select value={sovits} onValueChange={setSovits}>
+            <SelectTrigger className="h-8 text-xs">
+              <SelectValue placeholder={sovitsOptions.length ? '选择权重' : '没有可用权重'} />
+            </SelectTrigger>
+            <SelectContent>
+              {sovitsOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value} className="text-xs">
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            训练产物 {weights.sovits.length} 个 · 必须与 GPT 权重来自同一版本、同一次实验
+          </p>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <Button size="sm" onClick={() => void handleApply()} disabled={applying}>
+          {applying ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <CheckCircle2 className="mr-1.5 size-3.5" />}
+          加载所选权重
+        </Button>
+        <p className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">
+          当前生效：{weights.active.gpt ?? '未指定'} ＋ {weights.active.sovits ?? '未指定'}
+        </p>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        没有训练产物时默认用官方底模（零样本克隆）。这里选择的是推理用的权重；
+        想基于某个权重继续训练，请在训练页的「预训练权重」里填它的路径
+      </p>
     </div>
   );
 }

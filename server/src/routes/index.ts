@@ -3,6 +3,7 @@ import { config } from '../config/index.js';
 import { generalLimiter } from '../middleware/rateLimit.js';
 import { logger } from '../lib/logger.js';
 import { configRouter } from './config.js';
+import { neteaseSummary } from './netease.js';
 import { sovitsSummary } from './sovits.js';
 import { ttsRouter } from './tts.js';
 import { voiceRouter } from './voice.js';
@@ -14,8 +15,9 @@ export const apiRouter = Router();
  *
  * 除了 MiMo 的密钥状态，这里还汇总 GPT-SoVITS 本地服务的情况 ——
  * 前端只需要一次请求就能决定「该显示哪些能力、该提示什么」。
+ * netease 是异步探测（带缓存的 TCP 探活），直接 await，health 本身仍是毫秒级。
  */
-apiRouter.get('/health', (_req, res) => {
+apiRouter.get('/health', async (_req, res) => {
   res.json({
     ok: true,
     data: {
@@ -31,6 +33,8 @@ apiRouter.get('/health', (_req, res) => {
       },
       /** GPT-SoVITS 本地服务状态（未启动时 reachable=false，前端据此提示） */
       sovits: sovitsSummary(),
+      /** 网易模块（opt-in，未启动是常态） */
+      netease: await neteaseSummary(),
       providers: {
         mimo: { available: true, requiresKey: !config.mimoApiKey },
         'gpt-sovits': { available: sovitsSummary().reachable },
@@ -44,4 +48,4 @@ apiRouter.use('/tts', generalLimiter, ttsRouter);
 apiRouter.use('/voices', generalLimiter, voiceRouter);
 apiRouter.use('/config', generalLimiter, configRouter);
 
-logger.debug('API 路由已注册', { prefixes: ['/health', '/tts', '/voices', '/config', '/sovits'] });
+logger.debug('API 路由已注册', { prefixes: ['/health', '/tts', '/voices', '/config', '/sovits', '/netease'] });

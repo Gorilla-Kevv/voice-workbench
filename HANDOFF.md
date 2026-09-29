@@ -16,7 +16,8 @@
 | 前端 `app/` | React 19 + TypeScript + Vite 7 + Tailwind CSS 3 + shadcn/ui（Radix） |
 | 网关 `server/` | Node 18 + Express 4 + TypeScript（tsx 运行） |
 | 模型服务 `trainer/` | Python 3.9（整合包自带 `runtime/python.exe`）+ FastAPI + Uvicorn |
-| 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API） |
+| 网易模块 `netease/` | **第二个 Python 运行时**（本机 py3.12 独立 venv + torch 2.7.0+cu126）+ FastAPI；opt-in，端口 9882 |
+| 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重） |
 
 ### 分支
 
@@ -33,6 +34,8 @@
 3. 训练流水线对齐官方 WebUI（12 阶段），含 UVR5 人声分离、切分、ASR、格式化、GPT/SoVITS 训练
 4. 全站术语提示系统（100 条术语 + 右侧官方流程指引）
 5. 新增板块：ASR 语音转文本、语音变声(RVC)、歌声转换(DDSP-SVC)（由并行工作产出）
+6. 网易模块（Confucius4-TTS / R2T2）：第二个 Python 运行时 `netease/` + 前端「网易模块」两个页面，
+   与现有链路完全共存（对比与方案见 `docs/NETEASE-INTEGRATION.md`）
 
 ### 非目标
 
@@ -46,17 +49,20 @@
 
 | 目录 | 职责 |
 | --- | --- |
-| `app/src/pages/` | 11 个页面：通用合成、批量合成、音色设计、声音克隆、音色库、历史、训练、语音变声、歌声转换、语音转文本、设置 |
+| `app/src/pages/` | 13 个页面：通用合成、批量合成、音色设计、声音克隆、音色库、历史、训练、语音变声、歌声转换、语音转文本、网易合成、网易转写、设置 |
 | `app/src/lib/providers/` | Provider 抽象：`mimo`（云端）、`gpt-sovits`（本地）、`selfhosted`（自定义） |
+| `app/src/lib/netease.ts` | 网易模块客户端（`/api/netease/*`，含 NDJSON 流式转写解析） |
 | `app/src/lib/sovits.ts` | 本地服务客户端（含 NDJSON 流式解析、音频地址映射） |
 | `app/src/lib/glossary.ts` | 术语表（100 条），含 `term/definition/impact/example` |
 | `app/src/lib/flowGuide.ts` | 官方推荐流程（8 步，固化官方原话与数值） |
 | `app/src/components/features/` | `TermTip`（术语提示）、`FlowGuide`（流程指引）、`ResultPanel`、`ErrorBoundary` 等 |
 | `server/src/routes/sovits.ts` | 反向代理（必须挂在 `express.json()` **之前**，否则 multipart / 流式透传失效） |
+| `server/src/routes/netease.ts` | 网易模块透明反代（同上挂载顺序；**无 supervisor**，opt-in 不拉起） |
 | `server/src/services/sovits.ts` | 托管 Python 服务：探活、解释器探测、日志环形缓冲 |
 | `trainer/app/sovits/` | 与官方代码的直连层：`bootstrap`（定位+sys.path）、`catalog`（能力清单，唯一常量源）、`pipeline`（管线常驻）、`synth`（请求翻译）、`voices`（音色库） |
 | `trainer/app/` | `training.py`（12 阶段编排）、`batch.py`、`inference.py`、`annotations.py`（清单读写）、`jobs.py`、`queue.py` |
 | `trainer/tools/uvr_cli.py` | UVR5 非交互封装（调官方 `vr.py`/`mdxnet.py`，不改官方代码） |
+| `netease/` | **第二个 Python 运行时**（py≥3.10）：`server.py`、`app/tts_engine.py`（Confucius4-TTS 直连）、`app/r2t2.py` + `app/r2t2_worker.py`（R2T2 子进程 worker，vLLM 需 main 环境）、`app/engine.py`（引擎互斥）。上游 API 漂移只改 `tts_engine.py` / `r2t2_worker.py` 两个薄文件 |
 
 ### 入口文件
 
@@ -91,6 +97,13 @@
 | 错误响应必须带 `hint` | 只报 `message` 用户无从下手（实测：用户对着「不支持合成语种 undefined」完全懵） |
 | 渲染错误用错误边界兜底 | React 渲染抛错会卸载整棵树 → 纯白页面，无信息 |
 | 术语提示：桌面悬浮 / 触屏点击 | Radix Tooltip 在触摸设备体验不可靠（悬浮不存在） |
+| 网易模块**不进 Provider 抽象**、独立成 `netease/` 运行时 | 上游要求 py≥3.10 + torch≥2.5 + cu≥12.6，与 trainer 的 py3.9/torch2.0 互斥（`MODERN-TTS-FEASIBILITY.md` 已论证）；它是本地引擎不是云端 BYOK，塞进 Provider 抽象反而要特化密钥态 |
+| R2T2 走**子进程 worker**（stdin/stdout JSON 行协议） | vLLM 引擎要求 `__main__` 环境启动（上游 README 明确警告）；worker 自成主进程规避，还能用 `NETEASE_R2T2_PYTHON` 独立解释器解决依赖冲突 |
+| 网易两引擎**进程内互斥**，跨进程显存协调暂不做 | 8 GB 卡同时常驻 GPT-SoVITS + 1.3B LLM 本就不现实；先靠加载前空闲显存检查 + 明确报错兜底 |
+| 网易模块 opt-in、网关**无 supervisor** | 独立 venv + CUDA 版 torch 的安装成本不该摊给所有用户；`npm run dev` 启动体验一个字节不变 |
+| TTS 默认 **fp16**，且只转三个大户（T2S / S2A / w2v-bert） | 上游全 fp32 约 7.5 GB，8 GB 卡必 OOM；BigVGAN / CAMPPlus 只占 0.45 GB / 几十 MB，留 fp32 反而避开两处 dtype 冲突（见坑 15） |
+| 上游推理配置**不直接用**，复制成绝对路径副本再交给上游 | `inference_config.yaml` 里 `tokenizer_path` / `w2v_stat` 是相对路径、按 CWD 解析；服务从项目根启动就会找不到 |
+| 权重下载**自己写脚本**，不用 `huggingface-cli download --local-dir` | 上游只认 HF 缓存（坑 13），且需要按实测速度在 ModelScope / 代理 / 直连之间选路（坑 14） |
 
 ### 已知坑（重要，改代码前先看）
 
@@ -126,7 +139,44 @@
     现有「语音降噪」阶段依赖的 FRCRN 模型不在本地（会尝试联网下载）。UVR5 的 DeEcho / ONNX 去混响模型在本地，可替代。
 
 11. **训练顺序与官方建议相反**
-    我们是 `s1(GPT) → s2(SoVITS)`；官方建议「先等 SoVITS 完成，再开 GPT」。**尚未修改**（改动涉及阶段编排与语义 Token 重提取，风险较高）。当前用流程指引文字告知用户。
+    ~~我们是 `s1(GPT) → s2(SoVITS)`~~ **已修复（阶段 6）**：现为 `s2 → s1`（官方顺序）。
+    「训完 SoVITS 重新提取语义 Token」评估过、不需要 —— `3-get-semantic.py` 用官方底模
+    （`pretrained_s2G`）提取语义 Token，GPT 训练不依赖 SoVITS 微调产物。详见 `training.py` 模块注释。
+
+12. **R2T2 worker 的流式增量取值：已按官方 README 校准，但仍未在真机跑过**
+    官方 README 写明 `_, text = asr.streaming_transcribe(seg, state, max_new_tokens=4)`
+    —— **增量文本在返回值的第二个元素**，不是从 `state` 读；定稿是 `finish_streaming_transcribe(state)`
+    之后读 `state.text`。`r2t2_worker.py` 已按此改（`_coerce_text()` + `_state_text()` 兜底）。
+    ⚠️ 仍未实测：**Windows 没有 vLLM 发行包**，本机这条链路要 WSL2 / Docker 才能跑。
+
+13. **Confucius4-TTS 的权重只能走 HF 缓存**
+    `confuciustts/cli/inference.py` 里 T2S / S2A 是硬编码 `hf_hub_download(repo_id, filename)`、
+    CAMPPlus 同理，本地 `netease/models/Confucius4-TTS/` 放得再全也没用 —— 它照样会重新下载。
+    所以权重探测查的是 **HF 缓存**（`_hf_cached()`），下载脚本会把文件按 `blobs/` + `snapshots/` +
+    `refs/` 铺进去并用真实 etag 命名。改这条之前先看 `netease/README.md`「权重落在哪」。
+
+14. **`hf-mirror` 与本版 huggingface_hub 不兼容**
+    上游把 huggingface_hub 钉在 0.36.2，它对 `hf-mirror` 的 HEAD 请求拿到 **308 Permanent Redirect**
+    （`requests.head` 默认不跟随），表现为 `LocalEntryNotFoundError`。
+    实测链路速度：ModelScope 6~11 MB/s > 本机代理 2 MB/s > 直连 0.2 MB/s（还会撞 Xet CDN 的 SSL 错）。
+    `scripts/download_netease_weights.py` 按这个顺序自动选路，`--proxy` 可指定代理。
+
+15. **fp16 不能只调 `.half()`**
+    上游不指定 dtype 全 fp32（约 7.5 GB，8 GB 卡必 OOM），但它有五处**硬编码 fp32 输入**
+    会立刻让半精度模型炸（`RuntimeError: expected scalar type Float but found Half` =
+    半精度模块收到 fp32 输入）：w2v 的 `input_features`、semantic_mean/std、参考 mel、
+    CAMPPlus 风格向量，以及 `DummyPositionEmbedding.forward` 里写死的 `dtype=torch.float32`
+    （它替换了 GPT2 的 wpe，zeros 一加就把整条序列抬回 fp32）。
+    `tts_engine._enable_fp16()` 只转三个大户（T2S / S2A / w2v-bert），BigVGAN 与 CAMPPlus 留 fp32，
+    再用薄包装把这几处边界对齐。改动前先读那段注释。
+
+16. **写盘前必须把音频压成 float32**
+    fp16 精度下上游返回的可能是 float16 数组，`soundfile` 不认 float16，会报
+    `Format not recognised`。`tts_engine.generate()` 里统一 `np.asarray(..., dtype=np.float32)`。
+
+13. **`express.json()` 挂载顺序现在管两条代理**
+    `/api/sovits` 与 `/api/netease` 都挂在 `express.json()` 之前（index.ts 内有注释）。新增代理路由时
+    再犯「multipart/NDJSON 被 body-parser 消费」的老错，症状是上传与流式全部 400/空体。
 
 ## 命令
 
@@ -135,6 +185,9 @@
 | 安装依赖 | `npm run install:all` |
 | **一键启动（推荐）** | 双击 `start.bat` |
 | 开发模式 | `npm run dev`（并行起：本地模型服务 + 网关 + 前端） |
+| 网易模块服务 | `npm run dev:netease`（opt-in；需先按 `netease/README.md` 建 venv + 下权重） |
+| 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`） |
+| 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]` |
 | 只起网关+前端 | `npm run dev:cloud` |
 | 只起本地模型服务 | `npm run dev:sovits` |
 | 环境体检 | `npm run sovits:check`（退出码 0 表示就绪） |
@@ -148,11 +201,21 @@
 
 ### 当前状态
 
-- `feature/vc-svc` 分支，origin 已同步
+- `feature/vc-svc` 分支，origin 已同步（本地有阶段 6 改动待提交）
 - `main` 分支停在 `f83d51b`（未包含 vc-svc 功能）
 - 功能可用；本地服务、网关、前端三进程由 `start.bat` 统一拉起
 - 术语表 100 条 + 页面接入 74 处
 - 官方流程指引（8 步）已接入训练页与合成页
+- HANDOFF「下一步」清单已清零（阶段 6）：训练顺序 s2→s1、设置页权重下拉 + E/S 解释、
+  切分结果面板（时长降序 + >15s 高亮）、跨语言合成提示、校对文案、补词笔记删除
+- 网易模块（阶段 7）已交付：`netease/` 服务骨架 + 网关透传 + 前端两页 + 体检脚本；
+  **无权重也能启动并如实报告缺失**；浏览器实测两页渲染与探活状态正常
+- **TTS 侧已装好并跑通（阶段 8）**：venv(py3.12) + torch 2.7.0+cu126 + 权重 5.4 GB 已就位；
+  `npm run netease:check` 与 `preflight_netease.py --allow-missing-asr` 均退出码 0；
+  真跑通过 zh / en 两条合成（RTF 2.0~2.5，常驻 + 峰值显存 4.9 GB）
+- **ASR（R2T2）在 Windows 上不可用**：PyPI 上 vllm 只有 Linux wheel，r2t2 的 llama.cpp 后端
+  也只有 Linux `.so`。要跑只能上 WSL2 / Docker（镜像 `qwenllm/qwen3-asr`）。
+  流式字段已按官方 README 校准（坑 12），但**没有真机验证过**
 
 ### 验收标准
 
@@ -166,12 +229,14 @@
 
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
-| 高 | 训练顺序改为「先 SoVITS 后 GPT」 | 涉及阶段编排，需评估是否补「训完 SoVITS 重新提取语义 Token」 |
-| 高 | 权重选择下拉 UI + E/S 命名解释 | 训完不知道选哪个权重，推理前必踩的坑 |
-| 中 | 切分后展示结果：按时长排序 + >15 秒超长条提醒 | 官方明确要求 |
-| 中 | 「参考音频语种 ≠ 合成语种」在合成页显式提示 | 官方强调的易混淆点 |
-| 低 | 标注校对文案改为「官方认为可跳过」 | 当前措辞与官方判断冲突 |
-| 低 | 删除 `app/src/lib/补词方式.txt`（未跟踪的笔记） | 每次 `git add -A` 都会误入 |
+| 高 | 端到端实测阶段 6 的新 UI | 跑一轮真实训练：确认 s2→s1 顺序、切分结果面板、设置页权重加载联动；`step_stages()` 已用真模块断言过，浏览器侧未测 |
+| 高 | 网易 TTS 在浏览器里跑一遍 | 服务已在 9882 跑着（`npm run dev:netease`）；`npm run dev` 起来后看「网易模块」两页状态卡是否变绿，上传参考音频合成一次 |
+| 中 | R2T2 落地路径拍板 | Windows 原生不可能（坑 12）：要么 WSL2 装 vllm + r2t2，要么 Docker 跑 `qwenllm/qwen3-asr`；决定前 ASR 页面只能显示「平台不支持」 |
+| 中 | fp16 音质人工确认 | 已出声（RMS 0.08~0.10），但没做过 A/B；若嫌糊，用 `NETEASE_TTS_PRECISION=fp32` 重试（需要 ≥8 GB 空闲显存） |
+| 低 | 首条合成预热（实测 378 s） | 稳态 RTF 2.0~2.5，但冷启动第一条要几分钟。可考虑 warmup 时跑一句空合成把算子预热掉 |
+| 中 | 决策：是否推进三模型整合 | `docs/` 已有 OmniVoice/VoxCPM2/Qwen3-TTS 可行性评估，待拍板；若推进，复用 netease 阶段验证过的「第二个运行时 + 无 supervisor 网关透传」模式 |
+| 低 | 毛玻璃观感浏览器确认 | 阶段 5 遗留，多次预览被跳过 |
+| 低 | BS-RoFormer 补 `.yaml` | 整合包有权重缺配置；补齐后模型列表自动变为可用（无需改代码） |
 
 ## 给下一会话的建议
 

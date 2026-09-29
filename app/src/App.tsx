@@ -11,10 +11,13 @@ import { api } from '@/lib/api';
 import { FALLBACK_PRESET_VOICES, MODE_META } from '@/lib/constants';
 import type { RequestError } from '@/lib/errors';
 import { getProvider } from '@/lib/providers/registry';
+import { neteaseApi } from '@/lib/netease';
 import { sovitsApi } from '@/lib/sovits';
 import { AsrPage } from '@/pages/AsrPage';
 import { BatchPage } from '@/pages/BatchPage';
 import { HistoryPage } from '@/pages/HistoryPage';
+import { NeteaseAsrPage } from '@/pages/NeteaseAsrPage';
+import { NeteaseTtsPage } from '@/pages/NeteaseTtsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { SingingConversionPage } from '@/pages/SingingConversionPage';
 import { TrainingPage } from '@/pages/TrainingPage';
@@ -26,6 +29,7 @@ import { VoiceLibraryPage } from '@/pages/VoiceLibraryPage';
 import type {
   HealthInfo,
   HistoryRecord,
+  ModuleState,
   ModuleStates,
   NavKey,
   PresetVoice,
@@ -80,11 +84,19 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: '语音转文本',
     description: 'ASR · 单条音频立刻出逐字文本，也可把一批音频转成带标注的训练数据集',
   },
+  'netease-tts': {
+    title: '网易 · 零样本合成',
+    description: 'Confucius4-TTS · 3 秒免参考文本克隆，14 语种跨语种无口音，支持情感迁移',
+  },
+  'netease-asr': {
+    title: '网易 · 流式转写',
+    description: 'Confucius4-R2T2 · append-only 真流式识别，流式精度≈离线',
+  },
   settings: { title: '设置', description: '配置两套模型的服务地址、密钥与合成偏好' },
 };
 
 /** 不依赖云端密钥的页面（走本地服务或纯客户端） */
-const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc', 'asr'];
+const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc', 'asr', 'netease-tts', 'netease-asr'];
 
 /**
  * 导航键 → MiMo 模型模式。
@@ -152,6 +164,9 @@ function App() {
     rvc: 'checking',
     svc: 'checking',
     asr: 'checking',
+    // 网易模块是独立服务（opt-in），有自己的一轮探活
+    neteaseTts: 'checking',
+    neteaseAsr: 'checking',
   });
 
   const history = useHistory(settings.historyLimit);
@@ -209,7 +224,8 @@ function App() {
 
     const probe = async () => {
       let healthy = false;
-      let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline', asr: 'offline' };
+      // netease 两态由独立的探活循环维护，这里只占位（false 路径同样要给全字段）
+      let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline', asr: 'offline', neteaseTts: 'offline', neteaseAsr: 'offline' };
       try {
         const result = await sovitsApi.health();
         if (cancelled) return;
@@ -224,13 +240,21 @@ function App() {
             rvc: caps?.voice_conversion ? 'ready' : 'incomplete',
             svc: caps?.singing_conversion ? 'ready' : 'incomplete',
             asr: caps?.speech_recognition ? 'ready' : 'incomplete',
+            // 保留网易模块自己的探活结果，不要被这轮覆盖
+            neteaseTts: 'checking',
+            neteaseAsr: 'checking',
           };
         }
       } catch {
         // 连不上就是「还没起来」，与「起来了但没就绪」在这里无需区分
       }
       if (cancelled) return;
-      setModuleStates(nextModules);
+      // rvc/svc/asr 用本轮结果整体替换；网易两态归它自己的探活循环管，这里原样保留
+      setModuleStates((prev) => ({
+        ...nextModules,
+        neteaseTts: prev.neteaseTts,
+        neteaseAsr: prev.neteaseAsr,
+      }));
 
       if (healthy) {
         setSovitsState('ready');
@@ -247,6 +271,46 @@ function App() {
       }
       setSovitsState('checking');
       timer = window.setTimeout(probe, SOVITS_FAST_RETRY_MS);
+    };
+
+    void probe();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
+
+  // 网易模块的探活：独立服务（opt-in，:9882），不随 GPT-SoVITS 的探活走。
+  // 节奏策略沿用同一套常数；「offline」在这里是常态而非故障 ——
+  // 侧栏文案会说明它是可选模块，运行 npm run dev:netease 即可启动。
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const startedAt = Date.now();
+
+    const probe = async () => {
+      let nextTts: ModuleState = 'offline';
+      let nextAsr: ModuleState = 'offline';
+      let allReady = false;
+      try {
+        const health = await neteaseApi.health();
+        if (cancelled) return;
+        nextTts = health.engines.confucius_tts.installed && health.engines.confucius_tts.package.importable ? 'ready' : 'incomplete';
+        nextAsr = health.engines.r2t2.installed ? 'ready' : 'incomplete';
+        allReady = nextTts === 'ready' && nextAsr === 'ready';
+      } catch {
+        // 服务没启动：保持 offline，文案是「未启动（可选模块）」
+      }
+      if (cancelled) return;
+      setModuleStates((prev) => ({ ...prev, neteaseTts: nextTts, neteaseAsr: nextAsr }));
+
+      if (allReady) {
+        // 就绪后降频复查：服务可能中途死掉（显存被挤、被手动关），只探一次会假绿
+        timer = window.setTimeout(probe, SOVITS_READY_POLL_MS);
+        return;
+      }
+      const wait = Date.now() - startedAt < SOVITS_FAST_WINDOW_MS ? SOVITS_FAST_RETRY_MS : SOVITS_SLOW_RETRY_MS;
+      timer = window.setTimeout(probe, wait);
     };
 
     void probe();
@@ -285,12 +349,16 @@ function App() {
           ? '本地 GPU 训练'
           : active === 'batch' || active === 'voices'
             ? '本地 GPT-SoVITS'
-            : active === 'rvc'
-              ? '本地 RVC · vendor/rvc'
-              : active === 'svc'
-                ? '本地 DDSP-SVC · vendor/ddsp-svc'
-                : active === 'asr'
-                  ? '本地 ASR · FunASR / faster-whisper'
+        : active === 'rvc'
+          ? '本地 RVC · vendor/rvc'
+          : active === 'svc'
+            ? '本地 DDSP-SVC · vendor/ddsp-svc'
+            : active === 'asr'
+              ? '本地 ASR · FunASR / faster-whisper'
+              : active === 'netease-tts'
+                ? 'Confucius4-TTS · netease 本地'
+                : active === 'netease-asr'
+                  ? 'Confucius4-R2T2 · netease 本地'
                   : '客户端配置';
     return { ...meta, model };
   }, [active, settings.providerId]);
@@ -349,6 +417,8 @@ function App() {
         {active === 'rvc' ? <VoiceConversionPage /> : null}
         {active === 'svc' ? <SingingConversionPage /> : null}
         {active === 'asr' ? <AsrPage /> : null}
+        {active === 'netease-tts' ? <NeteaseTtsPage /> : null}
+        {active === 'netease-asr' ? <NeteaseAsrPage /> : null}
 
         {active === 'settings' ? (
           <SettingsPage

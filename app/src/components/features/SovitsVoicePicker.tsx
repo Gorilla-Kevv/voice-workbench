@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { AlertTriangle, Loader2, RefreshCw, Waves } from 'lucide-react';
+import { AlertTriangle, Info, Loader2, RefreshCw, Waves } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { TermTip } from '@/components/features/TermTip';
 import { sovitsApi } from '@/lib/sovits';
 import { cn } from '@/lib/utils';
 import type { SovitsCatalog, SovitsVoice } from '@/types';
@@ -62,6 +63,14 @@ export function SovitsVoicePicker({ value, onChange }: SovitsVoicePickerProps) {
   }, []);
 
   const selected = voices.find((voice) => voice.id === value.voiceId);
+
+  /**
+   * 「参考音频语种」与「合成文本语种」是两个独立的参数（官方强调的易混淆点）：
+   * 前者跟随音色库里的标注（本页不可改），后者才是这个下拉。两者允许不同 ——
+   * 那正是官方支持的跨语言合成。
+   */
+  const langLabel = (id: string) => catalog?.languages.find((item) => item.id === id)?.label ?? id;
+  const crossLingual = Boolean(selected) && value.promptLang !== value.textLang;
 
   if (error) {
     return (
@@ -149,7 +158,9 @@ export function SovitsVoicePicker({ value, onChange }: SovitsVoicePickerProps) {
           </Select>
         </div>
         <div className="space-y-2">
-          <Label className="text-xs">文本语种</Label>
+          <Label className="text-xs">
+            <TermTip term="文本语种">合成文本语种</TermTip>
+          </Label>
           <Select value={value.textLang} onValueChange={(next) => onChange({ ...value, textLang: next })}>
             <SelectTrigger className="h-9">
               <SelectValue />
@@ -179,6 +190,20 @@ export function SovitsVoicePicker({ value, onChange }: SovitsVoicePickerProps) {
           </Select>
         </div>
       </div>
+
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        「合成文本语种」是要合成的文本的语种；参考音频的语种跟随音色库里的标注 ——
+        两者是两个独立的参数，可以不同（跨语言合成）
+      </p>
+      {crossLingual ? (
+        <p className="flex items-start gap-1.5 rounded-lg bg-sky-500/10 p-2 text-xs text-sky-700 dark:text-sky-300">
+          <Info className="mt-0.5 size-3.5 shrink-0" />
+          <span>
+            当前参考音频语种为「{langLabel(value.promptLang)}」，合成文本语种为「{langLabel(value.textLang)}」
+            —— 这属于跨语言合成，可以正常使用。若出现怪异发音，优先核对这两处是否选对。
+          </span>
+        </p>
+      ) : null}
 
       <div className="flex flex-wrap gap-1.5">
         <Badge variant="secondary" className="h-5 text-[10px] font-normal">

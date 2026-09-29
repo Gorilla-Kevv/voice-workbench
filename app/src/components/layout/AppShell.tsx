@@ -6,6 +6,7 @@ import {
   FlaskConical,
   History,
   KeyRound,
+  Landmark,
   ListMusic,
   Loader2,
   Mic2,
@@ -15,6 +16,7 @@ import {
   Server,
   ShieldAlert,
   ShieldCheck,
+  Subtitles,
   Sun,
   Waves,
 } from 'lucide-react';
@@ -70,7 +72,7 @@ const SOVITS_STATUS_TEXT: Record<SovitsLinkState, { title: string; hint: string 
  * 与 GPT-SoVITS 的三态文案刻意保持同一句式，用户不需要重新学习一套提示语。
  */
 const MODULE_STATUS_TEXT: Record<
-  'rvc' | 'svc' | 'asr',
+  'rvc' | 'svc' | 'asr' | 'neteaseTts' | 'neteaseAsr',
   { label: string; states: Record<ModuleStates['rvc'], { title: string; hint: string }> }
 > = {
   rvc: {
@@ -98,6 +100,24 @@ const MODULE_STATUS_TEXT: Record<
       ready: { title: '语音转文本 · 已就绪', hint: '常驻模型或整合包脚本至少一条通道可用' },
       incomplete: { title: '语音转文本 · 待补齐', hint: '两条通道都不可用：装 funasr / faster-whisper，或确认整合包里有 tools/asr/ 脚本' },
       offline: { title: '语音转文本 · 未连接', hint: '本地服务未启动（运行 start.bat），界面会自动重连' },
+    },
+  },
+  neteaseTts: {
+    label: '网易 TTS',
+    states: {
+      checking: { title: '网易合成 · 正在连接', hint: 'netease 服务探测中，稍候自动恢复' },
+      ready: { title: '网易合成 · 已就绪', hint: 'Confucius4-TTS 权重就绪，推理全在本机' },
+      incomplete: { title: '网易合成 · 待补齐', hint: '缺权重或缺依赖：按 netease/README.md 下载权重并建 venv（npm run netease:check 体检）' },
+      offline: { title: '网易合成 · 未启动', hint: '可选模块，默认不随主程序启动：运行 npm run dev:netease' },
+    },
+  },
+  neteaseAsr: {
+    label: '网易转写',
+    states: {
+      checking: { title: '网易转写 · 正在连接', hint: 'netease 服务探测中，稍候自动恢复' },
+      ready: { title: '网易转写 · 已就绪', hint: 'Confucius4-R2T2 模型就位，首次转写自动拉起引擎' },
+      incomplete: { title: '网易转写 · 待补齐', hint: '缺权重或缺依赖：按 netease/README.md 下载 R2T2 权重并安装 r2t2 + vllm' },
+      offline: { title: '网易转写 · 未启动', hint: '可选模块，默认不随主程序启动：运行 npm run dev:netease' },
     },
   },
 };
@@ -135,6 +155,15 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     // 以及「把一批音频变成带标注的数据集」的训练入口。
     title: '语音与文本',
     items: [{ key: 'asr', label: '语音转文本', icon: Captions, hint: 'ASR · 音频转逐字文本与训练数据集' }],
+  },
+  {
+    // 网易模块：第二个 Python 运行时（netease/，:9882），opt-in 启动。
+    // 分组逻辑与「MiMo 云端」对齐 —— 用户按「想要哪家模型的能力」找入口，不按部署位置。
+    title: '网易模块',
+    items: [
+      { key: 'netease-tts', label: '零样本合成', icon: Landmark, hint: 'Confucius4-TTS · 免转写克隆 / 14 语种' },
+      { key: 'netease-asr', label: '流式转写', icon: Subtitles, hint: 'Confucius4-R2T2 · append-only 真流式' },
+    ],
   },
   {
     title: '本机',
@@ -189,7 +218,7 @@ export function AppShell({
   children,
   header,
   sovitsState = 'offline',
-  moduleStates = { rvc: 'checking', svc: 'checking', asr: 'checking' },
+  moduleStates = { rvc: 'checking', svc: 'checking', asr: 'checking', neteaseTts: 'checking', neteaseAsr: 'checking' },
 }: AppShellProps) {
   const keyReady = hasServerKey || hasUserKey;
   const sovits = SOVITS_STATUS_TEXT[sovitsState];
@@ -275,8 +304,9 @@ export function AppShell({
 
             <LinkCard state={sovitsState} title={sovits.title} hint={sovits.hint} />
 
-            {/* 各板块：与 GPT-SoVITS 同一份探活数据，同一套卡片样式 */}
-            {(['rvc', 'svc', 'asr'] as const).map((key) => {
+            {/* 各板块：与 GPT-SoVITS 同一份探活数据，同一套卡片样式；
+                网易两态来自它自己的探活循环（opt-in 服务） */}
+            {(['rvc', 'svc', 'asr', 'neteaseTts', 'neteaseAsr'] as const).map((key) => {
               const module = MODULE_STATUS_TEXT[key];
               const state = module.states[moduleStates[key]];
               return <LinkCard key={key} state={moduleStates[key]} title={state.title} hint={state.hint} />;

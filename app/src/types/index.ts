@@ -17,6 +17,9 @@ export * from './svc';
 /** 语音转文本板块（ASR）的契约类型 */
 export * from './asr';
 
+/** 网易模块（Confucius4-TTS / R2T2）的契约类型 */
+export * from './netease';
+
 /** 三种 MiMo 语音模型对应的功能模式 */
 export type TtsMode = 'preset' | 'design' | 'clone';
 
@@ -35,7 +38,11 @@ export type NavKey =
   /** 歌声转换（DDSP-SVC） */
   | 'svc'
   /** 语音转文本（ASR） */
-  | 'asr';
+  | 'asr'
+  /** 网易模块（Confucius4-TTS）：零样本克隆合成 */
+  | 'netease-tts'
+  /** 网易模块（Confucius4-R2T2）：流式 / 离线转写 */
+  | 'netease-asr';
 
 /**
  * 本地模型服务的连接状态。

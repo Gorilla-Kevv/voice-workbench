@@ -113,3 +113,162 @@
 - **风险**：毛玻璃实际观感未经浏览器预览确认（多次预览被跳过）
 
 - **下一阶段入口**：见 `HANDOFF.md` 的「下一步」清单（训练顺序、权重下拉、切分结果展示）
+
+---
+
+## 阶段 6 — 官方建议对齐收尾（HANDOFF 下一步清单清零）
+
+- **已完成**
+  - **训练顺序改为「先 SoVITS 后 GPT」**（官方 WebUI 中 SoVITS=1Ba、GPT=1Bb）
+    - 后端：`STAGES` 元组与 `plan()` 步骤组装均改为 s2 → s1，`step_stages()` 自动跟随
+    - 前端：流水线预览 Badge、阶段开关区同步换序，开关 hint 注明官方顺序
+    - **「训完 SoVITS 重新提取语义 Token」评估结论：不需要**。`3-get-semantic.py`
+      用 `pretrained_s2G`（官方底模）当 VQ 编码器提取语义 Token，官方 WebUI 与本管线
+      传的都是底模路径，GPT 训练不依赖 SoVITS 微调产物 —— 两种训练互不依赖，
+      先后顺序只是「尽早验证语料」的工程考量。结论已写入 `training.py` 模块注释
+  - **权重选择下拉 UI（设置页）**：只读的权重卡片改为 `WeightsPanel`
+    - GPT / SoVITS 两组下拉：训练产物按时间新→旧排列，附体积；官方底模作为零样本选项
+    - 「加载所选权重」调 `/v1/weights/load`（eager 预热），完成后重新探测刷新「当前生效」
+    - E/S 命名解释落在选择器旁边：「e = 轮数、s = 步数，一般选 e 最大的」
+    - 训练完成卡片的指引文字同步更新（设置 → 推理权重）
+  - **切分结果盘点**：官方要求「按时长从大到小排查，删掉 >15 秒的超长条」，现由系统代劳
+    - 后端：slice 阶段完成后 `_summarize_slice()` 即时盘点（时长降序、>15s 判定），
+      并进任务产物（跑着就能看，不等终态）；日志给出超长条清单
+    - 前端：`JobDetail` 新增切分结果面板，超长条琥珀色高亮 + 警示；明细上限 200 条（按最长优先）
+  - **合成页跨语言提示**：`SovitsVoicePicker` 常驻说明「参考音频语种（跟随音色库标注）
+    ≠ 合成文本语种（本页下拉），两者可以不同」；不一致时显示跨语言合成提示卡
+  - **标注校对文案**：改为「官方认为逐条校对非常耗时、收益有限，可以跳过；
+    但合成结果出现怪异读音时，回来改对应条目是最有效的排查手段」
+  - **删除 `app/src/lib/补词方式.txt`**（HANDOFF 清单项）
+    - ⚠️ 事后核实：文件并非空文件（约 199 字节，`wc -l` 显示 0 是因为没有换行符）。
+      按 HANDOFF 指示删除时内容未再确认，且未入 git，无法找回。若里面还有需要的信息，需人工补录
+  - **USER-GUIDE 新增「14. 全链路测试流」**（应用方要求，供验收/回归测试）
+    - 三条完整数据链：14.1 GPT-SoVITS（零样本→训练→权重切换→批量）、
+      14.2 语音变声 RVC（权重→音色三来源→变声→A/B）、
+      14.3 歌声转换 DDSP-SVC（权重→.pt 音色入位→分离缓存→翻唱向导三件套）
+    - 每条 = 数据链总览 + 前置条件 + 主链路表（逐步「预期」）+ 分支场景表
+    - 关键事实核对过代码：RVC 首个音色只能导入（工坊依赖已有底模）；缺 .index 时检索自动跳过；
+      SVC 音色 = .pt+config.yaml 放 `.data/svc/models`（页面无上传 UI，API 可导入）；
+      分离 `off` 时产物无伴奏/混音标签；BS-RoFormer 在分离引擎缺 .yaml 时用内置默认配置兜底
+      （与训练页 UVR5 列表口径不同，8.1 已改注区分）；LoRA 产物是折入适配器的成品 .pth
+    - 7.2/7.4/7.5 加了指向对应测试流的交叉引用
+
+- **未完成**：无
+
+- **改动文件**：`trainer/app/training.py`、`app/src/pages/TrainingPage.tsx`、`app/src/pages/SettingsPage.tsx`、`app/src/components/features/SovitsVoicePicker.tsx`、`app/src/types/sovits.ts`、`docs/USER-GUIDE.md`
+
+- **测试结果**：`npm run typecheck` 通过；ESLint（4 个改动文件）通过；`npm run build` 通过；
+  `npm run sovits:check` 退出码 0；Python `ast.parse` 通过；
+  用真模块断言 `step_stages()`：全勾选/只勾 GPT/v2（无 sv）三种组合下 s2 均先于 s1、
+  阶段集合与勾选一致
+
+- **风险**：切分盘点逐文件测时长，超大语料（上千段）会增加一次性耗时（在切分本身之后，可接受）；
+  新 UI（权重面板、切分面板、跨语言提示）尚未经浏览器实测
+
+- **下一阶段入口**：跑一轮真实训练做端到端验收（新顺序 + 切分面板 + 权重面板联动）；
+  或按 `docs/` 里三模型整合可行性评估推进决策
+
+---
+
+## 阶段 7 — 网易模块接入（Confucius4-TTS + Confucius4-R2T2，双模型共存）
+
+- **已完成**
+  - **决策与对比文档** `docs/NETEASE-INTEGRATION.md`：
+    - 网易 vs 现有（TTS：Confucius4-TTS vs GPT-SoVITS/MiMo；ASR：R2T2 vs FunASR/Whisper）逐维对比；
+    - 共存策略：GPT-SoVITS 保持训练+轻量推理首选、MiMo 保持云端零配置、网易补
+      「免参考文本克隆 + 14 语种跨语种 + 情感迁移 + append-only 真流式 ASR」；
+    - 结论延续 `MODERN-TTS-FEASIBILITY.md`：第二个 Python 运行时（py≥3.10 vs 现有 3.9），不动 `trainer/` 一行
+  - **后端** `netease/`（15 个 py 文件，端口 9882，opt-in）：
+    - `server.py`（--check 体检）+ `app/{config,errors,models,engine,hardware,api}.py`
+    - `tts_engine.py`：Confucius4-TTS 直连（lazy import confuciustts，14 语种、免转写克隆、产物落盘 .data）
+    - `r2t2.py` + `r2t2_worker.py`：R2T2 子进程 worker（vLLM 需 main 环境；stdin/stdout JSON 行协议；
+      支持独立解释器 `NETEASE_R2T2_PYTHON` 解决依赖冲突）
+    - 引擎互斥（TTS/ASR 不同时持卡，默认抢占让位）、显存准入检查（不静默落 CPU）
+    - 错误契约与全局一致（`{ok, error:{code,message,retryable,hint}}`）
+    - **无权重/无 torch 也能启动**，health/catalog 如实报告缺失项
+  - **网关**：`/api/netease` 透明反代（挂在 `express.json()` 之前）；`/api/health` 增加 netease 摘要
+    （带缓存的 TCP 探活；`optional: true` 标记「未启动是常态」）
+  - **前端**：
+    - `types/netease.ts` + `lib/netease.ts`（含 NDJSON 流式转写逐行解析与 abort）
+    - `NeteaseTtsPage`：参考音频三来源（上传 / **复用现有音色库**（只取音频，逐字文本不参与））+ 14 语种 + 引擎管理卡
+    - `NeteaseAsrPage`：快速 / 流式两种模式（流式 append-only 逐字出字、可取消）+ 时间戳 + 引擎管理卡
+    - 侧栏新增「网易模块」分组 + 两张四态状态卡（offline 文案是「未启动（可选模块）」而非故障语气）
+    - App.tsx 独立探活循环（3s/30s/60s 节奏，与 sovits 同常数）
+  - **工程化**：`npm run dev:netease` / `netease:check`（`scripts/netease.mjs` 跨平台选解释器）、
+    `scripts/preflight_netease.py`（解释器/torch/CUDA/依赖/权重/端口/磁盘逐项体检）、
+    `netease/README.md`（60 GB 磁盘预算与逐步安装指南）、.gitignore 补 venv/.data
+  - 文档：USER-GUIDE 新增「15. 网易模块」（定位 / 启用步骤 / 测试流 / 分支场景 / 许可提示）+ 命令与端口附录
+
+- **未完成**（登记在 NETEASE-INTEGRATION.md §6，均为有意延后）
+  - 权重（TTS 约 54 GB）未下载，端到端推理未实测；R2T2 worker 流式增量字段名需实测校准（防御式处理已就位）
+  - TTS 流式合成（需上游 vLLM 后端）、麦克风实时 ASR、统一历史记录接入、跨运行时显存仲裁
+
+- **改动文件**：`netease/`（新增 15 文件）、`server/src/{config/index.ts,index.ts,routes/index.ts,routes/netease.ts}`、
+  `app/src/{App.tsx,types/{index,sovits,netease}.ts,lib/netease.ts,pages/Netease{Asr,Tts}Page.tsx,components/layout/AppShell.tsx}`、
+  `package.json`、`scripts/{netease.mjs,preflight_netease.py}`、`.gitignore`、`docs/`、`HANDOFF.md`
+
+- **测试结果**：`npm run typecheck` 通过；新增/改动文件 ESLint 通过（存量 ui/hooks 文件有 13 个与本次无关的
+  lint 错误，未触碰）；`npm run build` 通过；Python `ast.parse` 全部通过；
+  netease 服务无 torch/无权重冷启动冒烟通过（health/catalog/错误契约正确）；
+  网关双态冒烟通过（netease 下线 → 结构化 503；上线 → 透传 + health reachable=true）；
+  浏览器实测（1280×720，深色主题）：侧栏「网易模块」分组、两页完整渲染、
+  引擎卡缺失项明细、模式切换与解码块选择器、探活「待补齐」状态卡全部正常
+
+- **风险**：8 GB 显存对 1.3B TTS 属压线（估算 4~6 GB，准入门槛 6 GB），实测前不能保证可用；
+  R2T2 与 TTS 依赖可能需要分 venv（worker 已支持独立解释器）；两上游均新发布，API 可能漂移
+  （接入面已收窄到两个薄文件）
+
+- **下一阶段入口**：按 `netease/README.md` 装环境 + 下载权重做端到端实测（HANDOFF「下一步」高优先级项）；
+  或推进 `docs/MODERN-TTS-FEASIBILITY.md` 的三模型决策（复用本阶段验证的运行时模式）
+
+---
+
+## 阶段 8 — 网易模块装环境 + 端到端实测（TTS 跑通 / ASR 卡在平台）
+
+- **已完成**
+  - **环境**：py3.12 venv（`netease/.venv`）+ torch **2.7.0+cu126**（按上游 pin；PyPI 上的 torch 是 CPU 版，
+    必须走 `download.pytorch.org/whl/cu126`）+ 上游 `requirements.txt`（过滤掉里面会覆盖 CUDA torch 的两行）
+    + `pip install -e models-src/Confucius4-TTS`
+  - **权重**：新增 `scripts/download_netease_weights.py`（`npm run netease:weights`）。
+    ModelScope 优先、HF 经 `--proxy` 兜底；按上游实际取用方式分流 ——
+    T2S/S2A/CAMPPlus 铺进 HF 缓存（真实 etag + snapshots + refs），w2v-bert 与 BigVGAN 落本地目录。
+    **实际下载 5.4 GB（不是早期文档估的 54 GB）**
+  - **接入修正**（都是实测逼出来的）：
+    - 权重探测改为查 **HF 缓存**（`_hf_cached()`）+ 本地目录，不再查 `models/Confucius4-TTS/checkpoints`
+    - 上游配置不再直接使用：`_materialize_config()` 复制一份把 `tokenizer_path` / `w2v_stat` 改成绝对路径，
+      并把 w2v-bert / BigVGAN 指到本地目录（消掉 CWD 依赖，也让两个 `from_pretrained` 离线可用）
+    - **`_enable_fp16()`**：fp32 全量约 7.5 GB 必 OOM，只转三个大户并对齐上游五处硬编码 fp32 输入
+      （w2v `input_features`、semantic_mean/std、参考 mel、CAMPPlus 风格向量、
+      `DummyPositionEmbedding` 里写死的 `dtype=torch.float32`）。`NETEASE_TTS_PRECISION` 可切回 fp32
+    - 写盘前统一 `np.asarray(..., dtype=np.float32)`（fp16 下 soundfile 会报 `Format not recognised`）
+    - 修两处 `probe_install()["package"]["missing"]` 的 KeyError（导入成功时没有这个键）：
+      `server.py --check` 与 `/v1/confucius/warmup` 都是 500，之前没被触发过
+    - **R2T2 流式字段按官方 README 校准**：增量文本在 `streaming_transcribe` **返回值**的第二个元素
+      （不是 `state`），定稿是 finish 之后读 `state.text`；新增 `_coerce_text()`
+  - **体检**：`npm run netease:check` 与 `scripts/preflight_netease.py --allow-missing-asr` 均退出码 0
+  - **端到端实测**（RTX 4060 Laptop 8 GB，后台另有程序占约 2.7 GB）：
+    - warmup 约 60~70 s；常驻 + 推理峰值显存约 **4.9 GB**
+    - zh：2.57 s 音频 / 6.31 s（RTF 2.46）；en：4.11 s 音频 / 8.05 s（RTF 1.96）；RMS 0.077~0.097，无 NaN
+    - **首条要 378 s**（算子 + allocator 预热），第二条起进入稳态
+
+- **未完成（有据可查的阻塞，不是偷懒）**
+  - **R2T2 在 Windows 上装不了**：PyPI 上 `vllm`（0.30.0）只有 Linux wheel；r2t2 的 llama.cpp 后端
+    也只有 `libggml*.so` 与 `cpython-312-x86_64-linux-gnu` 产物。`pyproject.toml` 的 classifier 就是
+    `Operating System :: POSIX :: Linux`。→ 要跑只能 WSL2 / Docker（`qwenllm/qwen3-asr`）
+  - 因此**流式转写的实测校准仍未完成**：代码已按官方 README 校准，但没有真机验证
+  - TTS 流式合成（需上游 vLLM 后端）、麦克风实时 ASR、统一历史记录接入、跨运行时显存仲裁（沿用阶段 7）
+
+- **改动文件**：`netease/app/{config,tts_engine,r2t2_worker}.py`、`netease/app/routers/netease.py`、
+  `netease/server.py`、`scripts/{download_netease_weights.py,preflight_netease.py,netease.mjs}`、
+  `package.json`、`app/src/{types/netease.ts,pages/NeteaseTtsPage.tsx}`、
+  `netease/README.md`、`docs/{NETEASE-INTEGRATION.md,USER-GUIDE.md}`、`HANDOFF.md`
+
+- **测试结果**：`npm run netease:check` 退出码 0；`preflight_netease.py --allow-missing-asr` 退出码 0；
+  `/health` 的 `engines.confucius_tts.installed=true` 且权重 5 项全就位；
+  真跑 3 条合成（2 条 200 + 1 条写盘 bug 已修）；`npm run typecheck` 通过
+
+- **风险**：fp16 音质只做了「有声 + 无 NaN」的粗校验，没做 A/B；首条预热的 378 s 体验很差；
+  8 GB 卡必须关掉其它占显存的程序才稳（准入检查卡在 6 GB）
+
+- **下一阶段入口**：浏览器里跑一遍网易 TTS 两页（状态卡变绿、上传参考音频、跨语种）；
+  拍板 R2T2 走 WSL2 还是 Docker

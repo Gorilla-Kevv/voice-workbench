@@ -40,6 +40,7 @@ import type {
   SovitsHealth,
   SovitsJob,
   SovitsSliceDefaults,
+  SovitsSliceReport,
   SovitsTrainPayload,
   SovitsTrainPlan,
   SovitsUvrModel,
@@ -266,8 +267,10 @@ let retained: TrainSession = loadSession();
  * 本页把它收敛成一条**有明确前置校验的流水线**：
  *
  * ```
- * 语料导入 → 降噪 → 切分 → 识别 → 清单 → 格式化 → GPT → SoVITS
+ * 语料导入 → 降噪 → 切分 → 识别 → 清单 → 格式化 → SoVITS → GPT
  * ```
+ *
+ * （训练阶段按官方建议「先 SoVITS 后 GPT」：SoVITS 收敛快，先用它验证语料质量。）
  *
  * 三个让这件事变可靠的设计：
  *
@@ -1114,8 +1117,8 @@ export function TrainingPage() {
                 ['hubert', 'HuBERT', runFormat],
                 ['sv', '说话人向量', runFormat && ['v2Pro', 'v2ProPlus'].includes(version)],
                 ['semantic', '语义 Token', runFormat],
-                ['s1', 'GPT 训练', runS1],
                 ['s2', 'SoVITS 训练', runS2],
+                ['s1', 'GPT 训练', runS1],
               ] as [string, string, boolean][]
             ).map(([key, label, enabled]) => (
               <Badge
@@ -1160,18 +1163,18 @@ export function TrainingPage() {
               onChange={setRunFormat}
             />
             <StageToggle
-              term="GPT（语义）训练"
-              label="GPT（语义）训练"
-              hint="s1_train.py，决定断句与韵律"
-              checked={runS1}
-              onChange={setRunS1}
-            />
-            <StageToggle
               term="SoVITS（声学）训练"
               label="SoVITS（声学）训练"
-              hint="s2_train.py，决定音色相似度"
+              hint="s2_train.py，决定音色相似度；官方建议先训它，收敛快、便于尽早验证语料"
               checked={runS2}
               onChange={setRunS2}
+            />
+            <StageToggle
+              term="GPT（语义）训练"
+              label="GPT（语义）训练"
+              hint="s1_train.py，决定断句与韵律；官方建议等 SoVITS 训完再开"
+              checked={runS1}
+              onChange={setRunS1}
             />
           </div>
 
@@ -1830,7 +1833,8 @@ function AnnotationPanel({
           </Badge>
         </CardTitle>
         <CardDescription>
-          ASR 的错字会被直接学进模型。逐条听一遍、改掉错字，再点「用这份清单训练」
+          官方认为逐条校对非常耗时、收益有限，可以跳过。但合成结果出现怪异读音时，
+          回来改对应条目是最有效的排查手段 —— ASR 的错字会被模型原样学进去
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -1951,6 +1955,13 @@ function JobDetail({ job }: { job: SovitsJob }) {
   }, [job.id]);
   const stages = job.stages ?? [];
   const artifacts = (job.artifacts ?? {}) as Record<string, string | undefined>;
+  /** 切分盘点在 slice 阶段完成后才出现；结构不符时当作没有，别让展示挂掉 */
+  const sliceReport = (() => {
+    const raw = (job.artifacts ?? {}).slice;
+    if (!raw || typeof raw !== 'object') return null;
+    const report = raw as SovitsSliceReport;
+    return Array.isArray(report.items) && report.count > 0 ? report : null;
+  })();
 
   return (
     <div className="space-y-4">
@@ -1986,6 +1997,8 @@ function JobDetail({ job }: { job: SovitsJob }) {
         </div>
       ) : null}
 
+      {sliceReport ? <SliceReportPanel report={sliceReport} /> : null}
+
       {artifacts.gpt_model || artifacts.sovits_model ? (
         <div className="space-y-1 rounded-lg bg-emerald-500/5 p-3 text-xs text-emerald-700 dark:text-emerald-400">
           <p className="font-medium">训练产物已就绪，可以切过去试听：</p>
@@ -1996,7 +2009,8 @@ function JobDetail({ job }: { job: SovitsJob }) {
             <p className="truncate font-mono">{artifacts.sovits_model}</p>
           ) : null}
           <p className="opacity-90">
-            到「设置 → GPT-SoVITS 本地服务」把默认版本切到对应版本后，合成页会自动使用最新权重。
+            推理前到「设置 → 推理权重」的下拉里选中这对权重再合成。文件名里的 e = 训练轮数、
+            s = 步数，一般选 e 最大的那个。
           </p>
         </div>
       ) : null}
@@ -2012,6 +2026,75 @@ function JobDetail({ job }: { job: SovitsJob }) {
             </pre>
           ) : null}
         </>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * 切分结果盘点面板。
+ *
+ * 官方要求切分输出按「时长从大到小」排查，删掉或手动再切超过约 15 秒的超长条。
+ * 服务端已完成排序与判定，这里只负责呈现：超长条排最前、用琥珀色高亮。
+ */
+function SliceReportPanel({ report }: { report: SovitsSliceReport }) {
+  const overLimit = report.overlong_limit;
+  return (
+    <div className="space-y-2 rounded-lg border p-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs">
+        <span className="font-medium">切分结果</span>
+        <Badge variant="secondary" className="h-5 text-[10px] font-normal">
+          {report.count} 段
+        </Badge>
+        <span className="text-muted-foreground">
+          合计 {(report.total_seconds / 60).toFixed(1)} 分钟 · 最长 {report.longest_seconds.toFixed(1)}s
+        </span>
+        {report.overlong > 0 ? (
+          <Badge
+            variant="outline"
+            className="h-5 border-amber-500/60 text-[10px] text-amber-600 dark:text-amber-400"
+          >
+            <TriangleAlert className="mr-1 size-3" />
+            {report.overlong} 段超 {Math.round(overLimit)}s
+          </Badge>
+        ) : (
+          <Badge
+            variant="outline"
+            className="h-5 border-emerald-500/60 text-[10px] text-emerald-600 dark:text-emerald-400"
+          >
+            全部 ≤ {Math.round(overLimit)}s
+          </Badge>
+        )}
+      </div>
+      <p className="text-[11px] leading-snug text-muted-foreground">
+        官方建议按时长从大到小排查，删除或手动再切超过约 15 秒的超长条 ——
+        它们通常是静音没切干净，会拖累音频与文本的对齐质量
+      </p>
+      <div className="scrollbar-thin max-h-56 space-y-1 overflow-y-auto pr-1">
+        {report.items.map((item) => {
+          const over = item.seconds > overLimit;
+          return (
+            <div key={item.file} className="flex items-center gap-2 text-[11px]">
+              <span
+                className={cn(
+                  'w-14 shrink-0 text-right font-mono tabular-nums',
+                  over && 'font-medium text-amber-600 dark:text-amber-400',
+                )}
+              >
+                {item.seconds.toFixed(1)}s
+              </span>
+              <span className={cn('truncate font-mono', over ? 'text-foreground' : 'text-muted-foreground')}>
+                {item.file}
+              </span>
+              {over ? <TriangleAlert className="size-3 shrink-0 text-amber-500" /> : null}
+            </div>
+          );
+        })}
+      </div>
+      {report.truncated ? (
+        <p className="text-[11px] text-muted-foreground">
+          明细只保留最长的 {report.items.length} 段；如需完整列表，请直接查看切分输出目录
+        </p>
       ) : null}
     </div>
   );

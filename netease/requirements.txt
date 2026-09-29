@@ -1,0 +1,13 @@
+# netease 服务自身的基础依赖（装进 netease venv）。
+#
+# 注意：torch 与两个上游模型包不在本清单 —— 它们按各自官方 README 安装：
+#   1) torch：pip install torch --index-url https://download.pytorch.org/whl/cu126
+#   2) Confucius4-TTS：克隆仓库后 pip install -e ./Confucius4-TTS（或按其 requirements）
+#   3) Confucius4-R2T2：按上游 README 安装 r2t2 + vllm（也可单独给它一个解释器：
+#      设置 NETEASE_R2T2_PYTHON 指向另一个 venv 的 python）
+fastapi>=0.110
+uvicorn>=0.27
+pydantic>=2.5
+python-multipart>=0.0.9
+soundfile>=0.12
+numpy

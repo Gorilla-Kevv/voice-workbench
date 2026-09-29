@@ -6,6 +6,7 @@ import { config, isProduction } from './config/index.js';
 import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRouter } from './routes/index.js';
+import { neteaseProxyRouter } from './routes/netease.js';
 import { sovitsProxyRouter } from './routes/sovits.js';
 import { sovitsSupervisor } from './services/sovits.js';
 
@@ -25,7 +26,9 @@ app.use(
 // GPT-SoVITS 代理必须挂在 express.json() **之前**：
 // 它需要原始请求流（音频上传是 multipart，流式合成是 NDJSON），
 // 一旦被 body-parser 消费过，这两类请求就透传不出去了。
+// 网易模块代理同理（NDJSON 流式转写 + multipart 音频上传），必须一起挂在这里。
 app.use('/api/sovits', sovitsProxyRouter);
+app.use('/api/netease', neteaseProxyRouter);
 
 // 克隆样本经 base64 传输，需要放宽请求体上限
 app.use(express.json({ limit: config.jsonBodyLimit }));
