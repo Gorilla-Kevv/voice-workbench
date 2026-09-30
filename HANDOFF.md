@@ -179,6 +179,12 @@
     fp16 精度下上游返回的可能是 float16 数组，`soundfile` 不认 float16，会报
     `Format not recognised`。`tts_engine.generate()` 里统一 `np.asarray(..., dtype=np.float32)`。
 
+17. **`check_vram()` 的口径与 nvidia-smi 不一致**
+    `netease/app/hardware.py` 用 `torch.cuda.mem_get_info`（cudaMemGetInfo），Windows WDDM 下它报的空闲
+    比 nvidia-smi 乐观：实测 nvidia-smi 只有 2.6 GB 空闲时，准入检查照样放行，模型也真的加载成功了
+    （加载完整机只剩 161 MB）。**后果不是崩，是推理期被别的程序挤占** —— 同一条合成，显存充裕时
+    RTF 2.0~2.5，被挤占时掉到 4.88。要改就得先确认哪个口径更接近「真实可分配量」，别拍脑袋换。
+
 13. **`express.json()` 挂载顺序现在管两条代理**
     `/api/sovits` 与 `/api/netease` 都挂在 `express.json()` 之前（index.ts 内有注释）。新增代理路由时
     再犯「multipart/NDJSON 被 body-parser 消费」的老错，症状是上传与流式全部 400/空体。
@@ -221,6 +227,11 @@
 - **ASR（R2T2）在 Windows 上不可用**：PyPI 上 vllm 只有 Linux wheel，r2t2 的 llama.cpp 后端
   也只有 Linux `.so`。要跑只能上 WSL2 / Docker（镜像 `qwenllm/qwen3-asr`）。
   流式字段已按官方 README 校准（坑 12），但**没有真机验证过**
+- **浏览器链路已打通（阶段 8 续）**：`npm run dev` + `npm run dev:netease` 四端口在跑
+  （5173 / 8787 / 9881 / 9882）；网关 `/api/netease/*` 透传正常，`/api/netease/health` 返回
+  TTS `installed=true / missing=0`、R2T2 `installed=false`（两张状态卡如实显示已就绪 / 待补齐）；
+  经网关代理合成一条 200（4.99 s 音频 / 24.36 s）。**GPT-SoVITS 的后台预加载已手动卸掉**
+  （`POST /v1/engines/unload` + `/v1/pipeline/unload`）让位，下次用它会自动重新加载
 
 ### 验收标准
 
@@ -236,10 +247,11 @@
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
 | 高 | 端到端实测阶段 6 的新 UI | 跑一轮真实训练：确认 s2→s1 顺序、切分结果面板、设置页权重加载联动；`step_stages()` 已用真模块断言过，浏览器侧未测 |
-| 高 | 网易 TTS 在浏览器里跑一遍 | 服务已在 9882 跑着（`npm run dev:netease`）；`npm run dev` 起来后看「网易模块」两页状态卡是否变绿，上传参考音频合成一次 |
+| 高 | 网易合成页的 UI 交互人工过一遍 | **接口链路已验完**（四端口在跑，网关透传 `/api/netease/*` 正常，经代理合成 200）；剩下上传参考音频、音色库选取、跨语种切换、结果卡播放/下载的手感 |
 | 中 | R2T2 落地路径拍板 | Windows 原生不可能（坑 12）：要么 WSL2 装 vllm + r2t2，要么 Docker 跑 `qwenllm/qwen3-asr`；决定前 ASR 页面只能显示「平台不支持」 |
 | 中 | fp16 音质人工确认 | 已出声（RMS 0.08~0.10），但没做过 A/B；若嫌糊，用 `NETEASE_TTS_PRECISION=fp32` 重试（需要 ≥8 GB 空闲显存） |
 | 低 | 首条合成预热（实测 378 s） | 稳态 RTF 2.0~2.5，但冷启动第一条要几分钟。可考虑 warmup 时跑一句空合成把算子预热掉 |
+| 低 | `check_vram()` 口径（坑 17） | 现在用 `torch.cuda.mem_get_info`，比 nvidia-smi 乐观 → 加载放行但推理被挤占（RTF 掉到 4.88）。先确定哪个口径真实再改 |
 | 中 | 决策：是否推进三模型整合 | `docs/` 已有 OmniVoice/VoxCPM2/Qwen3-TTS 可行性评估，待拍板；若推进，复用 netease 阶段验证过的「第二个运行时 + 无 supervisor 网关透传」模式 |
 | 低 | 毛玻璃观感浏览器确认 | 阶段 5 遗留，多次预览被跳过 |
 | 低 | BS-RoFormer 补 `.yaml` | 整合包有权重缺配置；补齐后模型列表自动变为可用（无需改代码） |

@@ -266,9 +266,18 @@
 - **测试结果**：`npm run netease:check` 退出码 0；`preflight_netease.py --allow-missing-asr` 退出码 0；
   `/health` 的 `engines.confucius_tts.installed=true` 且权重 5 项全就位；
   真跑 3 条合成（2 条 200 + 1 条写盘 bug 已修）；`npm run typecheck` 通过
+- **浏览器链路实测（续）**：`npm run dev` 起 8787/5173 + 9881/9882 四端口；
+  网关 `/api/health` 的 `netease.reachable=true`，`/api/netease/health` 透传回
+  `installed=true / missing=0`（→ TTS 状态卡变绿）、`r2t2.installed=false`（→ ASR 卡如实显示待补齐）；
+  **经网关代理**再合成一条：200，4.99 s 音频 / 24.36 s（RTF 4.88，当时显卡只剩 161 MB 空闲、被别的程序挤占）
 
 - **风险**：fp16 音质只做了「有声 + 无 NaN」的粗校验，没做 A/B；首条预热的 378 s 体验很差；
   8 GB 卡必须关掉其它占显存的程序才稳（准入检查卡在 6 GB）
+- **新发现的坑（坑 17）**：`check_vram()` 用的是 `torch.cuda.mem_get_info`，**与 nvidia-smi 口径不一致**
+  —— 实测 nvidia-smi 报空闲 2.6 GB 时 warmup 仍被放行且模型真的加载成功了（加载后只剩 161 MB 空闲）。
+  后果不是崩，是**推理期被挤占**：同一条合成在显存充裕时 RTF 2.0~2.5，挤占时掉到 4.88。
+  要不要改用 nvidia-smi 采样做准入，待定（改之前先确认 Windows WDDM 下哪个口径更接近真实可用量）
 
-- **下一阶段入口**：浏览器里跑一遍网易 TTS 两页（状态卡变绿、上传参考音频、跨语种）；
-  拍板 R2T2 走 WSL2 还是 Docker
+- **下一阶段入口**：浏览器里人工过一遍网易合成页的交互（上传参考音频、音色库选取、跨语种切换、结果卡播放下载）
+  —— 接口链路已全部验过，剩下的是 UI 交互手感；拍板 R2T2 走 WSL2 还是 Docker；
+  决定 `check_vram()` 是否改成 nvidia-smi 口径
