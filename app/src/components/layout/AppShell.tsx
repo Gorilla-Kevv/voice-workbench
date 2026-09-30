@@ -180,13 +180,23 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
  * 「待补齐」用琥珀而不是灰是有意的 —— 它是用户可以自己解决的事（跑两条命令），
  * 不是「服务没起来」这种只能等的故障，视觉上要引导用户去看提示。
  */
-function LinkCard({ state, title, hint }: { state: ModuleStates['rvc']; title: string; hint: string }) {
+/** 侧栏状态卡的统一数据形状（MiMo 云端与本地各引擎走同一套渲染） */
+interface StatusCard {
+  id: string;
+  state: ModuleStates['rvc'];
+  title: string;
+  hint: string;
+  icon: 'shield' | 'server';
+}
+
+function LinkCard({ state, title, hint, icon = 'server' }: Omit<StatusCard, 'id'>) {
   const ready = state === 'ready';
   const incomplete = state === 'incomplete';
+  const Icon = icon === 'shield' ? (ready ? ShieldCheck : ShieldAlert) : state === 'checking' ? Loader2 : Server;
   return (
     <div
       className={cn(
-        'flex items-start gap-2 rounded-lg border p-2.5 text-xs',
+        'flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-[11px] leading-snug',
         ready
           ? 'bg-emerald-500/5 text-emerald-700 dark:text-emerald-400'
           : incomplete
@@ -194,14 +204,10 @@ function LinkCard({ state, title, hint }: { state: ModuleStates['rvc']; title: s
             : 'bg-muted/50 text-muted-foreground',
       )}
     >
-      {state === 'checking' ? (
-        <Loader2 className="mt-0.5 size-3.5 shrink-0 animate-spin" />
-      ) : (
-        <Server className="mt-0.5 size-3.5 shrink-0" />
-      )}
-      <div>
-        <p className="font-medium">{title}</p>
-        <p className="mt-0.5 opacity-80">{hint}</p>
+      <Icon className={cn('mt-[1px] size-3 shrink-0', state === 'checking' && 'animate-spin')} />
+      <div className="min-w-0">
+        <p className="truncate font-medium">{title}</p>
+        <p className="opacity-80">{hint}</p>
       </div>
     </div>
   );
@@ -222,6 +228,26 @@ export function AppShell({
 }: AppShellProps) {
   const keyReady = hasServerKey || hasUserKey;
   const sovits = SOVITS_STATUS_TEXT[sovitsState];
+
+  const statusCards: StatusCard[] = [
+    {
+      id: 'mimo',
+      state: keyReady ? 'ready' : 'incomplete',
+      title: `MiMo 云端${keyReady ? '已就绪' : '待配置'}`,
+      hint: hasUserKey ? '使用你的个人密钥' : hasServerKey ? '使用站点公用密钥' : '请到设置页填写密钥',
+      icon: 'shield',
+    },
+    { id: 'sovits', state: sovitsState, title: sovits.title, hint: sovits.hint, icon: 'server' },
+    ...(['rvc', 'svc', 'asr', 'neteaseTts', 'neteaseAsr'] as const).map((key) => {
+      const module = MODULE_STATUS_TEXT[key];
+      const state = moduleStates[key];
+      return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;
+    }),
+  ];
+  // 探活 / 加载期间整列展示（此时用户需要看到进度）；一旦没有「正在连接」的卡片，
+  // 就只保留需要用户动手的（待补齐 / 未连接 / 待配置），全部就绪则整块隐藏。
+  const probing = statusCards.some((card) => card.state === 'checking');
+  const visibleCards = probing ? statusCards : statusCards.filter((card) => card.state !== 'ready');
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
@@ -278,41 +304,23 @@ export function AppShell({
           ))}
         </nav>
 
-        {/* 两套链路的状态：一条云端、一条本地，各自独立 */}
-        <div className="hidden px-4 pb-5 lg:block">
-          <div className="space-y-2">
-            <div
-              className={cn(
-                'flex items-start gap-2 rounded-lg border p-2.5 text-xs',
-                keyReady
-                  ? 'bg-emerald-500/5 text-emerald-700 dark:text-emerald-400'
-                  : 'bg-amber-500/5 text-amber-700 dark:text-amber-400',
-              )}
-            >
-              {keyReady ? (
-                <ShieldCheck className="mt-0.5 size-3.5 shrink-0" />
-              ) : (
-                <ShieldAlert className="mt-0.5 size-3.5 shrink-0" />
-              )}
-              <div>
-                <p className="font-medium">MiMo 云端{keyReady ? '已就绪' : '待配置'}</p>
-                <p className="mt-0.5 opacity-80">
-                  {hasUserKey ? '使用你的个人密钥' : hasServerKey ? '使用站点公用密钥' : '请到设置页填写密钥'}
-                </p>
-              </div>
+        {/* 两套链路的状态：一条云端、一条本地，各自独立。
+            探活期间整列可见；探活结束后只留需要用户处理的卡片，全部就绪则整块不渲染 */}
+        {visibleCards.length > 0 ? (
+          <div className="hidden px-4 pb-4 lg:block">
+            <div className="space-y-1.5">
+              {visibleCards.map((card) => (
+                <LinkCard
+                  key={card.id}
+                  state={card.state}
+                  title={card.title}
+                  hint={card.hint}
+                  icon={card.icon}
+                />
+              ))}
             </div>
-
-            <LinkCard state={sovitsState} title={sovits.title} hint={sovits.hint} />
-
-            {/* 各板块：与 GPT-SoVITS 同一份探活数据，同一套卡片样式；
-                网易两态来自它自己的探活循环（opt-in 服务） */}
-            {(['rvc', 'svc', 'asr', 'neteaseTts', 'neteaseAsr'] as const).map((key) => {
-              const module = MODULE_STATUS_TEXT[key];
-              const state = module.states[moduleStates[key]];
-              return <LinkCard key={key} state={moduleStates[key]} title={state.title} hint={state.hint} />;
-            })}
           </div>
-        </div>
+        ) : null}
       </aside>
 
       {/* 主内容区 */}
