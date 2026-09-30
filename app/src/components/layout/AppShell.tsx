@@ -1,7 +1,9 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import {
   AudioLines,
   Captions,
+  ChevronDown,
+  ChevronRight,
   Disc3,
   FlaskConical,
   History,
@@ -245,9 +247,12 @@ export function AppShell({
     }),
   ];
   // 探活 / 加载期间整列展示（此时用户需要看到进度）；一旦没有「正在连接」的卡片，
-  // 就只保留需要用户动手的（待补齐 / 未连接 / 待配置），全部就绪则整块隐藏。
+  // 就只保留需要用户动手的（待补齐 / 未连接 / 待配置）。
+  // 「已就绪」的卡片不再长期占位，但留一个折叠入口 —— 排查问题时用户要能一眼看全。
   const probing = statusCards.some((card) => card.state === 'checking');
-  const visibleCards = probing ? statusCards : statusCards.filter((card) => card.state !== 'ready');
+  const pendingCards = statusCards.filter((card) => card.state !== 'ready');
+  const [showAllStatuses, setShowAllStatuses] = useState(false);
+  const visibleCards = probing || showAllStatuses ? statusCards : pendingCards;
 
   return (
     <div className="flex min-h-screen flex-col lg:flex-row">
@@ -305,22 +310,31 @@ export function AppShell({
         </nav>
 
         {/* 两套链路的状态：一条云端、一条本地，各自独立。
-            探活期间整列可见；探活结束后只留需要用户处理的卡片，全部就绪则整块不渲染 */}
-        {visibleCards.length > 0 ? (
-          <div className="hidden px-4 pb-4 lg:block">
-            <div className="space-y-1.5">
-              {visibleCards.map((card) => (
-                <LinkCard
-                  key={card.id}
-                  state={card.state}
-                  title={card.title}
-                  hint={card.hint}
-                  icon={card.icon}
-                />
-              ))}
-            </div>
+            默认只列需要处理的卡片，折叠入口可以展开看全（排查时用）；
+            探活期间强制全列，保证加载进度不被折叠掉。 */}
+        <div className="hidden px-4 pb-4 lg:block">
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => setShowAllStatuses((prev) => !prev)}
+              aria-expanded={showAllStatuses}
+              title={showAllStatuses ? '只看待处理的' : '展开全部状态'}
+              className="flex w-full items-center gap-1 rounded-md px-1 py-0.5 text-[11px] text-muted-foreground transition hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+            >
+              {showAllStatuses ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+              <span>{showAllStatuses ? '全部状态' : '状态'}</span>
+              {pendingCards.length > 0 ? (
+                <span className="ml-auto text-amber-600 dark:text-amber-400">{pendingCards.length} 项待处理</span>
+              ) : (
+                <span className="ml-auto">全部就绪</span>
+              )}
+            </button>
+
+            {visibleCards.map((card) => (
+              <LinkCard key={card.id} state={card.state} title={card.title} hint={card.hint} icon={card.icon} />
+            ))}
           </div>
-        ) : null}
+        </div>
       </aside>
 
       {/* 主内容区 */}
