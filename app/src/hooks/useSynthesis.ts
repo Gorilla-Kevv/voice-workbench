@@ -37,7 +37,8 @@ export type SynthesisController = ReturnType<typeof useSynthesis>;
 
 export function useSynthesis(options: UseSynthesisOptions = {}) {
   const [state, setState] = useState<SubmissionState>({ loading: false, error: null, elapsed: 0 });
-  const [result, setResult] = useState<SynthesisResult | null>(null);
+  // 多条结果并存：新结果进栈，旧的留在列表里可回看（不再被下一条冲掉）
+  const [results, setResults] = useState<SynthesisResult[]>([]);
   const timerRef = useRef<number | null>(null);
   const lastPayloadRef = useRef<{ payload: SynthesizePayload; meta: ResultMeta } | null>(null);
   // 用 ref 持有回调，避免调用方每次渲染重建对象导致 run 频繁重建
@@ -104,10 +105,11 @@ export function useSynthesis(options: UseSynthesisOptions = {}) {
           segments,
         };
 
-        // 释放上一次结果占用的临时地址，避免反复合成时堆积内存
-        setResult((prev) => {
-          prev?.segments.forEach((segment) => URL.revokeObjectURL(segment.url));
-          return synthesisResult;
+        // 入栈而不是替换：旧结果保留，只有用户显式删除或超出上限时才释放它的 Blob 地址
+        setResults((prev) => {
+          const next = [synthesisResult, ...prev];
+          next.slice(MAX_RESULTS).forEach((old) => releaseResult(old));
+          return next.slice(0, MAX_RESULTS);
         });
         setState({ loading: false, error: null, elapsed: 0 });
         optionsRef.current.onSuccess?.(synthesisResult);
@@ -139,7 +141,41 @@ export function useSynthesis(options: UseSynthesisOptions = {}) {
 
   const clearError = useCallback(() => setState((prev) => ({ ...prev, error: null })), []);
 
-  return { ...state, result, run, retry, clearError, setResult };
+  /** 删除单条结果（会释放它的临时播放地址） */
+  const removeResult = useCallback((id: string) => {
+    setResults((prev) => {
+      const target = prev.find((item) => item.id === id);
+      if (target) releaseResult(target);
+      return prev.filter((item) => item.id !== id);
+    });
+  }, []);
+
+  const clearResults = useCallback(() => {
+    setResults((prev) => {
+      prev.forEach(releaseResult);
+      return [];
+    });
+  }, []);
+
+  return {
+    ...state,
+    results,
+    /** 最新一条，兼容只关心「当前结果」的调用方 */
+    result: results[0] ?? null,
+    run,
+    retry,
+    clearError,
+    removeResult,
+    clearResults,
+  };
+}
+
+/** 一个页面里最多保留多少条结果（超出丢最旧的） */
+const MAX_RESULTS = 12;
+
+/** 释放某条结果占用的临时播放地址 */
+function releaseResult(result: SynthesisResult): void {
+  result.segments.forEach((segment) => URL.revokeObjectURL(segment.url));
 }
 
 /** 生成本地唯一 ID */

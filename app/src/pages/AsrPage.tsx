@@ -24,6 +24,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { JobPanel } from '@/components/features/JobPanel';
+import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { useResultStack } from '@/hooks/useResultStack';
 import { asrApi } from '@/lib/asr';
 import { formatBytes } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
@@ -34,6 +36,12 @@ import type {
   AsrDatasetSummary,
   AsrTranscribeResult,
 } from '@/types';
+
+/** 一条转写结果：文本结果 + 来源名，够独立回看与复制 */
+interface TranscriptItem {
+  result: AsrTranscribeResult;
+  sourceLabel: string;
+}
 
 /**
  * 语音转文本（ASR）。
@@ -64,8 +72,17 @@ export function AsrPage() {
   // ---- 单条转写 ----
   const [file, setFile] = useState<File | null>(null);
   const [source, setSource] = useState('');
-  const [transcript, setTranscript] = useState<AsrTranscribeResult | null>(null);
   const [transcribing, setTranscribing] = useState(false);
+  // 多条转写结果并存：每次转写留一条，可展开回看 / 复制旧的（不再被下一次冲掉）
+  const transcripts = useResultStack<TranscriptItem>({
+    limit: 12,
+    storageKey: 'asr-transcripts',
+    serialize: (item) => item,
+    deserialize: (raw) => (raw && typeof raw === 'object' ? (raw as TranscriptItem) : null),
+  });
+  const latestTranscript = transcripts.entries[0]?.item ?? null;
+  // 取出稳定引用的方法（hook 每次渲染返回新对象，直接用会把回调的依赖打散）
+  const { push: pushTranscript } = transcripts;
 
   // ---- 训练入口 ----
   const [dsName, setDsName] = useState('asr-dataset');
@@ -161,7 +178,10 @@ export function AsrPage() {
         precision,
         channel: channelPref,
       });
-      setTranscript(result);
+      pushTranscript({
+        result,
+        sourceLabel: file ? file.name : source.trim() || '未命名来源',
+      });
       if (result.warning) {
         toast.warning('未识别到文本', { description: result.warning });
       } else {
@@ -174,17 +194,58 @@ export function AsrPage() {
     } finally {
       setTranscribing(false);
     }
-  }, [file, source, backend, size, language, precision, channelPref]);
+  }, [file, source, backend, size, language, precision, channelPref, pushTranscript]);
 
-  const handleCopy = useCallback(async () => {
-    if (!transcript?.text) return;
+  const copyText = useCallback(async (text: string) => {
+    if (!text) return;
     try {
-      await navigator.clipboard.writeText(transcript.text);
+      await navigator.clipboard.writeText(text);
       toast.success('已复制到剪贴板');
     } catch {
       toast.error('复制失败', { description: '浏览器拒绝了剪贴板访问，请手动选中复制。' });
     }
-  }, [transcript]);
+  }, []);
+
+  /** 一条转写结果的展示体（列表里每条共用） */
+  const transcriptEntries: ResultStackEntry[] = transcripts.entries.map((entry) => {
+    const transcript = entry.item.result;
+    return {
+      id: entry.id,
+      createdAt: entry.createdAt,
+      title: entry.item.sourceLabel,
+      subtitle: `${transcript.elapsed_s} 秒 · ${transcript.text.length} 字`,
+      summary: transcript.text,
+      content: (
+        <div className="space-y-2 pt-1">
+          <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+            <Badge variant="secondary" className="h-5 px-1.5 font-mono text-[10px]">
+              {transcript.channel === 'resident' ? '常驻模型' : '官方脚本'}
+            </Badge>
+            <span>{transcript.backend}</span>
+            <span>·</span>
+            <span>{transcript.size}</span>
+            <span>·</span>
+            <span>{languageLabels[transcript.language] ?? transcript.language}</span>
+            <span>·</span>
+            <span>{transcript.elapsed_s} 秒</span>
+            {transcript.cached ? <span>· 命中缓存</span> : null}
+          </div>
+          {transcript.reason ? <p className="text-[11px] text-amber-600 dark:text-amber-400">{transcript.reason}</p> : null}
+          {transcript.notes.map((note) => (
+            <p key={note} className="text-[11px] text-amber-600 dark:text-amber-400">
+              {note}
+            </p>
+          ))}
+          <Textarea value={transcript.text} readOnly className="min-h-[96px]" />
+          {transcript.warning ? <p className="text-[11px] text-amber-600">{transcript.warning}</p> : null}
+          <Button variant="outline" size="sm" onClick={() => void copyText(transcript.text)}>
+            <ClipboardCopy className="mr-1.5 size-3.5" />
+            复制这条
+          </Button>
+        </div>
+      ),
+    };
+  });
 
   // ---------------- 训练入口 ----------------
 
@@ -535,41 +596,23 @@ export function AsrPage() {
               {transcribing ? <Loader2 className="mr-1.5 size-4 animate-spin" /> : <Captions className="mr-1.5 size-4" />}
               开始转写
             </Button>
-            {transcript ? (
-              <Button variant="outline" onClick={() => void handleCopy()}>
+            {latestTranscript ? (
+              <Button variant="outline" onClick={() => void copyText(latestTranscript.result.text)}>
                 <ClipboardCopy className="mr-1.5 size-4" />
-                复制文本
+                复制最新一条
               </Button>
             ) : null}
           </div>
 
-          {transcript ? (
+          {transcripts.entries.length > 0 ? (
             <>
               <Separator />
-              <div className="space-y-2">
-                <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
-                  <Badge variant="secondary" className="h-5 px-1.5 font-mono text-[10px]">
-                    {transcript.channel === 'resident' ? '常驻模型' : '官方脚本'}
-                  </Badge>
-                  <span>{transcript.backend}</span>
-                  <span>·</span>
-                  <span>{transcript.size}</span>
-                  <span>·</span>
-                  <span>{languageLabels[transcript.language] ?? transcript.language}</span>
-                  <span>·</span>
-                  <span>{transcript.elapsed_s} 秒</span>
-                  {transcript.cached ? <span>· 命中缓存</span> : null}
-                  {transcript.text ? <span>· {transcript.text.length} 字</span> : null}
-                </div>
-                {transcript.reason ? <p className="text-[11px] text-amber-600 dark:text-amber-400">{transcript.reason}</p> : null}
-                {transcript.notes.map((note) => (
-                  <p key={note} className="text-[11px] text-amber-600 dark:text-amber-400">
-                    {note}
-                  </p>
-                ))}
-                <Textarea value={transcript.text} readOnly className="min-h-[96px]" />
-                {transcript.warning ? <p className="text-[11px] text-amber-600">{transcript.warning}</p> : null}
-              </div>
+              <ResultStack
+                entries={transcriptEntries}
+                onRemove={transcripts.remove}
+                onClear={transcripts.clear}
+                empty={null}
+              />
             </>
           ) : null}
         </CardContent>

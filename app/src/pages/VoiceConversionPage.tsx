@@ -11,8 +11,19 @@ import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { useResultStack } from '@/hooks/useResultStack';
 import { resolveAudioUrl, vcApi } from '@/lib/vc';
 import type { SovitsJob, VcCatalog, VcModel } from '@/types';
+
+/** 一条变声结果：输出（服务端地址）+ 当时的源音频快照，够独立回听 A·B 对比 */
+interface VcResultItem {
+  outputUrl: string;
+  /** 源音频的独立快照地址（预览用的那条会被回收，这里必须自己持有一份） */
+  sourceUrl: string | null;
+  fileName: string;
+  model: string;
+}
 
 /** 板块强调色：靛蓝。所有交互态统一走这两个类，避免散落的十六进制 */
 const ACCENT_TEXT = 'text-indigo-500 dark:text-indigo-400';
@@ -205,9 +216,18 @@ function ConvertCard({
   const [indexRate, setIndexRate] = useState(0.3);
   const [protect, setProtect] = useState(0.33);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [outputUrl, setOutputUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // 多条结果并存：每次变声留一条（含当次源音频快照），旧的随时可回去对比
+  const results = useResultStack<VcResultItem>({
+    limit: 12,
+    storageKey: 'vc-results',
+    onEvict: (item) => {
+      if (item.sourceUrl) URL.revokeObjectURL(item.sourceUrl);
+    },
+  });
+  /** 本次提交的源音频快照：同步路径与任务回调都要用它 */
+  const pendingRef = useRef<{ sourceUrl: string | null; fileName: string; model: string } | null>(null);
 
   const f0Methods = catalog?.f0_methods ?? [];
   const sourceUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
@@ -223,6 +243,13 @@ function ConvertCard({
     }
     setSubmitting(true);
     setError(null);
+    // 源音频另开一个地址快照：预览用的那条会随下次选文件被回收，
+    // 列表里旧结果要能一直回放，不能跟着失效
+    pendingRef.current = {
+      sourceUrl: URL.createObjectURL(file),
+      fileName: file.name,
+      model,
+    };
     try {
       const result = await vcApi.convert({
         file,
@@ -233,7 +260,7 @@ function ConvertCard({
         protect,
       });
       if ('job_id' in result) setJobId(result.job_id);
-      else setOutputUrl(resolveAudioUrl(result.output));
+      else pushResult(resolveAudioUrl(result.output));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -241,11 +268,44 @@ function ConvertCard({
     }
   };
 
+  const pushResult = (outputUrl: string | null) => {
+    const pending = pendingRef.current;
+    if (!outputUrl || !pending) return;
+    results.push({
+      outputUrl,
+      sourceUrl: pending.sourceUrl,
+      fileName: pending.fileName,
+      model: pending.model,
+    });
+  };
+
   const onJobDone = (job: SovitsJob) => {
     const output = (job.artifacts as { output?: string } | null)?.output;
-    if (output) setOutputUrl(resolveAudioUrl(output));
+    if (output) pushResult(resolveAudioUrl(output));
     onChanged();
   };
+
+  const vcEntries: ResultStackEntry[] = results.entries.map((entry) => ({
+    id: entry.id,
+    createdAt: entry.createdAt,
+    title: `${entry.item.fileName} → ${entry.item.model}`,
+    subtitle: '变声完成',
+    summary: entry.item.fileName,
+    content: entry.item.sourceUrl ? (
+      <div className="rounded-xl border p-3">
+        <p className="mb-2 text-xs font-medium text-muted-foreground">原声 / 变声 A·B 对比</p>
+        <ABPlayer
+          accentClass={accentSolid}
+          tracks={[
+            { label: '原声', url: entry.item.sourceUrl },
+            { label: '变声后', url: entry.item.outputUrl },
+          ]}
+        />
+      </div>
+    ) : (
+      <audio src={entry.item.outputUrl} controls className="w-full" />
+    ),
+  }));
 
   return (
     <Card>
@@ -335,19 +395,8 @@ function ConvertCard({
 
         <JobPanel jobId={jobId} onComplete={onJobDone} accent={accentText} title="变声任务" />
 
-        {outputUrl && sourceUrl ? (
-          <div className="rounded-xl border p-3">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">原声 / 变声 A·B 对比</p>
-            <ABPlayer
-              accentClass={accentSolid}
-              tracks={[
-                { label: '原声', url: sourceUrl },
-                { label: '变声后', url: outputUrl },
-              ]}
-            />
-          </div>
-        ) : outputUrl ? (
-          <audio src={outputUrl} controls className="w-full" />
+        {results.entries.length > 0 ? (
+          <ResultStack entries={vcEntries} onRemove={results.remove} onClear={results.clear} empty={null} />
         ) : null}
       </CardContent>
     </Card>

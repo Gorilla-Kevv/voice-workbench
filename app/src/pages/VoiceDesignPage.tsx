@@ -218,13 +218,15 @@ export function VoiceDesignPage({ settings, controller, maxTextLength }: VoiceDe
 
       <div className="lg:col-span-2">
         <ResultPanel
-          result={controller.result}
+          results={controller.results}
           loading={controller.loading}
           elapsed={controller.elapsed}
           error={controller.error}
           settings={settings}
           onRetry={() => void controller.retry()}
           onDismissError={controller.clearError}
+          onRemoveResult={controller.removeResult}
+          onClearResults={controller.clearResults}
           emptyHint="填写音色描述与试听文本后点击生成，新音色会在这里试听"
         />
       </div>

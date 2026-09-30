@@ -29,6 +29,8 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
+import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { useResultStack } from '@/hooks/useResultStack';
 import { formatBytes, formatDuration } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
 import { SOVITS_PARAM_SPECS } from '@/lib/constants';
@@ -38,6 +40,13 @@ import type { AppSettings, SovitsBatchItemResult, SovitsJob, SovitsJobState, Sov
 
 interface BatchPageProps {
   settings: AppSettings;
+}
+
+/** 一批批量合成的结果（一次「开始生成」= 一个批次） */
+interface BatchRound {
+  rows: BatchRow[];
+  zipUrl: string | null;
+  manifestUrl: string | null;
 }
 
 interface BatchRow {
@@ -63,8 +72,11 @@ const POLL_INTERVAL_MS = 1_200;
  * 所以这些状态不能只活在组件里 —— 否则用户跑完几十条、切去「音色库」
  * 确认一下参考音频，回来发现结果全没了，只能重跑一遍。
  *
- * 刻意只存元数据（文本、参数、结果清单），不碰音频二进制：
+ * 刻意只存元数据（文本、参数），不碰音频二进制：
  * 音频仍在服务端的 `trainer/.data/outputs/`，URL 一直有效。
+ *
+ * 注意：**结果清单不在这里**，批次结果走 `useResultStack`（`batch-rounds`），
+ * 因为它是「一个批次一条」的栈，而不是会被覆盖的单值。
  */
 interface BatchSession {
   text: string;
@@ -78,7 +90,6 @@ interface BatchSession {
   temperature: number;
   repetitionPenalty: number;
   showAdvanced: boolean;
-  rows: BatchRow[];
   expanded: boolean;
   job: SovitsJob | null;
   voices: SovitsVoice[];
@@ -96,7 +107,6 @@ const INITIAL_SESSION: BatchSession = {
   temperature: 1,
   repetitionPenalty: 1.35,
   showAdvanced: false,
-  rows: [],
   expanded: false,
   job: null,
   voices: [],
@@ -195,7 +205,15 @@ export function BatchPage({ settings }: BatchPageProps) {
   const [repetitionPenalty, setRepetitionPenalty] = useState(retained.repetitionPenalty);
   const [showAdvanced, setShowAdvanced] = useState(retained.showAdvanced);
 
-  const [rows, setRows] = useState<BatchRow[]>(retained.rows);
+  // 每一批结果独立保留：新一批追加到最前，旧批次仍可展开下载/回听
+  const rounds = useResultStack<BatchRound>({
+    limit: 8,
+    storageKey: 'batch-rounds',
+    serialize: (item) => item,
+    deserialize: (raw) => (raw && typeof raw === 'object' ? (raw as BatchRound) : null),
+  });
+  // 取出稳定引用的方法（hook 每次渲染返回新对象，直接用会把回调的依赖打散）
+  const { push: pushRound, clear: clearRounds } = rounds;
   const [expanded, setExpanded] = useState(retained.expanded);
   const [job, setJob] = useState<SovitsJob | null>(retained.job);
   const [busy, setBusy] = useState(false);
@@ -243,7 +261,6 @@ export function BatchPage({ settings }: BatchPageProps) {
       temperature,
       repetitionPenalty,
       showAdvanced,
-      rows,
       expanded,
       job,
       voices,
@@ -261,7 +278,6 @@ export function BatchPage({ settings }: BatchPageProps) {
     temperature,
     repetitionPenalty,
     showAdvanced,
-    rows,
     expanded,
     job,
     voices,
@@ -445,22 +461,27 @@ export function BatchPage({ settings }: BatchPageProps) {
   const finishFromJob = useCallback((finished: SovitsJob) => {
     const artifacts = finished.artifacts ?? {};
     const results = (artifacts.results as SovitsBatchItemResult[] | undefined) ?? [];
-    setRows(
-      results.map((item) => ({
-        index: item.index,
-        key: item.key,
-        text: item.text,
-        ok: item.ok,
-        filename: item.filename,
-        // 服务端给的是服务内相对路径（/files/...），这里补成浏览器可用的地址
-        audioUrl: resolveAudioUrl(item.audio_url),
-        bytes: item.bytes,
-        durationSec: item.duration_s,
-        elapsedMs: item.elapsed_ms,
-        error: item.error,
-        hint: item.hint,
-      })),
-    );
+    // 追加而不是替换：上一批仍留在列表里，用户切回来还能下载/回听
+    if (results.length > 0) {
+      pushRound({
+        rows: results.map((item) => ({
+          index: item.index,
+          key: item.key,
+          text: item.text,
+          ok: item.ok,
+          filename: item.filename,
+          // 服务端给的是服务内相对路径（/files/...），这里补成浏览器可用的地址
+          audioUrl: resolveAudioUrl(item.audio_url),
+          bytes: item.bytes,
+          durationSec: item.duration_s,
+          elapsedMs: item.elapsed_ms,
+          error: item.error,
+          hint: item.hint,
+        })),
+        zipUrl: typeof artifacts.zip_url === 'string' ? artifacts.zip_url : null,
+        manifestUrl: typeof artifacts.manifest_url === 'string' ? artifacts.manifest_url : null,
+      });
+    }
     if (finished.state === 'succeeded') {
       const succeeded = (artifacts.succeeded as number | undefined) ?? 0;
       const failed = (artifacts.failed as number | undefined) ?? 0;
@@ -472,7 +493,7 @@ export function BatchPage({ settings }: BatchPageProps) {
     } else {
       toast.error('批量合成失败', { description: finished.error ?? '未知原因' });
     }
-  }, []);
+  }, [pushRound]);
 
   /** 跟踪某个任务直到终态。抽出来是为了「离开页面再回来」时能接着跟。 */
   const startPolling = useCallback(
@@ -524,7 +545,6 @@ export function BatchPage({ settings }: BatchPageProps) {
     }
 
     setBusy(true);
-    setRows([]);
     setJob(null);
     try {
       const created = await sovitsApi.batch({ ...buildPayload(), wait: false });
@@ -553,13 +573,13 @@ export function BatchPage({ settings }: BatchPageProps) {
    */
   const handleClearResults = useCallback(() => {
     stopPolling();
-    setRows([]);
+    clearRounds();
     setJob(null);
     setBusy(false);
     // 持久化也要清掉，否则刷新浏览器后旧结果又回来了，「清空」等于没生效
     clearSession();
-    toast.info('已清空本次结果', { description: '文本清单与参数保留，可以直接重新生成' });
-  }, [stopPolling]);
+    toast.info('已清空全部批次结果', { description: '文本清单与参数保留，可以直接重新生成' });
+  }, [stopPolling, clearRounds]);
 
   const handleCancel = useCallback(async () => {
     if (!job?.id) return;
@@ -589,16 +609,89 @@ export function BatchPage({ settings }: BatchPageProps) {
     document.body.removeChild(anchor);
   }, []);
 
+  /** 单条结果的渲染（批次内共用） */
+  const renderRow = (row: BatchRow) => (
+    <div
+      key={`${row.index}-${row.filename ?? 'failed'}`}
+      className={cn(
+        'flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm',
+        row.ok ? 'bg-card' : 'border-destructive/40 bg-destructive/5',
+      )}
+    >
+      <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">
+        #{String(row.index + 1).padStart(3, '0')}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p className="truncate">{row.text}</p>
+        {row.ok ? (
+          <p className="mt-0.5 text-[11px] text-muted-foreground">
+            {row.filename} · {formatDuration(row.durationSec)} · {formatBytes(row.bytes)}
+          </p>
+        ) : (
+          <p className="mt-0.5 text-[11px] text-destructive">
+            {row.error}
+            {row.hint ? <span className="ml-1 opacity-80">（{row.hint}）</span> : null}
+          </p>
+        )}
+      </div>
+      {row.ok && row.audioUrl ? (
+        <div className="flex items-center gap-2">
+          <audio controls preload="none" src={row.audioUrl} className="h-8 max-w-[220px]" />
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => downloadFrom(row.audioUrl as string, row.filename ?? undefined)}
+          >
+            <Download className="size-3.5" />
+          </Button>
+        </div>
+      ) : (
+        <AlertTriangle className="size-4 text-destructive" />
+      )}
+    </div>
+  );
+
+  /** 所有批次的汇总统计（卡片头部用） */
+  const allRows = useMemo(() => rounds.entries.flatMap((entry) => entry.item.rows), [rounds.entries]);
+
   const stats = useMemo(() => {
-    const succeeded = rows.filter((row) => row.ok);
-    const failed = rows.filter((row) => !row.ok);
+    const succeeded = allRows.filter((row) => row.ok);
+    const failed = allRows.filter((row) => !row.ok);
     const duration = succeeded.reduce((sum, row) => sum + row.durationSec, 0);
     return { succeeded, failed, duration };
-  }, [rows]);
+  }, [allRows]);
 
-  const zipUrl = typeof job?.artifacts?.zip_url === 'string' ? (job.artifacts.zip_url as string) : null;
-  const manifestUrl =
-    typeof job?.artifacts?.manifest_url === 'string' ? (job.artifacts.manifest_url as string) : null;
+  /** 每批一个条目：批内逐条结果 + 该批的 ZIP / 清单入口 */
+  const roundEntries: ResultStackEntry[] = rounds.entries.map((entry) => {
+    const round = entry.item;
+    const okCount = round.rows.filter((row) => row.ok).length;
+    return {
+      id: entry.id,
+      createdAt: entry.createdAt,
+      title: `第 ${rounds.entries.length - rounds.entries.indexOf(entry)} 批 · ${round.rows.length} 条`,
+      subtitle: `成功 ${okCount} · 失败 ${round.rows.length - okCount}`,
+      summary: round.rows[0]?.text ?? '',
+      content: (
+        <div className="space-y-3 pt-1">
+          <div className="flex flex-wrap gap-2">
+            {round.zipUrl ? (
+              <Button size="sm" onClick={() => downloadFrom(round.zipUrl as string)}>
+                <Package className="mr-1.5 size-3.5" />
+                下载 ZIP（含音频 + 清单）
+              </Button>
+            ) : null}
+            {round.manifestUrl ? (
+              <Button size="sm" variant="outline" onClick={() => downloadFrom(round.manifestUrl as string)}>
+                <Download className="mr-1.5 size-3.5" />
+                JSON 清单
+              </Button>
+            ) : null}
+          </div>
+          <div className="space-y-2">{round.rows.map((row) => renderRow(row))}</div>
+        </div>
+      ),
+    };
+  });
 
   // ------------------------------------------------------------------
   // 渲染
@@ -888,8 +981,8 @@ export function BatchPage({ settings }: BatchPageProps) {
         </Card>
       ) : null}
 
-      {/* ---------------- 结果 ---------------- */}
-      {rows.length > 0 ? (
+      {/* ---------------- 结果（按批次倒序保留） ---------------- */}
+      {rounds.entries.length > 0 ? (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
@@ -897,26 +990,14 @@ export function BatchPage({ settings }: BatchPageProps) {
               合成结果
             </CardTitle>
             <CardDescription>
-              成功 {stats.succeeded.length} 条 · 失败 {stats.failed.length} 条 · 总时长{' '}
-              {formatDuration(stats.duration)}
+              {rounds.entries.length} 批 · 成功 {stats.succeeded.length} 条 · 失败 {stats.failed.length} 条 ·
+              总时长 {formatDuration(stats.duration)}
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* 结果会跨页面与刷新保留，所以必须给出清空的入口，
+                否则上一次的几十条会一直挂在页面上 */}
             <div className="flex flex-wrap gap-2">
-              {zipUrl ? (
-                <Button size="sm" onClick={() => downloadFrom(zipUrl)}>
-                  <Package className="mr-1.5 size-3.5" />
-                  下载 ZIP（含音频 + 清单）
-                </Button>
-              ) : null}
-              {manifestUrl ? (
-                <Button size="sm" variant="outline" onClick={() => downloadFrom(manifestUrl)}>
-                  <Download className="mr-1.5 size-3.5" />
-                  JSON 清单
-                </Button>
-              ) : null}
-              {/* 结果会跨页面与刷新保留，所以必须给出清空的入口，
-                  否则上一次的几十条会一直挂在页面上 */}
               <Button
                 size="sm"
                 variant="ghost"
@@ -925,52 +1006,11 @@ export function BatchPage({ settings }: BatchPageProps) {
                 disabled={busy}
               >
                 <XCircle className="mr-1.5 size-3.5" />
-                清空结果
+                清空全部批次
               </Button>
             </div>
 
-            <div className="space-y-2">
-              {rows.map((row) => (
-                <div
-                  key={`${row.index}-${row.filename ?? 'failed'}`}
-                  className={cn(
-                    'flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm',
-                    row.ok ? 'bg-card' : 'border-destructive/40 bg-destructive/5',
-                  )}
-                >
-                  <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">
-                    #{String(row.index + 1).padStart(3, '0')}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate">{row.text}</p>
-                    {row.ok ? (
-                      <p className="mt-0.5 text-[11px] text-muted-foreground">
-                        {row.filename} · {formatDuration(row.durationSec)} · {formatBytes(row.bytes)}
-                      </p>
-                    ) : (
-                      <p className="mt-0.5 text-[11px] text-destructive">
-                        {row.error}
-                        {row.hint ? <span className="ml-1 opacity-80">（{row.hint}）</span> : null}
-                      </p>
-                    )}
-                  </div>
-                  {row.ok && row.audioUrl ? (
-                    <div className="flex items-center gap-2">
-                      <audio controls preload="none" src={row.audioUrl} className="h-8 max-w-[220px]" />
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        onClick={() => downloadFrom(row.audioUrl as string, row.filename ?? undefined)}
-                      >
-                        <Download className="size-3.5" />
-                      </Button>
-                    </div>
-                  ) : (
-                    <AlertTriangle className="size-4 text-destructive" />
-                  )}
-                </div>
-              ))}
-            </div>
+            <ResultStack entries={roundEntries} onRemove={rounds.remove} onClear={rounds.clear} empty={null} />
           </CardContent>
         </Card>
       ) : null}

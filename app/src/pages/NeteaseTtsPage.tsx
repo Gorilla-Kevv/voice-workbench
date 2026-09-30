@@ -9,6 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
+import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
 import { neteaseApi } from '@/lib/netease';
 import { resolveAudioUrl } from '@/lib/sovits';
@@ -18,6 +20,16 @@ import type { SovitsVoice } from '@/types';
 
 /** 参考音频来源：本机上传，或复用 GPT-SoVITS 音色库里已有的音色 */
 type RefSource = 'upload' | 'voice';
+
+/** 一条合成结果：音频 Blob 地址 + 当时的参数，够独立回听与下载 */
+interface TtsResultItem {
+  result: NeteaseTtsResult;
+  audioUrl: string;
+  /** 合成文本，用于列表摘要与下载文件名 */
+  text: string;
+  /** 参考音频来源名（文件名或音色名） */
+  refLabel: string;
+}
 
 /** base64 wav → 可播放/可下载的 Blob URL */
 function base64ToUrl(base64: string, mime = 'audio/wav'): string {
@@ -47,10 +59,15 @@ export function NeteaseTtsPage() {
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<RequestError | null>(null);
-  const [result, setResult] = useState<NeteaseTtsResult | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [warming, setWarming] = useState(false);
-  const audioUrlRef = useRef<string | null>(null);
+  // 多条结果并存：每条独立保留音频与文本，可展开回听旧的（不再被下一次合成冲掉）
+  const results = useResultStack<TtsResultItem>({
+    limit: 12,
+    // 音频是 Blob 地址，刷新后必然失效，所以只做「同一次会话内跨页面保留」
+    storageKey: 'netease-tts-results',
+    // 只有淘汰 / 手动删除时才回收 Blob 地址，否则列表里旧的那条会突然不能播
+    onEvict: (item) => URL.revokeObjectURL(item.audioUrl),
+  });
   // 「已等待 N 秒」计时器：跟 useSynthesis 同一模式 —— 挂在 ref 上，
   // 由提交动作启动/清理，而不是用 effect 监听 loading（会触发级联渲染告警）
   const timerRef = useRef<number | null>(null);
@@ -62,12 +79,7 @@ export function NeteaseTtsPage() {
     }
   }, []);
 
-  /** 换结果时回收旧 Blob URL，防内存泄漏 */
-  const swapAudioUrl = useCallback((next: string | null) => {
-    if (audioUrlRef.current) URL.revokeObjectURL(audioUrlRef.current);
-    audioUrlRef.current = next;
-    setAudioUrl(next);
-  }, []);
+
 
   useEffect(() => {
     void (async () => {
@@ -173,8 +185,12 @@ export function NeteaseTtsPage() {
           lang,
           file: upload,
         });
-        setResult(response);
-        swapAudioUrl(base64ToUrl(response.audio_base64));
+        results.push({
+          result: response,
+          audioUrl: base64ToUrl(response.audio_base64),
+          text,
+          refLabel: upload ? upload.name : '未命名参考音频',
+        });
         if (response.preempted) {
           toast.info(`已卸载 ${response.preempted} 引擎为本次合成让位`, { description: '回对应页面重新预热即可恢复。' });
         }
@@ -193,6 +209,46 @@ export function NeteaseTtsPage() {
     };
     void run();
   };
+
+  const ttsEntries: ResultStackEntry[] = results.entries.map((entry) => ({
+    id: entry.id,
+    createdAt: entry.createdAt,
+    title: entry.item.refLabel,
+    subtitle: `${entry.item.result.duration_sec.toFixed(1)} 秒 · ${entry.item.result.language}`,
+    summary: entry.item.text,
+    content: (
+      <div className="space-y-3 pt-1">
+        <audio controls src={entry.item.audioUrl} className="w-full" autoPlay={false} />
+        <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+          <div className="rounded-lg bg-muted/50 p-2.5">
+            <p className="opacity-70">时长</p>
+            <p className="mt-0.5 font-medium text-foreground">{entry.item.result.duration_sec.toFixed(1)} 秒</p>
+          </div>
+          <div className="rounded-lg bg-muted/50 p-2.5">
+            <p className="opacity-70">生成耗时</p>
+            <p className="mt-0.5 font-medium text-foreground">{entry.item.result.elapsed_sec.toFixed(1)} 秒</p>
+          </div>
+          <div className="rounded-lg bg-muted/50 p-2.5">
+            <p className="opacity-70">采样率</p>
+            <p className="mt-0.5 font-medium text-foreground">{entry.item.result.sample_rate} Hz</p>
+          </div>
+          <div className="rounded-lg bg-muted/50 p-2.5">
+            <p className="opacity-70">语种</p>
+            <p className="mt-0.5 font-medium text-foreground">{entry.item.result.language}</p>
+          </div>
+        </div>
+        <p className="rounded-lg bg-muted/50 p-2.5 font-mono text-[11px] leading-relaxed text-muted-foreground line-clamp-3">
+          {entry.item.text}
+        </p>
+        <a href={entry.item.audioUrl} download={`confucius4-tts-${entry.createdAt}.wav`} className="block">
+          <Button variant="outline" className="w-full">
+            <Download className="size-4" />
+            下载 WAV
+          </Button>
+        </a>
+      </div>
+    ),
+  }));
 
   return (
     <div className="grid gap-5 lg:grid-cols-5">
@@ -398,35 +454,13 @@ export function NeteaseTtsPage() {
               </div>
             ) : null}
 
-            {result && audioUrl ? (
-              <div className="space-y-3">
-                <audio controls src={audioUrl} className="w-full" autoPlay={false} />
-                <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
-                  <div className="rounded-lg bg-muted/50 p-2.5">
-                    <p className="opacity-70">时长</p>
-                    <p className="mt-0.5 font-medium text-foreground">{result.duration_sec.toFixed(1)} 秒</p>
-                  </div>
-                  <div className="rounded-lg bg-muted/50 p-2.5">
-                    <p className="opacity-70">生成耗时</p>
-                    <p className="mt-0.5 font-medium text-foreground">{result.elapsed_sec.toFixed(1)} 秒</p>
-                  </div>
-                  <div className="rounded-lg bg-muted/50 p-2.5">
-                    <p className="opacity-70">采样率</p>
-                    <p className="mt-0.5 font-medium text-foreground">{result.sample_rate} Hz</p>
-                  </div>
-                  <div className="rounded-lg bg-muted/50 p-2.5">
-                    <p className="opacity-70">语种</p>
-                    <p className="mt-0.5 font-medium text-foreground">{result.language}</p>
-                  </div>
-                </div>
-                <a href={audioUrl} download={`confucius4-tts-${Date.now()}.wav`} className="block">
-                  <Button variant="outline" className="w-full">
-                    <Download className="size-4" />
-                    下载 WAV
-                  </Button>
-                </a>
-                <p className="text-[11px] text-muted-foreground">产物同时保留在服务端 netease/.data/ 下，便于排障。</p>
-              </div>
+            {results.entries.length > 0 ? (
+              <ResultStack
+                entries={ttsEntries}
+                onRemove={results.remove}
+                onClear={results.clear}
+                empty={null}
+              />
             ) : (
               <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                 {loading ? (

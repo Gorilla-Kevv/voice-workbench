@@ -9,12 +9,21 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TermTip } from '@/components/features/TermTip';
+import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
 import { neteaseApi } from '@/lib/netease';
 import type { NeteaseAsrEngineInfo, NeteaseCatalog, NeteaseEngineStatus, NeteaseStreamEvent, NeteaseTranscribeResult } from '@/types';
 
 /** 转写模式：快速（离线一次性） / 流式（append-only 逐字出） */
 type TranscribeMode = 'fast' | 'stream';
+
+/** 一条转写结果：文本 + 当时的文件名与模式，够独立回看与导出 */
+interface AsrResultItem {
+  result: NeteaseTranscribeResult;
+  fileName: string;
+  mode: TranscribeMode;
+}
 
 /**
  * 网易语音转文本（Confucius4-R2T2）。
@@ -38,8 +47,15 @@ export function NeteaseAsrPage() {
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<RequestError | null>(null);
-  const [result, setResult] = useState<NeteaseTranscribeResult | null>(null);
   const [streamText, setStreamText] = useState('');
+  // 多条结果并存：每次转写都留下一条，可展开回看 / 复制 / 导出旧的
+  const results = useResultStack<AsrResultItem>({
+    limit: 12,
+    // 文本结果是可 JSON 化的，刷新页面后也能回看
+    storageKey: 'netease-asr-results',
+    serialize: (item) => item,
+    deserialize: (raw) => (raw && typeof raw === 'object' ? (raw as AsrResultItem) : null),
+  });
   const [warming, setWarming] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
   // 「已等待 N 秒」计时器：与 useSynthesis 同模式（ref 持有，提交动作启停）
@@ -121,14 +137,13 @@ export function NeteaseAsrPage() {
     stopTimer();
     timerRef.current = window.setInterval(() => setElapsed((value) => value + 1), 1000);
     setError(null);
-    setResult(null);
     setStreamText('');
 
     if (mode === 'fast') {
       neteaseApi
         .transcribe({ file, language, returnTimestamps: withTimestamps, stream: false })
         .then((response) => {
-          setResult(response);
+          results.push({ result: response, fileName: file.name, mode });
           toast.success('转写完成', { description: `${response.text.length} 字 · ${response.elapsed_sec?.toFixed(1) ?? '?'} 秒` });
         })
         .catch((requestError: unknown) => {
@@ -148,12 +163,16 @@ export function NeteaseAsrPage() {
         if (event.type === 'delta') setStreamText(event.text);
         if (event.type === 'result') {
           setStreamText(event.text);
-          setResult({
-            ok: true,
-            text: event.text,
-            language,
-            elapsed_sec: event.elapsed_sec ?? null,
-            stream: true,
+          results.push({
+            result: {
+              ok: true,
+              text: event.text,
+              language,
+              elapsed_sec: event.elapsed_sec ?? null,
+              stream: true,
+            },
+            fileName: file.name,
+            mode,
           });
         }
       },
@@ -181,8 +200,7 @@ export function NeteaseAsrPage() {
     finishCommon();
   };
 
-  const handleCopy = () => {
-    const text = mode === 'stream' ? streamText : result?.text ?? '';
+  const copyText = (text: string) => {
     if (!text) return;
     void navigator.clipboard
       .writeText(text)
@@ -190,20 +208,68 @@ export function NeteaseAsrPage() {
       .catch(() => toast.error('复制失败'));
   };
 
-  const downloadText = () => {
-    const text = mode === 'stream' ? streamText : result?.text ?? '';
+  const downloadText = (text: string, stamp: number) => {
     if (!text) return;
     const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const anchor = document.createElement('a');
     anchor.href = url;
-    anchor.download = `r2t2-${Date.now()}.txt`;
+    anchor.download = `r2t2-${stamp}.txt`;
     anchor.click();
     URL.revokeObjectURL(url);
   };
 
   const installMissing = install && !install.installed;
-  const currentText = mode === 'stream' ? streamText : result?.text ?? '';
+  /** 流式进行中的实时文本（未定稿，不入栈） */
+  const liveText = loading && mode === 'stream' ? streamText : '';
+
+  const asrEntries: ResultStackEntry[] = results.entries.map((entry) => ({
+    id: entry.id,
+    createdAt: entry.createdAt,
+    title: entry.item.fileName,
+    subtitle: `${entry.item.mode === 'stream' ? '流式' : '快速'} · ${entry.item.result.text.length} 字`,
+    summary: entry.item.result.text,
+    content: (
+      <div className="space-y-2 pt-1">
+        <div className="max-h-72 overflow-y-auto rounded-lg bg-muted/50 p-3 text-sm leading-relaxed whitespace-pre-wrap">
+          {entry.item.result.text}
+        </div>
+        {entry.item.result.elapsed_sec != null ? (
+          <p className="text-xs text-muted-foreground">
+            耗时 {entry.item.result.elapsed_sec.toFixed(1)} 秒 · {entry.item.result.text.length} 字
+          </p>
+        ) : null}
+        {entry.item.result.timestamps && entry.item.result.timestamps.length > 0 ? (
+          <div className="max-h-52 space-y-1 overflow-y-auto rounded-lg border p-2 text-xs">
+            {entry.item.result.timestamps.map((stamp, index) => (
+              <div key={`${stamp.start}-${index}`} className="flex gap-2">
+                <span className="shrink-0 font-mono text-muted-foreground">
+                  {stamp.start != null ? `${stamp.start.toFixed(2)}s` : '—'}
+                  {stamp.end != null ? ` → ${stamp.end.toFixed(2)}s` : ''}
+                </span>
+                <span>{stamp.text}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" className="flex-1" onClick={() => copyText(entry.item.result.text)}>
+            <Copy className="size-3.5" />
+            复制
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="flex-1"
+            onClick={() => downloadText(entry.item.result.text, entry.createdAt)}
+          >
+            <Download className="size-3.5" />
+            下载 TXT
+          </Button>
+        </div>
+      </div>
+    ),
+  }));
 
   return (
     <div className="grid gap-5 lg:grid-cols-5">
@@ -269,7 +335,6 @@ export function NeteaseAsrPage() {
               className="sr-only"
               onChange={(event) => {
                 setFile(event.target.files?.[0] ?? null);
-                setResult(null);
                 setStreamText('');
                 setError(null);
               }}
@@ -381,40 +446,21 @@ export function NeteaseAsrPage() {
               </div>
             ) : null}
 
-            {currentText ? (
-              <div className="space-y-3">
-                <div className="max-h-80 overflow-y-auto rounded-lg bg-muted/50 p-3 text-sm leading-relaxed whitespace-pre-wrap">
-                  {currentText}
-                  {loading && mode === 'stream' ? <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-violet-500 align-middle" /> : null}
+            {results.entries.length > 0 ? (
+              <ResultStack entries={asrEntries} onRemove={results.remove} onClear={results.clear} empty={null} />
+            ) : null}
+
+            {liveText ? (
+              <div className="space-y-2">
+                <div className="max-h-72 overflow-y-auto rounded-lg bg-muted/50 p-3 text-sm leading-relaxed whitespace-pre-wrap">
+                  {liveText}
+                  <span className="ml-0.5 inline-block h-4 w-0.5 animate-pulse bg-violet-500 align-middle" />
                 </div>
-                {result?.elapsed_sec != null ? (
-                  <p className="text-xs text-muted-foreground">耗时 {result.elapsed_sec.toFixed(1)} 秒 · {result.text.length} 字</p>
-                ) : null}
-                {result?.timestamps && result.timestamps.length > 0 ? (
-                  <div className="max-h-60 space-y-1 overflow-y-auto rounded-lg border p-2 text-xs">
-                    {result.timestamps.map((stamp, index) => (
-                      <div key={`${stamp.start}-${index}`} className="flex gap-2">
-                        <span className="shrink-0 font-mono text-muted-foreground">
-                          {stamp.start != null ? `${stamp.start.toFixed(2)}s` : '—'}
-                          {stamp.end != null ? ` → ${stamp.end.toFixed(2)}s` : ''}
-                        </span>
-                        <span>{stamp.text}</span>
-                      </div>
-                    ))}
-                  </div>
-                ) : null}
-                <div className="flex gap-2">
-                  <Button variant="outline" size="sm" className="flex-1" onClick={handleCopy}>
-                    <Copy className="size-3.5" />
-                    复制
-                  </Button>
-                  <Button variant="outline" size="sm" className="flex-1" onClick={downloadText}>
-                    <Download className="size-3.5" />
-                    下载 TXT
-                  </Button>
-                </div>
+                <p className="text-[11px] text-muted-foreground">流式输出中（append-only，已出部分不会被改写）</p>
               </div>
-            ) : (
+            ) : null}
+
+            {results.entries.length === 0 && !liveText ? (
               <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
                 {loading ? (
                   <span className="inline-flex items-center gap-2">
@@ -425,7 +471,7 @@ export function NeteaseAsrPage() {
                   '选择音频后开始转写，文本会出现在这里'
                 )}
               </div>
-            )}
+            ) : null}
           </CardContent>
         </Card>
 

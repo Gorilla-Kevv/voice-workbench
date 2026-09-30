@@ -142,13 +142,15 @@ export function VoiceClonePage({ settings, controller, maxTextLength }: VoiceClo
 
       <div className="lg:col-span-2">
         <ResultPanel
-          result={controller.result}
+          results={controller.results}
           loading={controller.loading}
           elapsed={controller.elapsed}
           error={controller.error}
           settings={settings}
           onRetry={() => void controller.retry()}
           onDismissError={controller.clearError}
+          onRemoveResult={controller.removeResult}
+          onClearResults={controller.clearResults}
           emptyHint="提供音色样本与文本后点击合成，克隆效果会在这里试听"
         />
       </div>

@@ -360,13 +360,15 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
 
       <div className="lg:col-span-2">
         <ResultPanel
-          result={controller.result}
+          results={controller.results}
           loading={controller.loading}
           elapsed={controller.elapsed}
           error={controller.error}
           settings={settings}
           onRetry={() => void controller.retry()}
           onDismissError={controller.clearError}
+          onRemoveResult={controller.removeResult}
+          onClearResults={controller.clearResults}
           emptyHint="选择音色并输入文本后点击「开始合成语音」，结果会在这里出现"
         />
       </div>

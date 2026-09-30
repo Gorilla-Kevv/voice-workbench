@@ -278,7 +278,56 @@
   后果不是崩，是**推理期被挤占**：同一条合成在显存充裕时 RTF 2.0~2.5，挤占时掉到 4.88。
   要不要改用 nvidia-smi 采样做准入，待定（改之前先确认 Windows WDDM 下哪个口径更接近真实可用量）
 
-- **下一阶段入口**：浏览器里人工过一遍网易合成页的交互（上传参考音频、音色库选取、跨语种切换、结果卡播放下载）
+---
+
+## 阶段 10 — 各模块结果栏改「多条结果列表」（不再互相覆盖）
+
+- **起因**：每个页面只用单值 state 存结果，合成/转写下一条就把上一条冲掉
+  （`useSynthesis` 里还会顺手 `revokeObjectURL`，连旧音频地址一起回收）。
+  用户明确要求：即使历史记录能找回，主界面也要**直接展示多条**。
+
+- **已完成**
+  - **共用底座**
+    - `app/src/hooks/useResultStack.ts`：结果栈 `push / remove / clear`，默认上限 12 条，
+      三层保留 —— React state → **模块级内存缓存**（`App.tsx` 按导航键条件渲染页面，
+      切走就卸载，纯 state 会归零）→ 可选 `sessionStorage`（文本/服务端路径类结果刷新后仍可回看）
+    - `app/src/components/features/ResultStack.tsx`：列表壳 —— 最新一条默认展开、其余折叠，
+      每条带序号 / 时间 / 标题 / 摘要，支持单条删除与「清空（二次确认）」；
+      用 `overrides` 覆盖表判定展开，避免 effect 内 setState
+  - **逐模块接入**
+    - `useSynthesis`：`results: SynthesisResult[]` + `removeResult/clearResults`，
+      **只有淘汰或显式删除才 revoke**（`result` 仍返回最新一条，兼容旧调用方）
+    - `ResultPanel`：`result` → `results`，单条展示体抽成 `ResultBody`，套 `ResultStack`
+    - 通用合成 / 音色设计 / 声音克隆：传 `controller.results` + 删除/清空回调
+    - 网易合成：每条存 `{result, audioUrl, text, refLabel}`，删掉原来「换结果就回收旧 URL」的逻辑
+    - 网易转写 / ASR 转写：文本结果可 JSON 化 → 走 `sessionStorage` 持久化；
+      流式模式的实时文本单独一块显示，定稿才入栈
+    - 语音变声：每条存**源音频的独立快照地址**（预览那条会随下次选文件被回收），A·B 对比可回看
+    - 歌声转换：翻唱按「批」入栈（歌名 + 音色 + 多轨），「只做分离」同样入栈
+    - 批量合成：`rows` 单值 → `BatchRound[]`（一次「开始生成」= 一个批次），
+      新批次追加、旧批次保留；批次结果从 `retained.rows` 迁到 `batch-rounds`
+
+- **未完成**
+  - 结果列表只保持在当前会话（Blob 类结果刷新后必然失效，这是浏览器限制，不是没做）
+  - 「历史记录」页与本次会话列表尚未打通（历史仍是 MiMo 三页的 IndexedDB 通道）
+
+- **改动文件**：新增 `app/src/hooks/useResultStack.ts`、`app/src/components/features/ResultStack.tsx`；
+  改 `app/src/hooks/useSynthesis.ts`、`app/src/components/features/ResultPanel.tsx`、
+  `app/src/pages/{SynthesisPage,VoiceDesignPage,VoiceClonePage,NeteaseTtsPage,NeteaseAsrPage,AsrPage,VoiceConversionPage,SingingConversionPage,BatchPage}.tsx`
+
+- **测试结果**：`npm run typecheck` 通过；改动文件 eslint 全通过（`src` 全量 lint 的 13 处报错
+  来自 `useSettings.ts` / `direct-api.ts` 等**本轮没碰**的文件，属既有问题）；`npm run build` 通过
+
+- **风险**
+  - 内存：默认每页留 12 条；MiMo 多段结果按段持有 Blob，长文本多段时占用会上去（已按条数封顶）
+  - `useResultStack` 的模块级缓存用 `storageKey ?? useId()` 做键，页面若不传 `storageKey`，
+    键位依赖组件在树中的位置（目前都传了 `storageKey`）
+  - 批量页旧的 `retained.rows` 数据不会被迁移（格式变了），老会话读进来直接忽略
+
+- **下一阶段入口**：浏览器逐个模块人工点一遍（合成两次看旧的是否还在、展开/删除/清空是否顺手）；
+  决定是否把会话列表与「历史记录」页合并展示
+
+- **下一阶段入口**（阶段 9 遗留）：人工确认侧栏状态卡缩小后的观感（是否要保留手动展开入口）
   —— 接口链路已全部验过，剩下的是 UI 交互手感；拍板 R2T2 走 WSL2 还是 Docker；
   决定 `check_vram()` 是否改成 nvidia-smi 口径
 

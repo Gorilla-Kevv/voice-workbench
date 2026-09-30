@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Music2, Scissors } from 'lucide-react';
 import { ABPlayer } from '@/components/features/ABPlayer';
 import { JobPanel } from '@/components/features/JobPanel';
@@ -10,8 +10,26 @@ import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
+import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { useResultStack } from '@/hooks/useResultStack';
 import { resolveAudioUrl, svcApi, uvrApi } from '@/lib/vc';
 import type { SovitsJob, SvcCatalog } from '@/types';
+
+/** 一次翻唱的产物组合：多轨 + 当时的歌名与音色，够独立回听 */
+interface CoverResultItem {
+  tracks: { label: string; url: string }[];
+  songName: string;
+  model: string;
+}
+
+/** 一次分离的结果 */
+interface SeparateResultItem {
+  vocal: string | null;
+  instrumental: string | null;
+  cached: boolean;
+  elapsed_s: number;
+  fileName: string;
+}
 
 /** 板块强调色：玫瑰。与语音变声页的靛蓝互为区分 */
 const ACCENT_TEXT = 'text-rose-500 dark:text-rose-400';
@@ -106,9 +124,17 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
   });
   const [sliceSegments, setSliceSegments] = useState(true);
   const [jobId, setJobId] = useState<string | null>(null);
-  const [artifacts, setArtifacts] = useState<{ label: string; url: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // 多条结果并存：每次翻唱留一套产物，换音色重跑不会把上一次冲掉
+  const covers = useResultStack<CoverResultItem>({
+    limit: 12,
+    storageKey: 'svc-cover-results',
+    serialize: (item) => item,
+    deserialize: (raw) => (raw && typeof raw === 'object' ? (raw as CoverResultItem) : null),
+  });
+  /** 本次提交的歌名与音色：任务回调里也要用它 */
+  const pendingRef = useRef<{ songName: string; model: string } | null>(null);
 
   const patch = (changes: Partial<CoverState>) => setState((prev) => ({ ...prev, ...changes }));
 
@@ -121,6 +147,7 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
     }
     setBusy(true);
     setError(null);
+    pendingRef.current = { songName: state.file.name, model: state.model };
     try {
       const result = await svcApi.cover({
         file: state.file,
@@ -138,7 +165,7 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
         },
       });
       if ('job_id' in result) setJobId(result.job_id);
-      else setArtifacts(collectArtifacts({ ...(result.artifacts ?? {}) }));
+      else pushCover(collectArtifacts({ ...(result.artifacts ?? {}) }));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -146,11 +173,37 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
     }
   };
 
+  const pushCover = (tracks: { label: string; url: string }[]) => {
+    if (tracks.length === 0) return;
+    covers.push({
+      tracks,
+      songName: pendingRef.current?.songName ?? '未命名歌曲',
+      model: pendingRef.current?.model ?? '',
+    });
+  };
+
   const onJobDone = (job: SovitsJob) => {
     const produced = (job.artifacts as { artifacts?: Record<string, string>; urls?: Record<string, string> } | null) ?? {};
-    setArtifacts(collectArtifacts(produced.artifacts ?? produced.urls ?? {}));
+    pushCover(collectArtifacts(produced.artifacts ?? produced.urls ?? {}));
     onChanged();
   };
+
+  const coverEntries: ResultStackEntry[] = covers.entries.map((entry) => ({
+    id: entry.id,
+    createdAt: entry.createdAt,
+    title: `${entry.item.songName} → ${entry.item.model || '默认音色'}`,
+    subtitle: `${entry.item.tracks.length} 轨`,
+    summary: entry.item.tracks.map((track) => track.label).join(' / '),
+    content: (
+      <div className="rounded-xl border p-3">
+        <p className="mb-2 text-xs font-medium text-muted-foreground">产物（点击标签切换试听）</p>
+        <ABPlayer
+          accentClass={ACCENT_SOLID}
+          tracks={entry.item.tracks.map((track) => ({ label: track.label, url: track.url }))}
+        />
+      </div>
+    ),
+  }));
 
   const qualities = catalog?.quality_presets ?? [];
 
@@ -290,11 +343,8 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
 
         <JobPanel jobId={jobId} onComplete={onJobDone} accent={ACCENT_TEXT} title="翻唱任务" />
 
-        {artifacts.length > 0 ? (
-          <div className="rounded-xl border p-3">
-            <p className="mb-2 text-xs font-medium text-muted-foreground">产物（点击标签切换试听）</p>
-            <ABPlayer accentClass={ACCENT_SOLID} tracks={artifacts.map((item) => ({ label: item.label, url: item.url }))} />
-          </div>
+        {covers.entries.length > 0 ? (
+          <ResultStack entries={coverEntries} onRemove={covers.remove} onClear={covers.clear} empty={null} />
         ) : null}
       </CardContent>
     </Card>
@@ -318,8 +368,14 @@ function SeparateOnlyCard() {
   const [file, setFile] = useState<File | null>(null);
   const [preset, setPreset] = useState('vocal_fast');
   const [busy, setBusy] = useState(false);
-  const [result, setResult] = useState<{ vocal: string | null; instrumental: string | null; cached: boolean; elapsed_s: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // 多条结果并存：每次分离留一条，旧的还能回去听
+  const results = useResultStack<SeparateResultItem>({
+    limit: 12,
+    storageKey: 'uvr-separate-results',
+    serialize: (item) => item,
+    deserialize: (raw) => (raw && typeof raw === 'object' ? (raw as SeparateResultItem) : null),
+  });
 
   const submit = async () => {
     if (!file) return;
@@ -328,11 +384,12 @@ function SeparateOnlyCard() {
     try {
       const payload = await uvrApi.separate({ file, preset, wait: true });
       if (!payload.ok) throw new Error('分离失败');
-      setResult({
+      results.push({
         vocal: payload.urls?.vocal ?? payload.vocal,
         instrumental: payload.urls?.instrumental ?? payload.instrumental,
         cached: payload.cached,
         elapsed_s: payload.elapsed_s ?? 0,
+        fileName: file.name,
       });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
@@ -372,19 +429,36 @@ function SeparateOnlyCard() {
           </Button>
         </div>
         {error ? <p className="text-xs text-destructive">{error}</p> : null}
-        {result ? (
-          <div className="rounded-xl border p-3">
-            <p className="mb-2 text-xs text-muted-foreground">
-              {result.cached ? '命中缓存' : `本次耗时 ${result.elapsed_s.toFixed(1)}s`} · 下次换音色重跑可跳过这一步
-            </p>
-            <ABPlayer
-              accentClass={ACCENT_SOLID}
-              tracks={[
-                ...(result.vocal ? [{ label: '人声', url: resolveAudioUrl(result.vocal) ?? '' }] : []),
-                ...(result.instrumental ? [{ label: '伴奏', url: resolveAudioUrl(result.instrumental) ?? '' }] : []),
-              ]}
-            />
-          </div>
+        {results.entries.length > 0 ? (
+          <ResultStack
+            entries={results.entries.map((entry) => ({
+              id: entry.id,
+              createdAt: entry.createdAt,
+              title: entry.item.fileName,
+              subtitle: entry.item.cached ? '命中缓存' : `${entry.item.elapsed_s.toFixed(1)}s`,
+              summary: '人声 / 伴奏',
+              content: (
+                <div className="rounded-xl border p-3">
+                  <p className="mb-2 text-xs text-muted-foreground">
+                    {entry.item.cached ? '命中缓存' : `本次耗时 ${entry.item.elapsed_s.toFixed(1)}s`} ·
+                    下次换音色重跑可跳过这一步
+                  </p>
+                  <ABPlayer
+                    accentClass={ACCENT_SOLID}
+                    tracks={[
+                      ...(entry.item.vocal ? [{ label: '人声', url: resolveAudioUrl(entry.item.vocal) ?? '' }] : []),
+                      ...(entry.item.instrumental
+                        ? [{ label: '伴奏', url: resolveAudioUrl(entry.item.instrumental) ?? '' }]
+                        : []),
+                    ]}
+                  />
+                </div>
+              ),
+            }))}
+            onRemove={results.remove}
+            onClear={results.clear}
+            empty={null}
+          />
         ) : null}
       </CardContent>
     </Card>
