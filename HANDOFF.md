@@ -69,17 +69,22 @@
 - 前端：`app/src/main.tsx` → `App.tsx`
 - 网关：`server/src/index.ts`
 - 模型服务：`trainer/server.py`（**会自动判断解释器有无 torch，没有就用整合包的 `runtime/python.exe` 重新执行自己**）
-- 一键启动：根目录 `start.bat`
+- 网易服务：`netease/server.py`（**不自举解释器**——解释器不对就直接报错，见 `netease/README.md`）
+- 一键启动：根目录 `start.bat`（网易服务不进 start.bat，opt-in：`npm run dev:netease`）
 
 ### 核心接口
 
 - 后端统一响应：成功 `{ ok: true, ... }`；失败 `{ ok: false, error: { code, message, retryable, hint } }`
 - `hint` 是给**使用者**的下一步动作，前端必须展示而不只是展示 `message`
 - 主要端点：`/health`、`/v1/catalog`、`/v1/uvr/models`、`/v1/weights`、`/v1/voices`、`/v1/tts`、`/v1/tts/stream`、`/v1/tts/batch`、`/v1/train`、`/v1/train/plan`、`/v1/annotations/{job_id}`、`/v1/jobs`
+- 网易服务端点（经网关 `/api/netease/*` 透传）：`/health`、`/v1/netease/catalog`、
+  `/v1/netease/engines/{acquire,release}`、`/v1/confucius/{pipeline,warmup,unload,tts}`、`/v1/r2t2/*`
+  —— `/health` **永远 200**，「服务活着」与「模型可用」是两件事（后者在 `engines.*.installed` 里）
 
 ### 数据模型
 
 - 前端契约：`app/src/types/sovits.ts`（与后端 `trainer/app/models.py` 一一对应）
+- 网易契约：`app/src/types/netease.ts`（与后端 `netease/app/models.py` 一一对应，**改一边必改另一边**）
 - 持久化：
   - 服务端：`trainer/.data/`（voices、outputs、jobs、experiments、uploads）
   - 浏览器：`localStorage`（设置）+ `sessionStorage`（训练/批量会话）+ IndexedDB（历史）
@@ -223,6 +228,7 @@
 - `cd app && npx eslint src` 通过
 - `npm run build` 通过
 - `npm run sovits:check` 退出码 0
+- `npm run netease:check` 退出码 0（Windows 上加 `--allow-missing-asr`，ASR 平台阻塞见坑 12）
 - 浏览器打开 `http://localhost:5173` 三端口（5173 / 8787 / 9881）均就绪，页面无控制台报错
 
 ### 下一步（按优先级）
@@ -241,6 +247,7 @@
 ## 给下一会话的建议
 
 - 先读本文件 + `PROGRESS.md`，再用搜索工具定位具体模块，**不要读全仓库**
-- 改动前先看「已知坑」第 1、5、6 条（bat 编码、Python 3.9 限制、弹窗依赖）
-- 每阶段结束更新 `PROGRESS.md`
+- 改动前先看「已知坑」第 1、5、6 条（bat 编码、Python 3.9 限制、弹窗依赖）；
+  动 `netease/` 前必看第 12~16 条（R2T2 平台阻塞、HF 缓存、hf-mirror、fp16、float32 写盘）
+- 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志
