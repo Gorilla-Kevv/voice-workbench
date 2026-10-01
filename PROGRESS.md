@@ -445,6 +445,39 @@
 
 ---
 
+## 阶段 15 — 三个外接板块的入口与来源标注
+
+- **起因**：变声 / 翻唱 / 转写三个入口挤在「AI 变声 / 语音与文本」两组里，
+  用户分不清点进去用的是什么模型，也不知道这些能力来自哪个项目。
+
+- **已完成**
+  - **导航拆成三个模块**（组名直接写模型名，不再依赖 hover 提示）：
+    - `RVC 变声` → 语音变声
+    - `DDSP-SVC 歌声` → 歌声翻唱
+    - `ASR 语音转文本` → 转写与数据集
+    - 顺带把网易组名改成「网易 Confucius4 · 主服务」，模型族也进可见区域
+  - **新增 `components/features/SourceNote.tsx`**：统一的「能力来源」条，
+    写清上游项目名、本地位置、本项目做了什么
+  - **三个页面各加一条**
+    - 语音变声：RVC（Retrieval-based Voice Conversion），`vendor/rvc`
+    - 歌声转换：DDSP-SVC（歌声转换）+ UVR5（音源分离），`vendor/ddsp-svc · 整合包 tools/uvr5`
+    - 语音转文本：FunASR / faster-whisper（常驻）+ 整合包官方 ASR 脚本（脚本通道），
+      `整合包 tools/asr`
+
+- **未完成**：无（本次是纯标注改动）
+
+- **改动文件**：新增 `app/src/components/features/SourceNote.tsx`；
+  改 `app/src/components/layout/AppShell.tsx`、`app/src/pages/{VoiceConversionPage,SingingConversionPage,AsrPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint / `npm run build` 全通过
+
+- **风险**：侧栏分组变多（6 组），导航变长；`lg` 断点下侧栏可滚动，小屏仍是横向滚动条 ——
+  若嫌长，可考虑把三组再收成一个「外接模型」分组，但那会退回「看不出用的是哪个模型」的老问题
+
+- **下一阶段入口**：人工确认侧栏长度与分组名是否顺眼
+
+---
+
 ## 阶段 14 — 资源占用预估与预警
 
 - **起因**：用户要求「运行前自动评估显存与内存；不足时给明确警告 + 降配置/释放/升硬件建议；

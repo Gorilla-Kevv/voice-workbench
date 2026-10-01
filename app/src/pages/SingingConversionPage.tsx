@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { SourceNote } from '@/components/features/SourceNote';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { resolveAudioUrl, svcApi, uvrApi } from '@/lib/vc';
@@ -72,6 +73,11 @@ export function SingingConversionPage() {
 
   return (
     <div className="space-y-5">
+      <SourceNote
+        project="DDSP-SVC（歌声转换）+ UVR5（音源分离）"
+        location="vendor/ddsp-svc · 整合包 tools/uvr5"
+        upstream="翻唱的歌声转换走 DDSP-SVC，第一步的人声 / 伴奏分离走整合包自带的 UVR5 —— 两个上游项目各管一段，本项目只串流程"
+      />
       <div className="flex items-center gap-2">
         <EngineBadge catalog={catalog} />
       </div>

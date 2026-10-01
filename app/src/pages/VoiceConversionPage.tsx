@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { SourceNote } from '@/components/features/SourceNote';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { resolveAudioUrl, vcApi } from '@/lib/vc';
@@ -70,6 +71,11 @@ export function VoiceConversionPage() {
 
   return (
     <div className="space-y-5">
+      <SourceNote
+        project="RVC（Retrieval-based Voice Conversion）"
+        location="vendor/rvc"
+        upstream="本项目只做流程封装与本地服务调用，不改动上游代码"
+      />
       <EngineBadge catalog={catalog} onRefresh={refresh} accent={ACCENT_TEXT} />
       <ModelLibrary catalog={catalog} onChanged={refresh} accent={ACCENT_SOLID} />
       <ConvertCard catalog={catalog} accentText={ACCENT_TEXT} accentSolid={ACCENT_SOLID} onChanged={refresh} />

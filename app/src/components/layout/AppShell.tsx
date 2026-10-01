@@ -129,10 +129,10 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
   {
     // 网易是**主服务**：免转写克隆 + 14 语种，日常合成从它进。
     // 分组排在第一位不是装饰 —— 导航按「用哪个模型」排，主服务就该在最上面。
-    title: '网易 · 主服务',
+    title: '网易 Confucius4 · 主服务',
     items: [
       { key: 'netease-tts', label: '零样本合成', icon: Landmark, hint: 'Confucius4-TTS · 免转写克隆 / 14 语种' },
-      { key: 'netease-asr', label: '流式转写', icon: Subtitles, hint: 'Confucius4-R2T2 · append-only 真流式' },
+      { key: 'netease-asr', label: '流式转写', icon: Subtitles, hint: 'Confucius4-R2T2 · append-only 真流式（开发中）' },
     ],
   },
   {
@@ -152,20 +152,22 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     ],
   },
   {
-    // 两个新板块各占一个独立入口，但共用同一组「本地引擎」——
-    // 分组名体现它们是并列的能力（变声 / 翻唱），而不是一条链路的子页面
-    title: 'AI 变声',
-    items: [
-      { key: 'rvc', label: '语音变声', icon: MicVocal, hint: 'RVC · 说话配音换音色' },
-      { key: 'svc', label: '歌声转换', icon: Disc3, hint: 'DDSP-SVC · 翻唱与歌声' },
-    ],
+    // 语音变声与歌声转换是**两个不同的上游项目**（RVC / DDSP-SVC），
+    // 以前挤在「AI 变声」一组里，用户分不清点进去用的是什么模型。
+    // 现在各自成组，组名直接写模型名 —— 导航按「用哪个模型」分，模型名必须在**看得见**的地方
+    // （hint 只出现在 hover 提示里，不算数）。
+    title: 'RVC 变声',
+    items: [{ key: 'rvc', label: '语音变声', icon: MicVocal, hint: 'RVC 项目 · 说话 / 配音换音色' }],
   },
   {
-    // 语音转文本是独立引擎（FunASR / faster-whisper），与变声、转换不是同一条链路，
-    // 所以单独成组。它在产品上有两个身份：音色库的「打底稿」工具，
-    // 以及「把一批音频变成带标注的数据集」的训练入口。
-    title: '语音与文本',
-    items: [{ key: 'asr', label: '语音转文本', icon: Captions, hint: 'ASR · 音频转逐字文本与训练数据集' }],
+    title: 'DDSP-SVC 歌声',
+    items: [{ key: 'svc', label: '歌声翻唱', icon: Disc3, hint: 'DDSP-SVC 项目 · 翻唱与歌声转换（含 UVR5 分离）' }],
+  },
+  {
+    // 语音转文本是第三条独立链路（FunASR / faster-whisper），与上面两个不是同一套模型。
+    // 它在产品上有两个身份：音色库的「打底稿」工具，以及「把一批音频变成带标注的数据集」的训练入口。
+    title: 'ASR 语音转文本',
+    items: [{ key: 'asr', label: '转写与数据集', icon: Captions, hint: 'FunASR / faster-whisper · 逐字文本与训练数据集' }],
   },
   {
     title: '本机',

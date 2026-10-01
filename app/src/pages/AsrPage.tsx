@@ -25,6 +25,7 @@ import { Separator } from '@/components/ui/separator';
 import { Textarea } from '@/components/ui/textarea';
 import { JobPanel } from '@/components/features/JobPanel';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { SourceNote } from '@/components/features/SourceNote';
 import { useResultStack } from '@/hooks/useResultStack';
 import { asrApi } from '@/lib/asr';
 import { formatBytes } from '@/lib/audio';
@@ -353,6 +354,11 @@ export function AsrPage() {
 
   return (
     <div className="space-y-5">
+      <SourceNote
+        project="FunASR / faster-whisper（常驻通道）+ 整合包官方 ASR 脚本（脚本通道）"
+        location="整合包 tools/asr · 常驻依赖在 trainer 服务里"
+        upstream="两条通道都来自上游项目：常驻模型快，官方脚本可复现；本项目只做通道选择与数据集导出"
+      />
       {/* ---------------- 引擎状态 ---------------- */}
       <Card>
         <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
