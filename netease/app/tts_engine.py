@@ -317,10 +317,20 @@ def check_vram(required_mb: int = REQUIRED_VRAM_MB) -> Optional[dict[str, Any]]:
     if info is None:
         return None
     if info["free_mb"] < required_mb:
+        # 两个口径差很多 = 显存被别的进程吃着（浏览器 / 模拟器 / GPT-SoVITS），
+        # 这句话要直接说出来，否则用户不知道该去关什么
+        torch_free = info.get("torch_free_mb")
+        occupied_by_others = isinstance(torch_free, int) and torch_free - info["free_mb"] > 1024
+        hint = "先关闭 GPT-SoVITS 本地服务（或卸载网易另一引擎），再重试；跨进程显存仲裁见 docs/NETEASE-INTEGRATION.md §3.1。"
+        if occupied_by_others:
+            hint = (
+                f"当前有约 {torch_free - info['free_mb']} MB 显存被**其它进程**占用（不是本服务），"
+                "先关掉占显存的程序（浏览器硬件加速 / 安卓模拟器 / 游戏 / GPT-SoVITS）再重试。"
+            )
         raise NeteaseError(
             "VRAM_INSUFFICIENT",
             f"空闲显存不足：需要约 {required_mb} MB，当前仅 {info['free_mb']} MB / 共 {info['total_mb']} MB",
-            "先关闭 GPT-SoVITS 本地服务（或卸载网易另一引擎），再重试；跨进程显存仲裁见 docs/NETEASE-INTEGRATION.md §3.1。",
+            hint,
             status=503,
             details=info,
         )

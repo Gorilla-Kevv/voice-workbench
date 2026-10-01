@@ -368,6 +368,42 @@
 
 ---
 
+## 阶段 12 — 修掉网易侧的显存准入假象（坑 17）
+
+- **起因**：用户拍板「R2T2 先搁置，继续完善现有项目」。挑了清单里不需要 GPU 就能验证的一项：
+  坑 17 的显存口径问题（当时只登记了现象，没定论）。
+
+- **实测定性**
+  - 同一时刻三次采样：**`torch.cuda.mem_get_info` = 7099 MB 空闲，`nvidia-smi` = 2238 MB 空闲**（差 4.9 GB）
+  - 定性：WDDM 下 cudaMemGetInfo 是**本进程的虚拟视图**，看不见其它进程的占用
+  - 这解释了之前的怪事：nvidia-smi 只剩 2.6 GB 时准入照样放行、模型还真加载起来了，
+    代价是**第一条合成跑了 378 秒**（RTF 49，正常 2.0~2.5）—— 显存不够只能靠抖动硬跑
+
+- **已完成**
+  - `netease/app/hardware.py::vram_mb()` 改用 nvidia-smi 的 `memory.free`（跨进程真实值），
+    torch 读数保留为 `torch_free_mb` 做对照；nvidia-smi 不可用时退回 torch
+  - `check_vram()` 报错文案：两者差 >1 GB 时直接说「有 N MB 被**其它进程**占用」并列举常见占用者
+  - `models.py` 的 `HealthResponse.vram` 放宽成 `dict[str, Any]`（值里有口径来源字符串，
+    原来是 `dict[str, int]`，导致 `/health` 直接 500 —— 这个回归是改完当场撞出来的）
+
+- **未完成**
+  - `trainer/app/runtime.py::free_vram_mb()` 仍是 torch 口径（引擎准入 / 队列准入都用它），
+    网易常驻 4.9 GB 时它会误判。**主服务，影响面大，未擅自改**，已列进 HANDOFF 待拍板
+  - 「首条合成 378 s」待在显存充足时复测，确认是不是纯显存问题
+
+- **改动文件**：`netease/app/{hardware.py,tts_engine.py,models.py}`、`HANDOFF.md`
+
+- **测试结果**：`/health` 的 `vram` 返回 `{"free_mb":2187,"total_mb":8187,"torch_free_mb":7099,"source":"nvidia-smi"}`；
+  空闲 1967 MB 时 `POST /v1/confucius/warmup` 正确返回 **503**（修之前会放行），
+  错误正文提示「有约 5132 MB 被其它进程占用」
+
+- **风险**：nvidia-smi 每次探测要起一次外部进程（10 s 超时兜底），`/health` 的频率下可忽略；
+  若用户机器上 nvidia-smi 不在 PATH，自动退回 torch 口径，行为与修复前一致
+
+- **下一阶段入口**：拍板 trainer 侧是否同步改口径；显存腾出来后复测首条合成耗时
+
+---
+
 ## 阶段 9 — 侧栏状态卡精简（缩小 + 加载完自动隐藏）
 
 - **已完成**

@@ -181,11 +181,16 @@
     fp16 精度下上游返回的可能是 float16 数组，`soundfile` 不认 float16，会报
     `Format not recognised`。`tts_engine.generate()` 里统一 `np.asarray(..., dtype=np.float32)`。
 
-17. **`check_vram()` 的口径与 nvidia-smi 不一致**
-    `netease/app/hardware.py` 用 `torch.cuda.mem_get_info`（cudaMemGetInfo），Windows WDDM 下它报的空闲
-    比 nvidia-smi 乐观：实测 nvidia-smi 只有 2.6 GB 空闲时，准入检查照样放行，模型也真的加载成功了
-    （加载完整机只剩 161 MB）。**后果不是崩，是推理期被别的程序挤占** —— 同一条合成，显存充裕时
-    RTF 2.0~2.5，被挤占时掉到 4.88。要改就得先确认哪个口径更接近「真实可分配量」，别拍脑袋换。
+17. **Windows 下 `torch.cuda.mem_get_info` 看不见别的进程占的显存（已修）**
+    实测同一时刻：**torch 报 7099 MB 空闲，nvidia-smi 只报 2238 MB**（三次采样稳定，差 4.9 GB）。
+    WDDM 下 cudaMemGetInfo 是「本进程的虚拟视图」，浏览器 / 模拟器 / GPT-SoVITS 占的全都不算进去。
+    **后果**：准入检查形同虚设 —— nvidia-smi 只剩 2.6 GB 时空闲检查照样放行，模型靠抖动真加载起来了，
+    然后第一条合成跑了 **378 秒**（正常 RTF 2.0~2.5，那条 RTF 49）。
+    **已修**：`netease/app/hardware.py` 的 `vram_mb()` 改用 nvidia-smi 的 `memory.free`，
+    torch 的读数保留在 `torch_free_mb` 做对照；两者差 >1 GB 时，报错文案直接说
+    「有 N MB 被**其它进程**占用」。nvidia-smi 不可用时退回 torch。
+    ⚠️ `trainer/app/runtime.py::free_vram_mb()` 用的是同一个 torch 口径（引擎准入 / 队列准入都靠它），
+    跨进程度同样看不见 —— 网易服务常驻 4.9 GB 时它会误判。**是否也改，待拍板**（主服务，影响面更大）。
 
 18. **结果不能再用单值 state 存，统一走 `useResultStack`**
     旧写法是「一个页面一个 `result` state，新的来了直接覆盖」，而且 `useSynthesis` 还会
@@ -263,7 +268,8 @@
 | 高 | **拍板：装不装 WSL2 跑 R2T2** | 勘察已完成（WSL 2.7.14 就位、驱动 572.61 支持直通、Docker 未装），方案与成本见 `netease/README.md`「R2T2 落地方案」：**推荐只把 worker 放进 WSL**（TTS 不动），代价是 10~15 GB 磁盘 + 一次管理员权限。代码侧准备已做好（未配置时零影响）。装之前需要你点头 |
 | 中 | fp16 音质人工确认 | 已出声（RMS 0.08~0.10），但没做过 A/B；若嫌糊，用 `NETEASE_TTS_PRECISION=fp32` 重试（需要 ≥8 GB 空闲显存） |
 | 低 | 首条合成预热（实测 378 s） | 稳态 RTF 2.0~2.5，但冷启动第一条要几分钟。可考虑 warmup 时跑一句空合成把算子预热掉 |
-| 低 | `check_vram()` 口径（坑 17） | 现在用 `torch.cuda.mem_get_info`，比 nvidia-smi 乐观 → 加载放行但推理被挤占（RTF 掉到 4.88）。先确定哪个口径真实再改 |
+| 中 | trainer 侧显存口径是否同步改（坑 17） | `trainer/app/runtime.py::free_vram_mb()` 仍是 torch 口径，看不见网易服务常驻的 4.9 GB。改法与 netease 一样，但它是主服务的准入依据，影响面更大，等你点头 |
+| 低 | 首条合成 378 s 复测 | 怀疑就是显存不足导致的抖动（当时只剩 ~300 MB 却被放行），口径修好后**在显存充足时复测**；若仍慢再考虑 warmup 里跑一句空合成预热 |
 | 中 | 决策：是否推进三模型整合 | `docs/` 已有 OmniVoice/VoxCPM2/Qwen3-TTS 可行性评估，待拍板；若推进，复用 netease 阶段验证过的「第二个运行时 + 无 supervisor 网关透传」模式 |
 | 低 | 毛玻璃观感浏览器确认 | 阶段 5 遗留，多次预览被跳过 |
 | 低 | BS-RoFormer 补 `.yaml` | 整合包有权重缺配置；补齐后模型列表自动变为可用（无需改代码） |

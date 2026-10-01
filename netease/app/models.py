@@ -25,7 +25,8 @@ class HealthResponse(BaseModel):
     torch: bool = False
     cuda: bool = False
     device: Optional[str] = None
-    vram: Optional[dict[str, int]] = None
+    #: 显存读数。值里有字符串（口径来源），所以不能用 dict[str, int]
+    vram: Optional[dict[str, Any]] = None
     engines: dict[str, Any] = Field(default_factory=dict)
     engine_lock: dict[str, Any] = Field(default_factory=dict)
     configuration: dict[str, Any] = Field(default_factory=dict)
