@@ -202,6 +202,31 @@ export interface ModuleStates {
   neteaseAsr: ModuleState;
 }
 
+/**
+ * `/v1/engines` 的响应：引擎注册表的显存账本。
+ *
+ * 前端「资源预估」直接用这里的 `required_mb`，避免再维护一份会漂移的常量。
+ */
+export interface SovitsEnginesStatus {
+  ok: boolean;
+  /** 当前持有的引擎（null = 空闲） */
+  active: string | null;
+  active_label: string | null;
+  reason: string;
+  held_s: number;
+  training: string | null;
+  free_vram_mb: number | null;
+  reserve_mb: number;
+  engines: Array<{
+    name: string;
+    label: string;
+    required_mb: number;
+    description: string;
+    training: boolean;
+  }>;
+  registered_unloaders: string[];
+}
+
 export interface SovitsHealth {
   ok: boolean;
   schema_version: string;

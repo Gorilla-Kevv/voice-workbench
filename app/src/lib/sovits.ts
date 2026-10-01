@@ -15,6 +15,7 @@ import type {
   SovitsBatchResponse,
   SovitsCatalog,
   SovitsAnnotationList,
+  SovitsEnginesStatus,
   SovitsErrorBody,
   SovitsHealth,
   SovitsJob,
@@ -198,6 +199,18 @@ export const sovitsApi = {
 
   unload: (baseUrl?: string) =>
     request<{ ok: boolean; message: string }>('/v1/pipeline/unload', { method: 'POST' }, baseUrl),
+
+  /**
+   * 引擎注册表快照：各引擎的显存门槛 + 当前空闲显存。
+   * 「资源预估」用它拿**服务端认定的**门槛值（训练 6144 MB、UVR5 4096 MB …），
+   * 而不是在前端另写一份常量。
+   */
+  engines: (baseUrl?: string): Promise<SovitsEnginesStatus> =>
+    request<SovitsEnginesStatus>('/v1/engines', { method: 'GET', timeoutMs: 15_000 }, baseUrl),
+
+  /** 释放**全部**本地引擎占用的显存（注册表里登记了 unloader 的那些） */
+  unloadEngines: (baseUrl?: string) =>
+    request<{ ok: boolean; message: string }>('/v1/engines/unload', { method: 'POST', timeoutMs: 60_000 }, baseUrl),
 
   stop: (baseUrl?: string) =>
     request<{ ok: boolean; message: string }>('/v1/pipeline/stop', { method: 'POST' }, baseUrl),

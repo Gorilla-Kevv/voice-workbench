@@ -58,7 +58,16 @@ export interface NeteaseHealth {
   torch: boolean;
   cuda: boolean;
   device: string | null;
-  vram: { free_mb: number; total_mb: number } | null;
+  /**
+   * 显存读数。`free_mb` 取 nvidia-smi（跨进程真实值），
+   * `torch_free_mb` 是本进程视图 —— 两者差很多说明显存被**别的程序**占着（见 HANDOFF 坑 17）。
+   */
+  vram: {
+    free_mb: number;
+    total_mb: number;
+    torch_free_mb?: number;
+    source?: 'nvidia-smi' | 'torch';
+  } | null;
   engines: {
     confucius_tts: NeteaseTtsEngineInfo;
     r2t2: NeteaseAsrEngineInfo;

@@ -443,7 +443,54 @@
     文案已尽量说清原因与下一步动作
   - 网关仍无 supervisor：netease 挂了不会自动重启，只会在侧栏状态卡变「未启动」
 
-- **下一阶段入口**：浏览器确认落地页与导航顺序；若嫌主服务不可用时太硬，
+---
+
+## 阶段 14 — 资源占用预估与预警
+
+- **起因**：用户要求「运行前自动评估显存与内存；不足时给明确警告 + 降配置/释放/升硬件建议；
+  重资源任务提前给出预估占用量」。
+
+- **已完成**
+  - **数据来源（三条，各自权威，不重复维护常量）**
+    - 显存门槛：trainer `/v1/engines` 的 `required_mb`（sovits 3072 / rvc 2560 / svc 3072 /
+      uvr5 4096 / asr 2048 / train 6144）+ netease `/health` 的 `tts_required_vram_mb`
+    - 当前余量：netease 的 **nvidia-smi 口径**（跨进程真实值，坑 17 修完才可信）
+      → 退回 trainer 的 `free_vram_mb`（torch 口径）
+    - 内存：网关 `/api/health` 新增 `host { ram_total_mb, ram_free_mb, ram_used_mb }`
+      （Node `os.freemem`，三个进程同机，只有网关看得到全貌）
+  - **前端**：新增 `app/src/lib/resources.ts`（成本表 + 快照采集 + 判定 + `releaseVram()`）
+    与 `app/src/components/features/ResourceBudget.tsx`
+    - 展示：显存「需要 X · 空闲 Y / 共 Z」+ 内存「约 X · 空闲 Y」+ 「重新评估」
+    - 判定：`ok` / `tight`（余量 <1 GB）/ `insufficient`（差多少直接给 GB）/ `unknown`（不编乐观结论）
+    - 建议：可点的「释放常驻显存」+ 按任务给的「降低配置」具体参数 + 「升级硬件」文案
+  - **接入页面**：网易合成（主服务）、模型训练、语音变声、歌声转换（分离 4 GB）、批量合成
+  - `sovitsApi` 新增 `engines()` / `unloadEngines()`；类型补 `SovitsEnginesStatus`、
+    `HealthInfo.host`、`NeteaseHealth.vram.source/torch_free_mb`
+
+- **未完成**
+  - 内存阈值是粗估（按任务给量级），没有实测 RSS 校准
+  - 「降低配置」目前是文案建议，未做成一键改参数（改参数要动各页的表单，风险更大）
+
+- **改动文件**：新增 `app/src/lib/resources.ts`、`app/src/components/features/ResourceBudget.tsx`；
+  改 `server/src/routes/index.ts`、`app/src/lib/sovits.ts`、`app/src/types/{index.ts,sovits.ts,netease.ts}`、
+  `app/src/pages/{NeteaseTtsPage,TrainingPage,VoiceConversionPage,SingingConversionPage,BatchPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
+  三个数据源实测取值正确：`host { total:32544, free:5616 }`、
+  engines 门槛齐全、netease `vram { free:563, torch_free:7099, source:'nvidia-smi' }`
+  → 页面据此判定 `insufficient`（当前正处在「显存被别的程序占满」的状态，报警符合事实）
+
+- **风险**
+  - 内存数是「约」，可能与实际 RSS 差较多，文案已写「约」
+  - 快照在组件挂载时拉一次，长时间停留不会自动刷新（有「重新评估」按钮）；
+    若后续要做实时守护，应提到 App 层做轮询而不是每个卡片各拉一次
+  - 释放显存的动作会卸掉**正在常驻**的引擎（含网易 TTS），用户可能不期望 ——
+    按钮文案已写明「释放常驻显存」，且只在预估不通过时出现
+
+- **下一阶段入口**：确认各页预估卡的位置与文案；考虑把快照提到 App 层统一轮询；
+  内存阈值若有条件可实测校准一次
+
+- **下一阶段入口**（阶段 13 遗留）：浏览器确认落地页与导航顺序；若嫌主服务不可用时太硬，
   可考虑在落地页加一条「服务没起来时先看 GPT-SoVITS」的说明（仍不是自动回落）
 
 ---

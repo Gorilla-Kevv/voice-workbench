@@ -206,6 +206,12 @@ export interface HealthInfo {
     maxSampleBytes: number;
     synthsPerMinute: number;
   };
+  /** 宿主机内存（网关用 os.freemem 报的），前端「资源预估」用 */
+  host?: {
+    ram_total_mb: number;
+    ram_free_mb: number;
+    ram_used_mb: number;
+  };
   /** GPT-SoVITS 本地服务状态 */
   sovits?: GatewaySovitsStatus;
   providers?: {

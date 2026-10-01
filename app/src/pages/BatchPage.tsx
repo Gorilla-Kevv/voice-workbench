@@ -29,6 +29,7 @@ import { Separator } from '@/components/ui/separator';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
+import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { formatBytes, formatDuration } from '@/lib/audio';
@@ -719,6 +720,9 @@ export function BatchPage({ settings }: BatchPageProps) {
 
   return (
     <div className="space-y-5">
+      {/* 批量一次几十条，跑之前先看显存够不够（门槛 3 GB，条数越多峰值越高） */}
+      <ResourceBudget task="batch" />
+
       {/* ---------------- 音色与文本 ---------------- */}
       <Card>
         <CardHeader className="pb-3">

@@ -11,6 +11,7 @@ import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { resolveAudioUrl, vcApi } from '@/lib/vc';
@@ -310,6 +311,8 @@ function ConvertCard({
   return (
     <Card>
       <CardHeader>
+        {/* 变声要 2.5 GB 显存门槛，先摆数字 */}
+        <ResourceBudget task="rvc" className="mb-3" />
         <CardTitle className="text-base">开始变声</CardTitle>
         <CardDescription>上传一段说话 / 配音干声（建议 ≤5 分钟），保留内容与语气，只替换音色。</CardDescription>
       </CardHeader>

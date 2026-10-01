@@ -10,6 +10,7 @@ import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
+import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { resolveAudioUrl, svcApi, uvrApi } from '@/lib/vc';
@@ -218,6 +219,8 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
+        {/* 翻唱第一步就是分离（UVR5 门槛 4 GB），先把显存账摆出来 */}
+        <ResourceBudget task="uvr5" />
         <div className="grid gap-4 lg:grid-cols-2">
           <div className="space-y-2">
             <Label htmlFor="svc-song">歌曲</Label>

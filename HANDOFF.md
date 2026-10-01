@@ -88,6 +88,9 @@
 - 网易契约：`app/src/types/netease.ts`（与后端 `netease/app/models.py` 一一对应，**改一边必改另一边**）
 - **结果列表底座**：`app/src/hooks/useResultStack.ts` + `app/src/components/features/ResultStack.tsx`
   —— 所有模块的结果栏都走这两个；别在某个页面再自造单值结果 state（见坑 18）
+- **资源预估底座**：`app/src/lib/resources.ts` + `app/src/components/features/ResourceBudget.tsx`
+  —— 显存门槛**只从服务端取**（trainer `/v1/engines`、`netease /health`），前端只留兜底常量；
+  内存由网关 `/api/health` 的 `host` 提供（见坑 19）
 - 持久化：
   - 服务端：`trainer/.data/`（voices、outputs、jobs、experiments、uploads）
   - 浏览器：`localStorage`（设置）+ `sessionStorage`（训练/批量会话）+ IndexedDB（历史）
@@ -205,7 +208,14 @@
     - Blob / ObjectURL 类结果**不能**配 `serialize`（刷新后地址必然失效）；
     - 预览用的 Blob 地址（例如变声页的源音频）会被下次选文件回收，入栈时要**另开一个快照地址**。
 
-19. **`express.json()` 挂载顺序现在管两条代理**
+19. **资源预估的门槛值必须在服务端，前端只留兜底常量**
+    各引擎的显存门槛是 `trainer` 引擎注册表里的数据（训练 6144 / UVR5 4096 / SoVITS 3072 …），
+    网易 TTS 的门槛在 `netease/app/tts_engine.py::REQUIRED_VRAM_MB`。前端若另写一份，
+    改了后端不改前端就会给出**错误的预估**，比不给预估更糟。
+    `app/src/lib/resources.ts` 的顺序是：服务端值 → 兜底常量（注释里标了来源与实测依据）。
+    内存例外：三个进程同机，**只有网关看得到全貌**，所以由网关 `/api/health` 的 `host` 提供。
+
+20. **`express.json()` 挂载顺序现在管两条代理**
     `/api/sovits` 与 `/api/netease` 都挂在 `express.json()` 之前（index.ts 内有注释）。新增代理路由时
     再犯「multipart/NDJSON 被 body-parser 消费」的老错，症状是上传与流式全部 400/空体。
 
@@ -282,6 +292,7 @@
 - 先读本文件 + `PROGRESS.md`，再用搜索工具定位具体模块，**不要读全仓库**
 - 改动前先看「已知坑」第 1、5、6 条（bat 编码、Python 3.9 限制、弹窗依赖）；
   动 `netease/` 前必看第 12~17 条（R2T2 平台阻塞、HF 缓存、hf-mirror、fp16、float32 写盘、显存口径）；
-  动任何结果栏前必看第 18 条（统一走 `useResultStack`）
+  动任何结果栏前必看第 18 条（统一走 `useResultStack`）；动资源预估前看第 19 条（门槛值在服务
+  端）
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志

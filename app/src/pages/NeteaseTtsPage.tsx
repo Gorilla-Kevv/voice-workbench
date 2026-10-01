@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
@@ -253,6 +254,9 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
   return (
     <div className="grid gap-5 lg:grid-cols-5">
       <div className="space-y-5 lg:col-span-3">
+        {/* 跑之前先看代价：这一发要 4.9 GB 显存，够不够当场说清 */}
+        <ResourceBudget task="netease-tts" neteaseTtsLoaded={engine?.loaded ?? false} />
+
         {/* 引擎状态：安装未就位时这里承担「该做什么」的引导 */}
         <Card>
           <CardHeader className="pb-3">

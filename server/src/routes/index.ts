@@ -1,3 +1,4 @@
+import { totalmem, freemem } from 'node:os';
 import { Router } from 'express';
 import { config } from '../config/index.js';
 import { generalLimiter } from '../middleware/rateLimit.js';
@@ -17,6 +18,23 @@ export const apiRouter = Router();
  * 前端只需要一次请求就能决定「该显示哪些能力、该提示什么」。
  * netease 是异步探测（带缓存的 TCP 探活），直接 await，health 本身仍是毫秒级。
  */
+/**
+ * 宿主机内存读数。
+ *
+ * 显存两个数仓各自报（GPT-SoVITS 的 `/v1/engines`、netease 的 `/health`），
+ * 但**内存只有网关看得到全貌** —— 三个进程都跑在同一台机器上，
+ * 前端要判断「跑这个任务够不够」缺不了它，所以在这里补上。
+ */
+function hostMemory() {
+  const total = totalmem();
+  const free = freemem();
+  return {
+    ram_total_mb: Math.round(total / 1024 / 1024),
+    ram_free_mb: Math.round(free / 1024 / 1024),
+    ram_used_mb: Math.round((total - free) / 1024 / 1024),
+  };
+}
+
 apiRouter.get('/health', async (_req, res) => {
   res.json({
     ok: true,
@@ -25,6 +43,8 @@ apiRouter.get('/health', async (_req, res) => {
       env: config.env,
       time: new Date().toISOString(),
       hasServerKey: Boolean(config.mimoApiKey),
+      /** 宿主机内存：给前端的「资源预估」用（显存在各自服务里报） */
+      host: hostMemory(),
       baseUrl: config.mimoBaseUrl,
       limits: {
         maxTextLength: config.maxTextLength,

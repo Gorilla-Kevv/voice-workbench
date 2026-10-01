@@ -31,6 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { FlowGuide } from '@/components/features/FlowGuide';
+import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
 import { cn } from '@/lib/utils';
@@ -827,6 +828,9 @@ export function TrainingPage() {
           </AlertDescription>
         </Alert>
       ) : null}
+
+      {/* 训练是最吃显存的一项（门槛 6 GB），开跑前先把账算清楚 */}
+      <ResourceBudget task="training" />
 
       <Card>
         <CardHeader className="pb-3">
