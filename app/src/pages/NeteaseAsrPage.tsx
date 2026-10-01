@@ -33,7 +33,7 @@ interface AsrResultItem {
  * - 流式：真流式（append-only）—— 已输出的文本不会被改写，
  *   这与现有 faster-whisper 的滑窗伪流式（会回头改字）是本质区别。
  */
-export function NeteaseAsrPage() {
+export function NeteaseAsrPage({ onFallback }: { onFallback?: () => void } = {}) {
   const [catalog, setCatalog] = useState<NeteaseCatalog['asr'] | null>(null);
   const [engine, setEngine] = useState<NeteaseEngineStatus | null>(null);
   const [install, setInstall] = useState<NeteaseAsrEngineInfo | null>(null);
@@ -274,6 +274,39 @@ export function NeteaseAsrPage() {
   return (
     <div className="grid gap-5 lg:grid-cols-5">
       <div className="space-y-5 lg:col-span-3">
+        {/* 开发中的说明放在最上面：与其让用户点半天撞见报错，不如先把状态说清楚 */}
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-xs text-amber-700 dark:text-amber-400">
+          <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+          <div className="space-y-1">
+            <p className="flex flex-wrap items-center gap-1.5 font-medium">
+              该模块仍在开发中 · 当前系统暂不可用
+              <Badge variant="secondary" className="h-5 px-1.5 text-[10px] font-normal">
+                WIP
+              </Badge>
+            </p>
+            <p className="opacity-90">
+              Confucius4-R2T2 依赖 vLLM，而 PyPI 上的 vLLM <strong>只有 Linux 发行包</strong>，
+              r2t2 自带的 llama.cpp 后端也只有 <code className="font-mono">.so</code> 与
+              <code className="font-mono">cpython-312-x86_64-linux-gnu</code> 产物 ——
+              Windows 上装不了，所以这一页现在跑不起来（预热与转写按钮会保持禁用）。
+            </p>
+            <p className="opacity-90">
+              落地路径已经勘察过：WSL2 可行（本机 WSL 2.7.14 已就位、驱动 572.61 支持 GPU 直通），
+              方案与代价记在 <code className="font-mono">netease/README.md</code>。
+              权衡后<strong>暂不实施</strong>（约 10~15 GB 磁盘 + 需管理员权限），本页保持开发中的状态。
+            </p>
+            <p className="opacity-90">
+              现在要转写，请用「语音转文本」页：FunASR / faster-whisper 两条通道在本机都可用，
+              离线转写与造训练数据集都能做（区别是它没有 append-only 真流式）。
+            </p>
+            {onFallback ? (
+              <Button size="sm" variant="outline" className="mt-1 h-7 text-xs" onClick={onFallback}>
+                去用语音转文本
+              </Button>
+            ) : null}
+          </div>
+        </div>
+
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">

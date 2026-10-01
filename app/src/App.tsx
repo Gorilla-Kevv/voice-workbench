@@ -90,7 +90,7 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
   },
   'netease-asr': {
     title: '网易 · 流式转写',
-    description: 'Confucius4-R2T2 · append-only 真流式识别，流式精度≈离线',
+    description: 'Confucius4-R2T2 · append-only 真流式识别（开发中：Windows 上依赖 vLLM，暂不可用）',
   },
   settings: { title: '设置', description: '配置两套模型的服务地址、密钥与合成偏好' },
 };
@@ -422,7 +422,7 @@ function App() {
         {active === 'netease-tts' ? (
           <NeteaseTtsPage onFallback={() => setActive('batch')} />
         ) : null}
-        {active === 'netease-asr' ? <NeteaseAsrPage /> : null}
+        {active === 'netease-asr' ? <NeteaseAsrPage onFallback={() => setActive('asr')} /> : null}
 
         {active === 'settings' ? (
           <SettingsPage
