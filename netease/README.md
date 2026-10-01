@@ -133,6 +133,54 @@ netease/.venv/Scripts/python netease/server.py --port 9882
 | GET | `/v1/r2t2/pipeline` · POST `warmup`/`unload` | ASR 引擎管理 |
 | POST | `/v1/r2t2/transcribe` | multipart：`file`(或`ref_path`),`language`,`stream`,`chunk_ms` → JSON 或 NDJSON 流 |
 
+### R2T2（ASR）在 Windows 上的落地方案：WSL2（已勘察，待拍板）
+
+**结论：Windows 原生不行，WSL2 是本机唯一可行路径。** 勘察结果（2026-10，本机实测）：
+
+| 项 | 结果 |
+| --- | --- |
+| WSL2 平台 | **已就绪**：`wsl --version` = 2.7.14.0，内核 6.18.33；只是没装发行版 |
+| 显卡直通 | 驱动 **572.61**（≥ 510 即支持 WSL CUDA），Windows 11 25H2（10.0.26200）→ 条件具备 |
+| Docker | **未安装**（Docker Desktop 在 Windows 上也是跑在 WSL2 之上，多一层没必要） |
+| vLLM | PyPI 只有 Linux wheel；r2t2 自带 llama.cpp 后端也只有 `.so` + `cpython-312-linux-gnu` |
+
+**方案 B（推荐）：只把 worker 放进 WSL，TTS 继续留在 Windows。** 理由：TTS 在 Windows 上已经跑通（RTF 2.0~2.5），
+整体搬到 WSL 会白白承担一次回归风险；而 worker 与服务之间本来就是 stdin/stdout JSON 行协议，
+跨系统只是一层进程边界。
+
+```bash
+# 1) 装发行版（需要一次管理员权限 / Microsoft Store）
+wsl --install -d Ubuntu-24.04
+
+# 2) WSL 内：建 venv + 装 vllm 与 r2t2（torch 走 CUDA 版）
+python3 -m venv ~/r2t2-venv && source ~/r2t2-venv/bin/activate
+pip install torch --index-url https://download.pytorch.org/whl/cu126
+pip install -e /mnt/f/schoolCompWorks/clone/ttstool/netease/models-src/Confucius4-R2T2
+# 权重复用 Windows 侧的 HF 缓存，不用重下 4 GB
+export HF_HOME=/mnt/d/AI_Cache/hub
+```
+
+```powershell
+# 3) Windows 侧：只改两个环境变量，服务照常 npm run dev:netease
+$env:NETEASE_R2T2_PYTHON = 'wsl.exe ~/r2t2-venv/bin/python'
+$env:NETEASE_R2T2_WORKER  = '/mnt/f/schoolCompWorks/clone/ttstool/netease/app/r2t2_worker.py'
+```
+
+为此做的准备性改动（**未配置 WSL 时行为完全不变**）：
+
+- `NETEASE_R2T2_PYTHON` 现在支持整条命令行（按 shell 规则切词），可以写 `wsl.exe python`；
+- 新增 `NETEASE_R2T2_WORKER`：WSL 里 Windows 路径不存在，worker 要用 `/mnt/...` 形式；
+- `r2t2_worker.py` 新增 `to_host_path()`：服务传来的 `F:\a\b.wav` 自动折算成 `/mnt/f/a/b.wav`。
+
+**风险与代价**
+
+- 显存：WSL 与 Windows 共用同一块 GPU。TTS 常驻 4.9 GB，vLLM 默认 `gpu_memory_utilization=0.35`
+  （约 2.9 GB）——**两者同时跑必然不够**，沿用现网的「引擎互斥」语义，不要同时开；
+- 磁盘：WSL 发行版 + vLLM + torch 约 **10~15 GB**（权重可复用 `HF_HOME=/mnt/d/AI_Cache/hub` 省掉 4 GB）；
+- 延迟：每个音频块要走一次 Windows↔WSL 的 stdin/stdout，块间延迟会高于原生；80 ms 块长的极限体验待实测；
+- 这条链路**至今没有任何真机验证**（坑 12 的流式字段也只是按 README 校准）。装好后第一件事就是跑
+  `resources/test.wav` 校一次流式增量。
+
 ## 已知限制（首版）
 
 - **R2T2（ASR）在 Windows 上跑不起来**：上游依赖 vLLM，而 PyPI 上 `vllm` 只有 Linux

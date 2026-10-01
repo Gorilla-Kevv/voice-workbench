@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 import subprocess
 import sys
 import threading
@@ -84,11 +85,13 @@ class R2T2Manager:
     def _spawn(self) -> None:
         if self.alive:
             return
-        worker_path = Path(__file__).resolve().parent / "r2t2_worker.py"
         python = self._settings.resolved_r2t2_python
+        # 解释器允许写成整条命令行（`wsl.exe python`）：Windows 上装不了 vLLM（只有 Linux wheel），
+        # R2T2 要跑只能进 WSL / Linux，此时 worker 脚本也得用对端路径，见 NETEASE_R2T2_WORKER。
+        command = shlex.split(python, posix=False) if Path(python).is_absolute() else shlex.split(python)
         args = [
-            python,
-            str(worker_path),
+            *command,
+            self._settings.resolved_r2t2_worker,
             "--model", self._settings.resolved_r2t2_model,
             "--backend", self._settings.r2t2_backend,
             "--gpu-util", str(self._settings.r2t2_gpu_util),
@@ -113,7 +116,9 @@ class R2T2Manager:
             raise WorkerError(
                 "WORKER_INTERPRETER_MISSING",
                 f"找不到 R2T2 worker 解释器：{python}",
-                "设置 NETEASE_R2T2_PYTHON 指向包含 r2t2 依赖的 python.exe，或把服务整体跑在 netease venv 里。",
+                "设置 NETEASE_R2T2_PYTHON 指向包含 r2t2 依赖的 python，或把服务整体跑在 netease venv 里；"
+                "Windows 装不了 vLLM（只有 Linux wheel），要走 WSL2 时填 `wsl.exe python` 并配 "
+                "NETEASE_R2T2_WORKER 指向 Linux 侧的 r2t2_worker.py（见 netease/README.md）。",
             ) from error
         self._reader = threading.Thread(target=self._read_loop, daemon=True, name="r2t2-reader")
         self._reader.start()

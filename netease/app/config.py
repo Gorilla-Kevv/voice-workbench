@@ -44,8 +44,12 @@ class Settings:
 
     #: R2T2 模型：本地目录或 HF repo id（允许 repo id 是因为上游支持按名自动下载）
     r2t2_model: str = ""
-    #: R2T2 worker 的解释器。默认与服务同解释器；TTS/R2T2 依赖冲突时可指向另一个 venv
+    #: R2T2 worker 的解释器。默认与服务同解释器；TTS/R2T2 依赖冲突时可指向另一个 venv。
+    #: 支持整条命令行（按 shell 规则切词），因此可以是 `wsl.exe python` 这类非 Windows 目标
     r2t2_python: str = ""
+    #: R2T2 worker 脚本路径。默认取 app/r2t2_worker.py；跑在 WSL 里时必须换成
+    #: `/mnt/...` 形式的 Linux 路径（Windows 路径在那里不存在）
+    r2t2_worker: str = ""
     #: vLLM gpu_memory_utilization：8 GB 卡上给 TTS 留余量，宁低勿满
     r2t2_gpu_util: float = 0.35
     r2t2_max_model_len: int = 16384
@@ -66,6 +70,7 @@ class Settings:
             allow_cpu=_env("NETEASE_ALLOW_CPU") in {"1", "true", "yes", "on"},
             r2t2_model=_env("NETEASE_R2T2_MODEL"),
             r2t2_python=_env("NETEASE_R2T2_PYTHON"),
+            r2t2_worker=_env("NETEASE_R2T2_WORKER"),
             r2t2_backend=_env("NETEASE_R2T2_BACKEND", "vllm") or "vllm",
         )
         try:
@@ -112,3 +117,10 @@ class Settings:
     @property
     def resolved_r2t2_python(self) -> str:
         return self.r2t2_python or "python"
+
+    @property
+    def resolved_r2t2_worker(self) -> str:
+        """worker 脚本：默认与本项目同目录；跨系统（WSL）时用环境变量覆盖成对端路径。"""
+        if self.r2t2_worker:
+            return self.r2t2_worker
+        return str(NETEASE_DIR / "app" / "r2t2_worker.py")

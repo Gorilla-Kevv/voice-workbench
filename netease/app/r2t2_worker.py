@@ -206,9 +206,25 @@ def language_name(code: str) -> str | None:
     return code
 
 
+def to_host_path(path: str) -> str:
+    """把可能来自 Windows 宿主的路径翻译成本进程能读的路径。
+
+    worker 跑在 WSL / Linux 里时（Windows 没有 vLLM 发行包，这是 R2T2 唯一的落地方式），
+    服务传过来的还是宿主路径 `F:\\a\\b.wav`，直接 open 必然 FileNotFoundError。
+    Windows 盘符在 WSL 下就是 `/mnt/<盘符小写>/`，逐个折算即可；已经是 posix 路径则原样返回。
+    """
+    candidate = Path(path)
+    if candidate.exists():
+        return str(candidate)
+    if len(path) >= 3 and path[1:3] in {":\\", ":/"} and path[0].isalpha():
+        translated = "/mnt/" + path[0].lower() + path[2:].replace("\\", "/")
+        return translated
+    return path
+
+
 def load_wav_16k(path: str) -> tuple:
     """读音频并重采样到 16 kHz 单声道。librosa 优先（上游示例同款），逐级降级。"""
-    p = Path(path)
+    p = Path(to_host_path(path))
     if not p.exists():
         raise FileNotFoundError(f"音频不存在：{p}")
     try:

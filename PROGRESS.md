@@ -332,8 +332,39 @@
   点开显示全部；**探活期间强制全列**，避免加载进度被折叠掉。这样既保持简洁，又能随时看全状态排查
 
 - **下一阶段入口**：浏览器逐个模块人工点一遍结果栏（合成两次看旧的是否还在、展开/删除/清空是否顺手）；
-  —— 接口链路已全部验过，剩下的是 UI 交互手感；拍板 R2T2 走 WSL2 还是 Docker；
   决定 `check_vram()` 是否改成 nvidia-smi 口径
+
+---
+
+## 阶段 11 — R2T2 落地路径勘察（只勘察 + 做准备，未安装任何东西）
+
+- **已完成**
+  - **勘察结论（本机实测）**：WSL2 平台**已就绪**（`wsl --version` = 2.7.14.0，内核 6.18.33，只是没装发行版）；
+    显卡驱动 **572.61**（≥510 即支持 WSL CUDA）+ Windows 11 25H2（10.0.26200）→ GPU 直通条件具备；
+    **Docker 未安装**（Windows 上的 Docker Desktop 本身也跑在 WSL2 之上，多一层没必要）
+  - **推荐方案（方案 B）**：只把 `r2t2_worker` 放进 WSL2，TTS 继续留在 Windows。
+    TTS 在 Windows 已跑通（RTF 2.0~2.5），整体搬迁是白担一次回归风险；
+    而 worker 与服务本来就是 stdin/stdout JSON 行协议，跨系统只是一层进程边界
+  - **准备性代码改动（未配置 WSL 时行为完全不变）**
+    - `NETEASE_R2T2_PYTHON` 支持整条命令行（shlex 切词），可填 `wsl.exe python`
+    - 新增 `NETEASE_R2T2_WORKER`：WSL 里 Windows 路径不存在，要用 `/mnt/...` 形式
+    - `r2t2_worker.py` 新增 `to_host_path()`：`F:\a\b.wav` → `/mnt/f/a/b.wav`
+
+- **未完成（等用户拍板，本阶段不做）**
+  - 装 WSL 发行版 + vLLM（需管理员权限，属系统级改动，未擅自执行）
+  - 流式字段的真机校准（坑 12）——环境起来后的第一件事
+
+- **改动文件**：`netease/app/{config.py,r2t2.py,r2t2_worker.py}`、`netease/README.md`、`HANDOFF.md`
+
+- **测试结果**：`Settings.from_env()` 解析 OK（`wsl.exe python` 切词成两项、worker 路径可覆盖）；
+  路径翻译验证 OK；`create_app()` 与 `/health` 回归通过（服务重启后 `ok=true`、TTS `installed=true`）
+
+- **风险**：WSL 与 Windows 共用同一块 GPU，TTS 常驻 4.9 GB + vLLM 0.35（约 2.9 GB）**不能同时开**，
+  必须沿用引擎互斥；WSL 侧还需 10~15 GB 磁盘（权重可复用 `HF_HOME=/mnt/d/AI_Cache/hub` 省 4 GB）；
+  跨系统 stdin/stdout 的块间延迟会影响 80 ms 块长的流式体验，待实测
+
+- **下一阶段入口**：用户拍板后按 `netease/README.md` 的 WSL 方案执行（装发行版 → venv → vllm →
+  两个环境变量 → 用 `resources/test.wav` 校流式）；若否决，R2T2 保持「平台不支持」，ASR 页如实显示
 
 ---
 
