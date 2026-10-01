@@ -46,7 +46,7 @@ function base64ToUrl(base64: string, mime = 'audio/wav'): string {
  * 也因此现有音色库里的每条音色都能直接拿来用 —— 只取它的参考音频，
  * 转写文本不参与合成（页面里明确标注，避免「文本也要跟着改」的误解）。
  */
-export function NeteaseTtsPage() {
+export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {}) {
   const [catalog, setCatalog] = useState<NeteaseCatalog['tts'] | null>(null);
   const [engine, setEngine] = useState<NeteaseEngineStatus | null>(null);
   const [text, setText] = useState('这是网易 Confucius4-TTS 的零样本克隆合成：只需三秒参考音频，无需逐字转写文本。');
@@ -278,6 +278,11 @@ export function NeteaseTtsPage() {
                       : '按 netease/README.md 下载权重并建 venv'}
                     ，然后运行 npm run netease:check 验证（TTS 侧权重实测约 5.4 GB）。
                   </p>
+                  {onFallback ? (
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onFallback}>
+                      先用 GPT-SoVITS 批量合成
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             ) : null}
@@ -447,9 +452,15 @@ export function NeteaseTtsPage() {
             {error ? (
               <div className="flex items-start gap-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs">
                 <AlertTriangle className="mt-0.5 size-3.5 shrink-0 text-destructive" />
-                <div>
+                <div className="min-w-0">
                   <p className="font-medium text-destructive">{error.message}</p>
                   {error.hint ? <p className="mt-1 opacity-80">{error.hint}</p> : null}
+                  {/* 主服务不可用时**不静默降级**：明确告诉用户还有谁可用、怎么切过去 */}
+                  {onFallback ? (
+                    <Button size="sm" variant="outline" className="mt-2 h-7 text-xs" onClick={onFallback}>
+                      改用 GPT-SoVITS 批量合成
+                    </Button>
+                  ) : null}
                 </div>
               </div>
             ) : null}

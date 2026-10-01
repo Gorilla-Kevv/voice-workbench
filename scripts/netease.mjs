@@ -13,10 +13,16 @@
  *   node scripts/netease.mjs --check        # 只做环境体检
  *   node scripts/netease.mjs --port 9882
  *   node scripts/netease.mjs --weights      # 下载权重（其余参数原样透传给下载脚本）
+ *   node scripts/netease.mjs --skip-if-missing   # 没建 venv 就安静跳过（给 npm run dev 用）
+ *
+ * `--skip-if-missing` 的存在理由：网易现在是**主服务**，`npm run dev` 会带上它，
+ * 但没装权重 / 没建 venv 的机器上不该因此把整个 dev 链路拖崩 ——
+ * 那种情况下跳过，页面照常给出「待补齐」提示，用户自己决定装不装。
  */
 
 import { existsSync } from 'node:fs';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -35,10 +41,45 @@ function resolvePython() {
 }
 
 const python = resolvePython();
-const passthrough = process.argv.slice(2);
+const rawArgs = process.argv.slice(2);
+const flags = new Set(['--weights', '--skip-if-missing']);
+const skipIfMissing = rawArgs.includes('--skip-if-missing');
+const passthrough = rawArgs.filter((arg) => !flags.has(arg));
 const isWeights = passthrough.includes('--weights');
 const target = isWeights ? DOWNLOADER : SERVER;
 const args = [target, ...passthrough.filter((arg) => arg !== '--weights')];
+
+/**
+ * 端口上已经有人应答就别再起一个：常见于用户先手动跑了 `npm run dev:netease`，
+ * 再开 `npm run dev` —— 否则第二个实例会拿「address already in use」崩掉一个窗格。
+ */
+function portInUse(port) {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ host: '127.0.0.1', port });
+    const done = (result) => {
+      socket.destroy();
+      resolve(result);
+    };
+    socket.setTimeout(600);
+    socket.once('connect', () => done(true));
+    socket.once('timeout', () => done(false));
+    socket.once('error', () => done(false));
+  });
+}
+
+const port = Number(process.env.NETEASE_PORT ?? 9882);
+
+// 没建 venv 就别硬起：主服务也要照顾「没装权重」的机器
+if (skipIfMissing && !isWeights && !existsSync(path.join(ROOT, 'netease', '.venv'))) {
+  console.log('  [netease] 未检测到 netease/.venv，跳过启动（主服务会以「待补齐」显示在侧栏）');
+  console.log('  [netease] 想启用它：按 netease/README.md 建 venv + 下载权重，再跑 npm run netease:check');
+  process.exit(0);
+}
+
+if (skipIfMissing && !isWeights && (await portInUse(port))) {
+  console.log(`  [netease] ${port} 端口已有服务在跑（可能你手动起过），本次跳过启动`);
+  process.exit(0);
+}
 
 console.log(`  [netease] 解释器：${python}`);
 if (isWeights) {

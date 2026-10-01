@@ -16,7 +16,8 @@
 | 前端 `app/` | React 19 + TypeScript + Vite 7 + Tailwind CSS 3 + shadcn/ui（Radix） |
 | 网关 `server/` | Node 18 + Express 4 + TypeScript（tsx 运行） |
 | 模型服务 `trainer/` | Python 3.9（整合包自带 `runtime/python.exe`）+ FastAPI + Uvicorn |
-| 网易模块 `netease/` | **第二个 Python 运行时**（本机 py3.12 独立 venv + torch 2.7.0+cu126）+ FastAPI；opt-in，端口 9882 |
+| 网易模块 `netease/` | **主服务**：本机 py3.12 独立 venv + torch 2.7.0+cu126 + FastAPI；端口 9882，`npm run dev` 自动拉起 |
+| GPT-SoVITS | **辅助服务**（训练链 + 批量合成仍靠它）：Python 3.9 整合包 + FastAPI；端口 9881 |
 | 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重） |
 
 ### 分支
@@ -107,7 +108,9 @@
 | 网易模块**不进 Provider 抽象**、独立成 `netease/` 运行时 | 上游要求 py≥3.10 + torch≥2.5 + cu≥12.6，与 trainer 的 py3.9/torch2.0 互斥（`MODERN-TTS-FEASIBILITY.md` 已论证）；它是本地引擎不是云端 BYOK，塞进 Provider 抽象反而要特化密钥态 |
 | R2T2 走**子进程 worker**（stdin/stdout JSON 行协议） | vLLM 引擎要求 `__main__` 环境启动（上游 README 明确警告）；worker 自成主进程规避，还能用 `NETEASE_R2T2_PYTHON` 独立解释器解决依赖冲突 |
 | 网易两引擎**进程内互斥**，跨进程显存协调暂不做 | 8 GB 卡同时常驻 GPT-SoVITS + 1.3B LLM 本就不现实；先靠加载前空闲显存检查 + 明确报错兜底 |
-| 网易模块 opt-in、网关**无 supervisor** | 独立 venv + CUDA 版 torch 的安装成本不该摊给所有用户；`npm run dev` 启动体验一个字节不变 |
+| ~~网易模块 opt-in~~ **已改为主服务**（2026-10） | 免转写克隆 + 14 语种是日常合成的最优路径；`npm run dev` 现在会拉起它，网关仍**无 supervisor**（只转发不托管生命周期） |
+| `dev:netease` 走 `--skip-if-missing` | 主服务也要照顾「没装权重」的机器：没 `netease/.venv` 或端口已被占用时安静跳过，不再崩掉一个 dev 窗格 |
+| 网易不可用时**明确报错 + 给切换入口**，不自动回落 | 沿用现网哲学：不静默降级。页面给出「改用 GPT-SoVITS 批量合成」按钮，用户自己决定 |
 | TTS 默认 **fp16**，且只转三个大户（T2S / S2A / w2v-bert） | 上游全 fp32 约 7.5 GB，8 GB 卡必 OOM；BigVGAN / CAMPPlus 只占 0.45 GB / 几十 MB，留 fp32 反而避开两处 dtype 冲突（见坑 15） |
 | 上游推理配置**不直接用**，复制成绝对路径副本再交给上游 | `inference_config.yaml` 里 `tokenizer_path` / `w2v_stat` 是相对路径、按 CWD 解析；服务从项目根启动就会找不到 |
 | 权重下载**自己写脚本**，不用 `huggingface-cli download --local-dir` | 上游只认 HF 缓存（坑 13），且需要按实测速度在 ModelScope / 代理 / 直连之间选路（坑 14） |
@@ -213,7 +216,7 @@
 | 安装依赖 | `npm run install:all` |
 | **一键启动（推荐）** | 双击 `start.bat` |
 | 开发模式 | `npm run dev`（并行起：本地模型服务 + 网关 + 前端） |
-| 网易模块服务 | `npm run dev:netease`（opt-in；需先按 `netease/README.md` 建 venv + 下权重） |
+| 网易模块服务 | **已随 `npm run dev` 自动拉起**；单独重启用 `npm run dev:netease`（需先按 `netease/README.md` 建 venv + 下权重） |
 | 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`） |
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]` |
 | 只起网关+前端 | `npm run dev:cloud` |

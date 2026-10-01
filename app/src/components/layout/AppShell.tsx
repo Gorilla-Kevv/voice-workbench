@@ -110,7 +110,7 @@ const MODULE_STATUS_TEXT: Record<
       checking: { title: '网易合成 · 正在连接', hint: 'netease 服务探测中，稍候自动恢复' },
       ready: { title: '网易合成 · 已就绪', hint: 'Confucius4-TTS 权重就绪，推理全在本机' },
       incomplete: { title: '网易合成 · 待补齐', hint: '缺权重或缺依赖：按 netease/README.md 下载权重并建 venv（npm run netease:check 体检）' },
-      offline: { title: '网易合成 · 未启动', hint: '可选模块，默认不随主程序启动：运行 npm run dev:netease' },
+      offline: { title: '网易合成 · 未启动', hint: '主服务未起来：先跑 npm run netease:check 体检，再 npm run dev:netease 单独启动' },
     },
   },
   neteaseAsr: {
@@ -119,13 +119,22 @@ const MODULE_STATUS_TEXT: Record<
       checking: { title: '网易转写 · 正在连接', hint: 'netease 服务探测中，稍候自动恢复' },
       ready: { title: '网易转写 · 已就绪', hint: 'Confucius4-R2T2 模型就位，首次转写自动拉起引擎' },
       incomplete: { title: '网易转写 · 待补齐', hint: '缺权重或缺依赖：按 netease/README.md 下载 R2T2 权重并安装 r2t2 + vllm' },
-      offline: { title: '网易转写 · 未启动', hint: '可选模块，默认不随主程序启动：运行 npm run dev:netease' },
+      offline: { title: '网易转写 · 未启动', hint: '主服务未起来：运行 npm run dev:netease（Windows 上 R2T2 还需 WSL2，见 netease/README.md）' },
     },
   },
 };
 
 /** 导航按「用哪个模型」分组，避免用户在两条链路之间迷路 */
 const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: typeof Waves; hint: string }[] }[] = [
+  {
+    // 网易是**主服务**：免转写克隆 + 14 语种，日常合成从它进。
+    // 分组排在第一位不是装饰 —— 导航按「用哪个模型」排，主服务就该在最上面。
+    title: '网易 · 主服务',
+    items: [
+      { key: 'netease-tts', label: '零样本合成', icon: Landmark, hint: 'Confucius4-TTS · 免转写克隆 / 14 语种' },
+      { key: 'netease-asr', label: '流式转写', icon: Subtitles, hint: 'Confucius4-R2T2 · append-only 真流式' },
+    ],
+  },
   {
     title: 'MiMo 云端',
     items: [
@@ -135,7 +144,7 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     ],
   },
   {
-    title: 'GPT-SoVITS 本地',
+    title: 'GPT-SoVITS · 辅助',
     items: [
       { key: 'voices', label: '音色库', icon: Waves, hint: '参考音频与提示文本' },
       { key: 'batch', label: '批量合成', icon: ListMusic, hint: '一份清单生成一批音频' },
@@ -157,15 +166,6 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     // 以及「把一批音频变成带标注的数据集」的训练入口。
     title: '语音与文本',
     items: [{ key: 'asr', label: '语音转文本', icon: Captions, hint: 'ASR · 音频转逐字文本与训练数据集' }],
-  },
-  {
-    // 网易模块：第二个 Python 运行时（netease/，:9882），opt-in 启动。
-    // 分组逻辑与「MiMo 云端」对齐 —— 用户按「想要哪家模型的能力」找入口，不按部署位置。
-    title: '网易模块',
-    items: [
-      { key: 'netease-tts', label: '零样本合成', icon: Landmark, hint: 'Confucius4-TTS · 免转写克隆 / 14 语种' },
-      { key: 'netease-asr', label: '流式转写', icon: Subtitles, hint: 'Confucius4-R2T2 · append-only 真流式' },
-    ],
   },
   {
     title: '本机',
@@ -231,7 +231,19 @@ export function AppShell({
   const keyReady = hasServerKey || hasUserKey;
   const sovits = SOVITS_STATUS_TEXT[sovitsState];
 
+  // 排列顺序即优先级：网易（主服务）在前，GPT-SoVITS 与其它本地引擎居中，云端放最后
   const statusCards: StatusCard[] = [
+    ...(['neteaseTts', 'neteaseAsr'] as const).map((key) => {
+      const module = MODULE_STATUS_TEXT[key];
+      const state = moduleStates[key];
+      return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;
+    }),
+    { id: 'sovits', state: sovitsState, title: sovits.title, hint: sovits.hint, icon: 'server' },
+    ...(['rvc', 'svc', 'asr'] as const).map((key) => {
+      const module = MODULE_STATUS_TEXT[key];
+      const state = moduleStates[key];
+      return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;
+    }),
     {
       id: 'mimo',
       state: keyReady ? 'ready' : 'incomplete',
@@ -239,12 +251,6 @@ export function AppShell({
       hint: hasUserKey ? '使用你的个人密钥' : hasServerKey ? '使用站点公用密钥' : '请到设置页填写密钥',
       icon: 'shield',
     },
-    { id: 'sovits', state: sovitsState, title: sovits.title, hint: sovits.hint, icon: 'server' },
-    ...(['rvc', 'svc', 'asr', 'neteaseTts', 'neteaseAsr'] as const).map((key) => {
-      const module = MODULE_STATUS_TEXT[key];
-      const state = moduleStates[key];
-      return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;
-    }),
   ];
   // 探活 / 加载期间整列展示（此时用户需要看到进度）；一旦没有「正在连接」的卡片，
   // 就只保留需要用户动手的（待补齐 / 未连接 / 待配置）。
@@ -270,7 +276,7 @@ export function AppShell({
           </span>
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold leading-tight">GRK语音工作台</p>
-            <p className="truncate text-[11px] text-muted-foreground">MiMo 云端 + GPT-SoVITS 本地</p>
+            <p className="truncate text-[11px] text-muted-foreground">网易主服务 · GPT-SoVITS 辅助</p>
           </div>
         </div>
 

@@ -155,7 +155,9 @@ function toRecord(result: SynthesisResult): HistoryRecord {
 function App() {
   const { settings, update, reset } = useSettings();
   const { theme, toggle: toggleTheme } = useTheme();
-  const [active, setActive] = useState<NavKey>('synthesis');
+  // 网易是主服务，落地页就是它（免转写克隆 + 14 语种）。
+  // 它不可用时**不静默降级**：页面会明确报错并给出切到 GPT-SoVITS 的入口（见 NeteaseTtsPage）。
+  const [active, setActive] = useState<NavKey>('netease-tts');
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [presets, setPresets] = useState<PresetVoice[]>(FALLBACK_PRESET_VOICES);
   const [sovitsState, setSovitsState] = useState<SovitsLinkState>('checking');
@@ -417,7 +419,9 @@ function App() {
         {active === 'rvc' ? <VoiceConversionPage /> : null}
         {active === 'svc' ? <SingingConversionPage /> : null}
         {active === 'asr' ? <AsrPage /> : null}
-        {active === 'netease-tts' ? <NeteaseTtsPage /> : null}
+        {active === 'netease-tts' ? (
+          <NeteaseTtsPage onFallback={() => setActive('batch')} />
+        ) : null}
         {active === 'netease-asr' ? <NeteaseAsrPage /> : null}
 
         {active === 'settings' ? (

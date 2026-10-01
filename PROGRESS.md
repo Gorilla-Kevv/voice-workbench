@@ -404,6 +404,50 @@
 
 ---
 
+## 阶段 13 — 网易改为主服务，GPT-SoVITS 降为辅助
+
+- **起因**：用户拍板「网易为主服务，GPT 为辅助」。范围是三件事 + 一条回退策略
+  （导航与状态卡排主位 / 合成页默认引擎改网易 / `npm run dev` 自动拉起网易 / **不可用时明确报错不静默降级**）。
+
+- **已完成**
+  - **导航**：`NAV_GROUPS` 新增首位分组「网易 · 主服务」（零样本合成、流式转写），
+    排在原「MiMo 云端」之前；「GPT-SoVITS 本地」改名为「GPT-SoVITS · 辅助」；
+    侧栏副标题改「网易主服务 · GPT-SoVITS 辅助」
+  - **状态卡顺序**：网易两卡 → GPT-SoVITS → RVC/SVC/ASR → MiMo 云端（顺序即优先级）；
+    网易 offline 文案从「可选模块，默认不启动」改成「主服务未起来：先体检再单独启动」
+  - **默认页**：`App` 的 `active` 初值 `'synthesis'` → `'netease-tts'`
+  - **回退策略**：`NeteaseTtsPage` 新增可选 `onFallback`，App 传入 `() => setActive('batch')`；
+    错误态与「权重未就绪」态各给一个「改用 GPT-SoVITS 批量合成」按钮 ——
+    **不做自动回落**（沿用现网哲学：不静默降级）
+  - **自动拉起**：`package.json` 的 `dev` 加入 netease 窗格（`--skip-if-missing`）；
+    `scripts/netease.mjs` 新增该开关 —— 没有 `netease/.venv` 时安静跳过，
+    **端口已被占用时也跳过**（避免「先手动起了再开 dev」时崩一个窗格）
+  - `package.json` 描述同步更新
+
+- **未完成**
+  - 设置页默认值**未改**（用户未勾选该项）
+  - GPT-SoVITS 各页（音色库 / 批量 / 训练）未做「辅助」的视觉降级，只改了导航文案与顺序
+
+- **改动文件**：`app/src/App.tsx`、`app/src/components/layout/AppShell.tsx`、
+  `app/src/pages/NeteaseTtsPage.tsx`、`scripts/netease.mjs`、`package.json`、`HANDOFF.md`
+
+- **测试结果**：`npm run typecheck` 通过；改动文件 eslint 通过；
+  `node scripts/netease.mjs --skip-if-missing` 在端口已占用时打印跳过并 exit 0；
+  `npm run dev` 完整拉起后 **9881 / 9882 / 8787 / 5173 四端口全 up**，日志里 netease 窗格显示
+  「9882 端口已有服务在跑，本次跳过启动」
+
+- **风险**
+  - `npm run dev` 现在多起一个 Python 进程，启动更慢、显存占用更高；
+    没装 netease 的机器会自动跳过，装了的机器等于常驻（TTS 未预热时不占显存，预热后才占 ~4.9 GB）
+  - 主服务不可用时落地页就是一张报错卡：这是刻意的（不静默降级），但新用户第一眼可能觉得「坏了」，
+    文案已尽量说清原因与下一步动作
+  - 网关仍无 supervisor：netease 挂了不会自动重启，只会在侧栏状态卡变「未启动」
+
+- **下一阶段入口**：浏览器确认落地页与导航顺序；若嫌主服务不可用时太硬，
+  可考虑在落地页加一条「服务没起来时先看 GPT-SoVITS」的说明（仍不是自动回落）
+
+---
+
 ## 阶段 9 — 侧栏状态卡精简（缩小 + 加载完自动隐藏）
 
 - **已完成**
