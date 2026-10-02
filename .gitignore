@@ -39,6 +39,7 @@ netease/.venv/
 netease/.data/
 netease/models-src/
 netease/.tmp/
+server/.data/
 
 # GPT-SoVITS 官方整合包：自带 runtime/（Python + torch）与预训练权重，14 GB 级别。
 # 只在本机就地保留，由启动脚本自动探测，绝不进入版本库。
