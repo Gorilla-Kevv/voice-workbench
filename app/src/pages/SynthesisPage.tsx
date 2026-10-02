@@ -6,7 +6,6 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
-import { FlowGuide } from '@/components/features/FlowGuide';
 import { Separator } from '@/components/ui/separator';
 import { TagPicker } from '@/components/features/TagPicker';
 import { VoicePicker } from '@/components/features/VoicePicker';
@@ -373,8 +372,6 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
         />
       </div>
 
-      {/* 官方推荐流程（推理与合成设置两步）：贴在右边缘，鼠标移过去即展开 */}
-      <FlowGuide page="synthesis" />
     </div>
   );
 }

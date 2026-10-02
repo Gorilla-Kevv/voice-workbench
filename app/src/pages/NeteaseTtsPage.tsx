@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { markGuideEvent } from '@/hooks/useGuideProgress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
@@ -192,6 +193,8 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
           text,
           refLabel: upload ? upload.name : '未命名参考音频',
         });
+        // 指引里「合成并回听」这一步自动打勾
+        markGuideEvent('netease:first-synth');
         if (response.preempted) {
           toast.info(`已卸载 ${response.preempted} 引擎为本次合成让位`, { description: '回对应页面重新预热即可恢复。' });
         }
@@ -345,7 +348,11 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
                   type="file"
                   accept="audio/*"
                   className="sr-only"
-                  onChange={(event) => setFile(event.target.files?.[0] ?? null)}
+                  onChange={(event) => {
+                    setFile(event.target.files?.[0] ?? null);
+                    // 指引里「准备参考音频」这一步就此自动打勾
+                    if (event.target.files?.[0]) markGuideEvent('netease:ref-ready');
+                  }}
                 />
                 <Label
                   htmlFor="netease-tts-file"

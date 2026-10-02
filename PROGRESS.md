@@ -445,6 +445,52 @@
 
 ---
 
+## 阶段 16 — 操作指引系统重做（分步 + 圆形完成标识 + 跨页职责 + 复习）
+
+- **起因**：旧指引只有「一句目标 + tips」，看不出先后与落点；用户要求
+  ① 复用右侧弹窗 ② 写清每步怎么操作 ③ 复杂流程标注每页职责（上一页/本页/下一页）
+  ④ 分步引导 + 圆形状态标识（未完成/已完成）实时更新 ⑤ 支持「重新开始」复习。
+
+- **已完成**
+  - **`lib/guides.ts`（新）**：结构化指引数据。每步强制写 `how`（具体怎么点/填/判断）、
+    `page`（在哪做）、`prev`/`next`（上一页留下什么、下一页去哪）、可选 `autoKey`。
+    三份指引：`netease-first`（主服务首跑）、`gpt-sovits-training`（跨 4 页训练链）、
+    `first-run`（新手总览 5 步）
+  - **`hooks/useGuideProgress.ts`（新）**：进度按指引独立记账，localStorage 持久化，
+    模块级 listeners 保证跨页面同步；`markGuideEvent(key)` 供页面上报信号自动打勾；
+    `reset()` 用于复习
+  - **`components/features/FlowGuide.tsx` 重写**：沿用「贴边展开」交互（桌面悬浮 / 触屏点击），
+    内容换成 —— 顶部进度条 + `x/N` +「重新开始」；每步一个圆形标识
+    （未完成 = 空心虚线圈，已完成 = 实心圈 + 勾，与任务清单同一套视觉语言）；
+    步骤里写清「怎么操作」与「上一步 / 下一步」；非本页的步骤给「去这一页」按钮直接跳转；
+    底部可切换其它指引
+  - **挂载位置改到外壳层**：`AppShell` 渲染 `<FlowGuide page={active} onNavigate={onNavigate} />`，
+    因为跨页跳转只有外壳拿得到导航能力；移除 TrainingPage / SynthesisPage 里的两处重复引用
+  - **自动打勾接了真实信号**：网易页选好参考音频 → `netease:ref-ready`；
+    第一条合成成功 → `netease:first-synth`。观测不到的步骤仍可手动点圆圈切换
+
+- **未完成**
+  - 只有网易那条指引做了自动打勾，训练链 / 新手总览目前靠手动点
+  - 没有「首次访问自动弹出」的强引导（当前是贴边自取，不打断操作）
+
+- **改动文件**：新增 `app/src/lib/guides.ts`、`app/src/hooks/useGuideProgress.ts`；
+  重写 `app/src/components/features/FlowGuide.tsx`；
+  改 `app/src/components/layout/AppShell.tsx`、`app/src/pages/{NeteaseTtsPage,TrainingPage,SynthesisPage}.tsx`
+  （旧 `lib/flowGuide.ts` 保留未删：术语/其它地方可能仍引用，待确认后再清理）
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过
+
+- **风险**
+  - 指引内容是我按项目现状写的，参数名或按钮文案若后续改动会过期 —— 数据集中在
+    `lib/guides.ts`，改起来是一处
+  - 自动打勾依赖 `autoKey` 与页面上报点对齐，重构页面时容易漏改（已注释标出上报位置）
+  - 右侧贴边条与「资源预估卡」可能在同一水平位置重叠（贴边条 z-40 且固定，内容区右侧有留白）
+
+- **下一阶段入口**：人工走一遍三份指引，看步骤描述与实际界面是否对得上；
+  决定是否给训练链接自动打勾；确认旧 `flowGuide.ts` 可否整体删除
+
+---
+
 ## 阶段 15 — 三个外接板块的入口与来源标注
 
 - **起因**：变声 / 翻唱 / 转写三个入口挤在「AI 变声 / 语音与文本」两组里，

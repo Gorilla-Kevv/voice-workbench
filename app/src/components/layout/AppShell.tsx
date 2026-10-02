@@ -26,6 +26,7 @@ import brandAvatar from '@/assets/brand/grk-avatar.png';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { FlowGuide } from '@/components/features/FlowGuide';
 import { cn } from '@/lib/utils';
 import type { ModuleStates, NavKey, SovitsLinkState } from '@/types';
 
@@ -372,6 +373,10 @@ export function AppShell({
           <div className="mx-auto w-full max-w-6xl space-y-5 pb-16">{children}</div>
         </main>
       </div>
+
+      {/* 操作指引：贴在右边缘，鼠标移过去即展开。放在外壳里而不是各页面里 ——
+          它要能「跳到下一步所在的页面」，只有外壳拿得到导航能力。 */}
+      <FlowGuide page={active} onNavigate={onNavigate} />
     </div>
   );
 }

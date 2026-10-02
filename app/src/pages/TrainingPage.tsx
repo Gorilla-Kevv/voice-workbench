@@ -30,7 +30,6 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
-import { FlowGuide } from '@/components/features/FlowGuide';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
@@ -1638,9 +1637,6 @@ export function TrainingPage() {
         )
       )}
 
-      {/* 官方推荐流程：贴在右边缘，鼠标移过去即展开。训练步骤多且顺序有讲究，
-          光靠表单上的标签不足以让人知道「下一步该干什么」。 */}
-      <FlowGuide page="training" />
     </div>
   );
 }
