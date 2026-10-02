@@ -58,6 +58,37 @@ export interface SovitsStatus {
 /** 探活超时。本地环回地址，5 秒足够 */
 const PROBE_TIMEOUT_MS = 5_000;
 
+/**
+ * 「是否启用 GPT-SoVITS 本地服务」的持久开关。
+ *
+ * 默认**关闭**：本机只有 8 GB 显存，网易主服务常驻就要 4.9 GB，
+ * GPT-SoVITS 再常驻一套必然互相挤。所以策略是 —— 显存留给主服务，
+ * 只有用户明确要用训练 / 批量 / 变声 / 翻唱时，才去设置里手动开。
+ *
+ * 存文件而不是只放内存：网关会随 `tsx watch` 重启，内存态会丢；
+ * 用户「开过一次」这件事应该跨重启保留。
+ */
+const SERVICE_FLAG_FILE = path.join(PROJECT_ROOT, 'server', '.data', 'sovits-service.json');
+
+function readServiceEnabled(): boolean {
+  try {
+    const raw = fs.readFileSync(SERVICE_FLAG_FILE, 'utf8');
+    const parsed = JSON.parse(raw) as { enabled?: unknown };
+    return parsed.enabled === true;
+  } catch {
+    return false; // 读不到 = 没开过 = 默认关
+  }
+}
+
+function writeServiceEnabled(enabled: boolean): void {
+  try {
+    fs.mkdirSync(path.dirname(SERVICE_FLAG_FILE), { recursive: true });
+    fs.writeFileSync(SERVICE_FLAG_FILE, JSON.stringify({ enabled, updatedAt: Date.now() }, null, 2));
+  } catch {
+    // 写不进去就只在本进程内生效，至少本次会话是对的
+  }
+}
+
 function ringPush(buffer: string[], line: string): void {
   buffer.push(line);
   if (buffer.length > LOG_LIMIT) buffer.splice(0, buffer.length - LOG_LIMIT);
@@ -102,6 +133,8 @@ function compactDevice(label: string | undefined): string {
 }
 
 class SovitsSupervisor {
+  /** 用户是否在设置里启用了 GPT-SoVITS（默认否，详见 SERVICE_FLAG_FILE 的注释） */
+  private enabled = readServiceEnabled();
   private child: ChildProcess | null = null;
   private reachable = false;
   private starting: Promise<void> | null = null;
@@ -221,18 +254,15 @@ class SovitsSupervisor {
       logger.info('已复用外部运行的 GPT-SoVITS 服务', { baseUrl: config.sovits.baseUrl });
       return;
     }
-    if (!config.sovits.autostart) {
-      // 由外部编排器（`npm run dev` 的 sovits 任务）负责启动。
-      //
-      // 这里不能「探不到就放弃」：两个任务由 concurrently 同时启动，
-      // 而 Python 侧要 import torch 再加载模型，比 Node 慢几十秒。
-      // 直接放弃会出现「界面已就绪，但本地功能一直显示不可用」的假故障。
-      // 所以改成在这里等它就绪 —— 等到了就接管为「已接入外部服务」。
-      const ready = await this.waitUntilReady(config.sovits.readyTimeoutMs);
+    // 用户没在设置里启用 → 不拉起（显存留给网易主服务）。
+    // 但若外部已经起了一个（`npm run dev:sovits` 手动跑的），照样接管复用 ——
+    // 「已经在那儿的服务」不该被开关判死，否则用户开了服务却用不了，最难排查。
+    if (!this.enabled) {
+      const ready = await this.waitUntilReady(5_000);
       if (ready) {
         logger.info('已接入外部启动的 GPT-SoVITS 服务', { baseUrl: config.sovits.baseUrl });
       } else {
-        this.lastError = `未检测到 GPT-SoVITS 服务（${config.sovits.baseUrl}），且已关闭自动启动`;
+        this.lastError = 'GPT-SoVITS 本地服务已停用（默认关闭以释放显存），需要时请到设置里开启';
       }
       return;
     }
@@ -384,6 +414,60 @@ class SovitsSupervisor {
       await new Promise((resolve) => setTimeout(resolve, 1_000));
     }
     return false;
+  }
+
+  /**
+   * 关闭服务并释放显存。
+   *
+   * 与「只关自己拉起的」旧行为不同：现在**网关拥有生命周期**，
+   * 用户在设置里关掉 GPT-SoVITS，期望的就是显存立刻还回来 ——
+   * 所以先让 Python 侧把常驻引擎卸掉（释放显存），再杀进程。
+   * 外部实例（`npm run dev:sovits` 单独起的）杀不掉，那就只卸引擎，
+   * 并把「谁在管」如实返回给调用方，让界面说清楚。
+   */
+  async shutdown(): Promise<{ stopped: boolean; releasedVram: boolean; managed: boolean; reachable: boolean }> {
+    let releasedVram = false;
+    try {
+      await fetch(`${config.sovits.baseUrl}/v1/engines/unload`, {
+        method: 'POST',
+        signal: AbortSignal.timeout(15_000),
+      });
+      releasedVram = true;
+    } catch {
+      // 服务不在或不支持：无所谓，下一步直接杀进程
+    }
+
+    const child = this.child;
+    await this.stop();
+    if (!child) {
+      // 不是我们拉起的：进程杀不掉，但常驻引擎已经卸了（releasedVram 说明做到哪一步）
+      return { stopped: false, releasedVram, managed: false, reachable: await this.probe() };
+    }
+    this.reachable = false;
+    return { stopped: true, releasedVram, managed: true, reachable: false };
+  }
+
+  // ------------------------------------------------------------------
+  // 启用开关（设置页用）
+  // ------------------------------------------------------------------
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  /** 开启：落盘 + 拉起（幂等） */
+  async setEnabled(
+    next: boolean,
+  ): Promise<{ enabled: boolean; reachable: boolean; stopped?: boolean; releasedVram?: boolean }> {
+    this.enabled = next;
+    writeServiceEnabled(next);
+    if (next) {
+      await this.ensureStarted();
+      return { enabled: true, reachable: (await this.probe()) || this.reachable };
+    }
+    const result = await this.shutdown();
+    logger.info('已按设置关闭 GPT-SoVITS 本地服务', result);
+    return { enabled: false, ...result };
   }
 
   /** 只关闭由本进程拉起的服务；外部实例不动。 */

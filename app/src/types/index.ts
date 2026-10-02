@@ -213,7 +213,10 @@ export interface HealthInfo {
     ram_used_mb: number;
   };
   /** GPT-SoVITS 本地服务状态 */
-  sovits?: GatewaySovitsStatus;
+  sovits?: GatewaySovitsStatus & {
+    /** 用户是否启用了它（默认关闭：显存留给网易主服务） */
+    enabled?: boolean;
+  };
   providers?: {
     mimo: { available: boolean; requiresKey: boolean };
     'gpt-sovits': { available: boolean };

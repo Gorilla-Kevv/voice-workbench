@@ -75,6 +75,8 @@ export interface ResourceSnapshot {
   netease_tts_required_mb: number | null;
   /** 当前谁在占着本地引擎（null = 空闲） */
   active_engine: string | null;
+  /** GPT-SoVITS 本地服务是否被启用（默认关闭；它占着显存时才有「关掉它」这一说） */
+  sovits_enabled: boolean;
   fetched_at: number;
 }
 
@@ -150,6 +152,7 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
     engine_required_mb: engineRequired,
     netease_tts_required_mb: netease?.configuration?.tts_required_vram_mb ?? null,
     active_engine: engines?.active ?? null,
+    sovits_enabled: (health as HealthInfo | null)?.sovits?.enabled === true || engines != null,
     fetched_at: Date.now(),
   };
 }

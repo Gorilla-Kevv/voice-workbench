@@ -75,8 +75,16 @@ export const config = {
   sovits: {
     /** GPT-SoVITS 本地服务地址 */
     baseUrl: (process.env.SOVITS_URL?.trim() || 'http://127.0.0.1:9881').replace(/\/+$/, ''),
-    /** 是否由本进程托管 Python 服务的生命周期 */
-    autostart: bool(process.env.SOVITS_AUTOSTART, false),
+    /**
+     * 是否由本进程托管 Python 服务的生命周期 —— **默认 true**。
+     *
+     * 这里与旧注释相反，是刻意改的：8 GB 显存装不下两套常驻模型，
+     * GPT-SoVITS 现在**默认停用**（设置页开关控制，见 `sovitsSupervisor.setEnabled`），
+     * 只有用户明确要用训练 / 批量 / 变声 / 翻唱时才开启 ——
+     * 「按需拉起」必须由网关来做，否则界面上没有可点的入口。
+     * 代价：`tsx watch` 重启网关时子进程会被一起回收（重启后若开关是开的会自动再拉起）。
+     */
+    autostart: bool(process.env.SOVITS_AUTOSTART, true),
     /** GPT-SoVITS 根目录；留空则由 Python 侧自动搜索 */
     home: process.env.GPT_SOVITS_HOME?.trim() || '',
     /** GPT-SoVITS 自带解释器；留空则自动探测 runtime/python */

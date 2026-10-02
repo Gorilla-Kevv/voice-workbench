@@ -1,0 +1,91 @@
+import { RequestError } from '@/lib/errors';
+
+/**
+ * GPT-SoVITS 本地服务的启停（`/api/sovits/service`）。
+ *
+ * 存在的理由很具体：8 GB 显存装不下两套常驻模型。报错里让用户
+ * 「先关掉 GPT-SoVITS 释放显存」，却没有地方可以关 —— 这个建议等于做不到。
+ *
+ * 默认**停用**（服务端同此默认）：显存留给网易主服务，
+ * 只有用户明确要用训练 / 批量 / 变声 / 翻唱时，才到设置里开。
+ */
+
+export interface LocalServiceState {
+  enabled: boolean;
+  reachable: boolean;
+  managed?: boolean;
+  pid?: number | null;
+}
+
+export interface LocalServiceToggleResult {
+  ok: boolean;
+  enabled: boolean;
+  reachable: boolean;
+  hint: string;
+}
+
+async function serviceRequest<T>(
+  path: string,
+  options: { method: 'GET' | 'POST'; body?: string; timeoutMs: number },
+): Promise<T> {
+  const controller = new AbortController();
+  const timer = options.timeoutMs > 0 ? setTimeout(() => controller.abort(), options.timeoutMs) : null;
+
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: options.method,
+      body: options.body,
+      signal: controller.signal,
+      headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new RequestError(504, {
+        code: 'SERVICE_TOGGLE_TIMEOUT',
+        message: '切换 GPT-SoVITS 服务超时（开启时首次要 import torch，数十秒属正常）。',
+        retryable: true,
+      });
+    }
+    throw new RequestError(0, { code: 'GATEWAY_UNREACHABLE', message: '无法连接到本地网关。', retryable: true });
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  const text = await response.text();
+  let payload: unknown = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = null;
+    }
+  }
+
+  if (!response.ok) {
+    const maybe = payload as { error?: { code: string; message: string; retryable?: boolean; hint?: string } } | null;
+    throw new RequestError(
+      response.status,
+      maybe?.error ?? {
+        code: `HTTP_${response.status}`,
+        message: text?.slice(0, 300) || `网关返回 ${response.status}`,
+        retryable: response.status >= 500,
+      },
+    );
+  }
+
+  return payload as T;
+}
+
+export const localServiceApi = {
+  state: (): Promise<LocalServiceState> =>
+    serviceRequest<LocalServiceState>('/api/sovits/service', { method: 'GET', timeoutMs: 15_000 }),
+
+  /** 开启 / 关闭。开启后首次要 import torch，数十秒才就绪，所以不设超时。 */
+  toggle: (enabled: boolean): Promise<LocalServiceToggleResult> =>
+    serviceRequest<LocalServiceToggleResult>('/api/sovits/service', {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+      timeoutMs: enabled ? 0 : 60_000,
+    }),
+};

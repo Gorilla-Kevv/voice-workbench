@@ -29,6 +29,8 @@ import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/lib/api';
+import { RequestError } from '@/lib/errors';
+import { localServiceApi, type LocalServiceState } from '@/lib/localService';
 import { DEFAULT_SETTINGS, MODE_META } from '@/lib/constants';
 import { PROVIDERS, getProvider, languageLabel, resolveLanguages } from '@/lib/providers/registry';
 import { SELFHOSTED_PRESETS } from '@/lib/providers/selfhosted';
@@ -172,6 +174,41 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
   useEffect(() => {
     void probeSovits(readBaseUrl());
   }, [probeSovits]);
+
+  // ------------------------------------------------------------------
+  // GPT-SoVITS 服务的启停（默认关闭以释放显存）
+  // ------------------------------------------------------------------
+
+  const [serviceState, setServiceState] = useState<LocalServiceState | null>(null);
+  const [toggling, setToggling] = useState(false);
+
+  const refreshServiceState = useCallback(() => {
+    localServiceApi
+      .state()
+      .then(setServiceState)
+      .catch(() => setServiceState(null));
+  }, []);
+
+  useEffect(() => {
+    refreshServiceState();
+  }, [refreshServiceState]);
+
+  const toggleService = async (enabled: boolean) => {
+    setToggling(true);
+    try {
+      const result = await localServiceApi.toggle(enabled);
+      toast.success(enabled ? '已启用 GPT-SoVITS 本地服务' : '已关闭 GPT-SoVITS 本地服务', {
+        description: result.hint,
+      });
+      refreshServiceState();
+      void probeSovits(sovitsUrl);
+    } catch (requestError) {
+      const error = requestError as RequestError;
+      toast.error('切换失败', { description: error.fullMessage ?? error.message });
+    } finally {
+      setToggling(false);
+    }
+  };
 
   const saveSovitsUrl = () => {
     writeBaseUrl(sovitsUrl);
@@ -322,6 +359,37 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* 启停开关：默认关闭，显存留给网易主服务 —— 8 GB 卡装不下两套常驻模型 */}
+          <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
+            <div className="min-w-0 space-y-1">
+              <Label htmlFor="sovits-enabled" className="text-sm font-medium">
+                启用 GPT-SoVITS 本地服务
+              </Label>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                默认<strong>关闭</strong>：本机 8 GB 显存要留给网易主服务（常驻约 4.9 GB）。
+                只有你要用<strong>模型训练 / 批量合成 / 语音变声 / 歌声转换</strong>时才打开 ——
+                这些能力都跑在 GPT-SoVITS 这条链路上。关掉后显存立刻归还。
+              </p>
+              <p className="text-xs text-muted-foreground">
+                当前状态：
+                {serviceState
+                  ? serviceState.enabled
+                    ? serviceState.reachable
+                      ? '已启用并在运行'
+                      : '已启用，启动中（首次要 import torch，数十秒）'
+                    : '已停用（默认）'
+                  : '读取中…'}
+              </p>
+            </div>
+            <Switch
+              id="sovits-enabled"
+              checked={serviceState?.enabled ?? false}
+              disabled={toggling || serviceState == null}
+              onCheckedChange={(checked) => void toggleService(checked === true)}
+              className="shrink-0"
+            />
+          </div>
+
           <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="sovits-url">服务地址</Label>

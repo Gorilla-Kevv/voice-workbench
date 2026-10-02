@@ -15,13 +15,20 @@
 
 import http from 'node:http';
 import type { Request, Response } from 'express';
-import { Router } from 'express';
+import express, { Router } from 'express';
 
 import { config } from '../config/index.js';
 import { logger } from '../lib/logger.js';
 import { sovitsSupervisor } from '../services/sovits.js';
 
 export const sovitsProxyRouter = Router();
+
+/**
+ * GPT-SoVITS 服务自身的启停（挂载在 `/api/sovits/service`，必须排在代理之前）。
+ * 单独一个 Router 是为了能在这条路由上单独开 `express.json()` ——
+ * 代理那条必须挂在全局 `express.json()` 之前（否则 multipart / 流式会被消费掉）。
+ */
+export const sovitsServiceRouter = Router();
 
 /** 逐跳首部（RFC 7230）不能透传，否则会破坏连接管理 */
 const HOP_BY_HOP = new Set([
@@ -148,5 +155,68 @@ export function sovitsSummary(): Record<string, unknown> {
     home: status.home,
     python: status.python,
     lastError: status.lastError,
+    /** 用户是否在设置里启用了它（默认关闭，显存留给网易主服务） */
+    enabled: sovitsSupervisor.isEnabled(),
   };
 }
+
+/**
+ * GPT-SoVITS 服务的启停（`POST /api/sovits/service`）。
+ *
+ * 存在的理由很具体：8 GB 显存装不下两套常驻模型。报错里让用户「先关掉 GPT-SoVITS」
+ * 却没有任何入口可以关，等于给了个做不到的建议。现在开关在设置页，
+ * 显存预警卡里也有一键关闭，关完显存立刻还回来。
+ */
+sovitsServiceRouter.post('/', express.json(), async (req: Request, res: Response) => {
+  const enabled = req.body?.enabled === true;
+  try {
+    const result = await sovitsSupervisor.setEnabled(enabled);
+    res.json({
+      ok: true,
+      enabled: result.enabled,
+      reachable: result.reachable,
+      hint: buildToggleHint(result),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    logger.error('切换 GPT-SoVITS 服务失败', { enabled, message });
+    res.status(500).json({
+      ok: false,
+      error: { code: 'SOVITS_SERVICE_TOGGLE_FAILED', message, retryable: true, hint: '稍后重试，或手动运行 npm run dev:sovits。' },
+    });
+  }
+});
+
+/**
+ * 关停结果的文案必须区分「我们拉起的」和「外部启动的」。
+ *
+ * 后一种情况网关杀不掉进程（它归 `npm run dev:sovits` / `start.bat` 那个终端管），
+ * 只卸掉了常驻引擎。若统一说「已关闭」，用户看到侧栏还是「已连接」会以为功能坏了 ——
+ * 不如直接告诉他去关哪个终端。
+ */
+function buildToggleHint(result: { enabled: boolean; reachable: boolean; stopped?: boolean; releasedVram?: boolean }): string {
+  if (result.enabled) {
+    return result.reachable
+      ? 'GPT-SoVITS 本地服务已启动'
+      : '正在启动（首次要 import torch，约数十秒），稍后会自动就绪';
+  }
+  if (result.stopped) {
+    return '已关闭 GPT-SoVITS 本地服务，显存已归还；需要训练 / 批量 / 变声 / 翻唱时再到设置里开启';
+  }
+  return result.reachable
+    ? '已停用（设置项已关闭），但当前这个 GPT-SoVITS 是**外部启动**的，网关杀不掉它 —— 显存只卸掉了常驻引擎。要彻底关掉，请停掉运行 npm run dev:sovits 或 start.bat 的那个终端。'
+    : '已关闭 GPT-SoVITS 本地服务；需要训练 / 批量 / 变声 / 翻唱时再到设置里开启';
+}
+
+sovitsServiceRouter.get('/', async (_req: Request, res: Response) => {
+  // 这里现探一次：设置页要显示的就是「此刻」的状态，用缓存值会滞后半分钟
+  const reachable = await sovitsSupervisor.probe();
+  const status = sovitsSupervisor.status();
+  res.json({
+    ok: true,
+    enabled: sovitsSupervisor.isEnabled(),
+    reachable,
+    managed: status.managed,
+    pid: status.pid,
+  });
+});

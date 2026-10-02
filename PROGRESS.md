@@ -445,6 +445,49 @@
 
 ---
 
+## 阶段 17 — GPT-SoVITS 改为默认停用 + 可一键关闭（释放显存）
+
+- **起因**：显存不足的报错写「先关闭 GPT-SoVITS 本地服务」，但界面里没有任何入口能关。
+  用户进一步指定策略：**以后默认关闭 GPT-SoVITS 释放显存，网易为主力**，
+  只有想用 GPT-SoVITS（训练 / 批量 / 变声 / 翻唱）时才去设置里手动开。
+
+- **已完成**
+  - **网关接管生命周期**：`config.sovits.autostart` 默认改为 `true`（旧值 false），
+    这样「按需拉起」才有执行者；`npm run dev` **不再拉起** sovits，另开 `npm run dev:all` 保留旧行为
+  - **持久开关**：`server/.data/sovits-service.json`（跨 `tsx watch` 重启保留，默认 false = 停用）
+  - **新端点** `GET/POST /api/sovits/service`：开启 → `ensureStarted()` 拉起；
+    关闭 → 先 `POST /v1/engines/unload` 卸常驻引擎，再 `taskkill /t /f` 杀进程树
+    - 挂在代理**之前**（否则被代理的通配规则吃掉），并且这条路由自己开 `express.json()`
+  - **如实区分两种关停**：我们拉起的 → 「已关闭，显存已归还」；
+    外部实例（`npm run dev:sovits` / `start.bat`）→ **杀不掉**，提示用户去关那个终端，
+    并说明只卸掉了引擎。不说「已关闭」骗人
+  - **前端**：`lib/localService.ts`（启停客户端）；设置页加启用开关（默认关，写清什么时候该开）；
+    资源预警卡在显存不足且 GPT-SoVITS 开着时，多给一个「关闭 GPT-SoVITS 服务」按钮
+  - **顺带修掉一个陈旧状态问题**：`/api/health` 的 `sovits.reachable` 只在探活时更新，
+    服务关掉后侧栏仍显示「已连接」。加了 30 秒周期探活；`/api/sovits/service` 的 GET 改为现探
+
+- **未完成**
+  - 依赖 GPT-SoVITS 的页面（训练 / 批量 / 变声 / 翻唱）在服务停用时，
+    目前是通用的 503 提示，没有「去设置开启」的直达按钮
+
+- **改动文件**：`server/src/{index.ts,config/index.ts,services/sovits.ts,routes/sovits.ts}`、
+  `app/src/lib/{localService.ts,resources.ts}`、`app/src/components/features/ResourceBudget.tsx`、
+  `app/src/pages/SettingsPage.tsx`、`app/src/types/index.ts`、`package.json`、`HANDOFF.md`
+
+- **测试结果**：`npm run typecheck` / eslint / `npm run build` 全通过；
+  实测（`npm run dev` 用新脚本重启后）：**默认 9881 不起** → POST 启用 → `reachable=true`（网关拉起）
+  → POST 关闭 → **9881 停**、空闲显存 1236 → 1458 MB，提示文案为「已关闭…显存已归还」
+
+- **风险**
+  - 网关托管的副作用：`tsx watch` 改后端代码重启网关时会回收 GPT-SoVITS 子进程
+    （开关是开的会自动再拉起，但正在跑的训练任务会中断）
+  - 关停走的是 `taskkill /t /f`，若用户有未保存状态会直接丢 —— 训练任务请先在任务页取消
+  - 外部实例杀不掉这条路径，文案已说明，但界面上「已停用」与侧栏「已连接」可能同时出现（属实）
+
+- **下一阶段入口**：给训练 / 批量 / 变声 / 翻唱页加「服务已停用，去设置开启」的直达提示
+
+---
+
 ## 阶段 16 — 操作指引系统重做（分步 + 圆形完成标识 + 跨页职责 + 复习）
 
 - **起因**：旧指引只有「一句目标 + tips」，看不出先后与落点；用户要求

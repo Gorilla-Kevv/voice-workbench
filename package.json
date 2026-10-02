@@ -5,7 +5,8 @@
   "description": "本地语音工作台：网易 Confucius4-TTS 主服务（免转写克隆 / 14 语种）+ GPT-SoVITS 本地辅助（推理/训练/批量合成）+ MiMo 云端",
   "scripts": {
     "install:all": "npm install --no-fund --no-audit && npm --prefix app install && npm --prefix server install",
-    "dev": "concurrently -n netease,sovits,server,app -c green,yellow,magenta,cyan \"npm run dev:netease -- --skip-if-missing\" \"npm run dev:sovits -- --no-open\" \"npm --prefix server run dev\" \"npm --prefix app run dev\"",
+    "dev": "concurrently -n netease,server,app -c green,magenta,cyan \"npm run dev:netease -- --skip-if-missing\" \"npm --prefix server run dev\" \"npm --prefix app run dev\"",
+    "dev:all": "concurrently -n netease,sovits,server,app -c green,yellow,magenta,cyan \"npm run dev:netease -- --skip-if-missing\" \"npm run dev:sovits -- --no-open\" \"npm --prefix server run dev\" \"npm --prefix app run dev\"",
     "dev:cloud": "concurrently -n server,app -c magenta,cyan \"npm --prefix server run dev\" \"npm --prefix app run dev\"",
     "dev:server": "npm --prefix server run dev",
     "dev:app": "npm --prefix app run dev",

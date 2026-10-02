@@ -7,7 +7,7 @@ import { logger } from './lib/logger.js';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRouter } from './routes/index.js';
 import { neteaseProxyRouter } from './routes/netease.js';
-import { sovitsProxyRouter } from './routes/sovits.js';
+import { sovitsProxyRouter, sovitsServiceRouter } from './routes/sovits.js';
 import { sovitsSupervisor } from './services/sovits.js';
 
 const app = express();
@@ -27,6 +27,9 @@ app.use(
 // 它需要原始请求流（音频上传是 multipart，流式合成是 NDJSON），
 // 一旦被 body-parser 消费过，这两类请求就透传不出去了。
 // 网易模块代理同理（NDJSON 流式转写 + multipart 音频上传），必须一起挂在这里。
+// GPT-SoVITS 服务的启停要在代理**之前**注册，否则会被代理的通配规则吃掉。
+// 这条路由自己开 express.json()，所以不受「代理必须早于 body-parser」的约束。
+app.use('/api/sovits/service', sovitsServiceRouter);
 app.use('/api/sovits', sovitsProxyRouter);
 app.use('/api/netease', neteaseProxyRouter);
 
@@ -49,6 +52,18 @@ app.use((req, res, next) => {
 });
 
 app.use('/api', apiRouter);
+
+/**
+ * 每 30 秒探一次 GPT-SoVITS 本地服务。
+ *
+ * 没有这个定时器，`/api/health` 里的 `reachable` 会**停在最后一次探活的结果** ——
+ * 服务被我们关掉（或自己崩了）之后，侧栏状态卡还显示「已连接」，
+ * 用户点进去才发现用不了。本地环回的一次 GET 很便宜，换来的是状态不再骗人。
+ */
+const probeTimer = setInterval(() => {
+  void sovitsSupervisor.probe().catch(() => undefined);
+}, 30_000);
+probeTimer.unref?.();
 
 // 生产环境托管前端构建产物，实现单服务部署
 const staticDir = resolveStaticDir();

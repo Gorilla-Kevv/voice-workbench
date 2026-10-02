@@ -5,6 +5,7 @@ import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { localServiceApi } from '@/lib/localService';
 import {
   RESOURCE_TASK_LABEL,
   estimateTask,
@@ -47,6 +48,7 @@ export function ResourceBudget({
   const [snapshot, setSnapshot] = useState<ResourceSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
   const [releasing, setReleasing] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -74,6 +76,20 @@ export function ResourceBudget({
     () => (snapshot ? estimateTask(task, snapshot) : null),
     [snapshot, task],
   );
+
+  const handleStopSovits = useCallback(async () => {
+    setStopping(true);
+    try {
+      const result = await localServiceApi.toggle(false);
+      toast.success('已关闭 GPT-SoVITS 服务', { description: result.hint });
+      await refresh();
+    } catch (error) {
+      const requestError = error as Error;
+      toast.error('关闭失败', { description: requestError.message });
+    } finally {
+      setStopping(false);
+    }
+  }, [refresh]);
 
   const handleRelease = useCallback(async () => {
     setReleasing(true);
@@ -177,6 +193,20 @@ export function ResourceBudget({
               {releasing ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
               释放常驻显存
             </Button>
+            {/* 报错里写「先关掉 GPT-SoVITS」，就得有地方能关 —— 这条链路默认停用，
+                关掉它等于把整块显存还回来（比只卸引擎彻底） */}
+            {snapshot?.sovits_enabled ? (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs"
+                onClick={() => void handleStopSovits()}
+                disabled={stopping}
+              >
+                {stopping ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+                关闭 GPT-SoVITS 服务
+              </Button>
+            ) : null}
             {estimate.suggestions.map((item) => (
               <Badge key={item.kind} variant="secondary" className="h-7 px-2 text-[11px] font-normal">
                 {item.label}
