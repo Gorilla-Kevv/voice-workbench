@@ -1,9 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Loader2, Power } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Progress } from '@/components/ui/progress';
 import { localServiceApi, type LocalServiceState } from '@/lib/localService';
 import { cn } from '@/lib/utils';
+
+/**
+ * 冷启动要多久：本地实测 Python 侧 import torch + 建管线约 40~70 秒。
+ * 进度条按这个量级推进 —— 刻意只推到 95% 就停，不做「100% 却还没好」的假精确。
+ */
+const EXPECTED_START_SEC = 45;
 
 /**
  * 「本页需要 GPT-SoVITS，但它现在停着」的提示。
@@ -24,6 +31,15 @@ export function SovitsServiceNotice({
 }) {
   const [state, setState] = useState<LocalServiceState | null>(null);
   const [starting, setStarting] = useState(false);
+  /** 启动已耗秒数（进度条与文案都用它） */
+  const [elapsed, setElapsed] = useState(0);
+  const timers = useRef<{ tick: number | null; poll: number | null }>({ tick: null, poll: null });
+
+  const clearTimers = () => {
+    if (timers.current.tick !== null) window.clearInterval(timers.current.tick);
+    if (timers.current.poll !== null) window.clearInterval(timers.current.poll);
+    timers.current = { tick: null, poll: null };
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -40,18 +56,53 @@ export function SovitsServiceNotice({
     };
   }, []);
 
+  useEffect(() => clearTimers, []);
+
   // 读不到状态或已启用：不打扰用户（宁可漏提示，也不误报）
   if (!state || state.enabled || state.reachable) return null;
 
+  /**
+   * 开启并给出进度反馈。
+   *
+   * 为什么要这一堆计时器：`toggle(true)` 会等到服务真正就绪才返回（数十秒），
+   * 期间界面若只有一个转圈，用户会以为卡死。所以一边走秒表推进进度条，
+   * 一边每 3 秒探一次真实状态 —— 探到就绪就提前收尾，不等 toggle 自己回来。
+   */
   const start = async () => {
     setStarting(true);
+    setElapsed(0);
+    const startedAt = Date.now();
+    clearTimers();
+
+    timers.current.tick = window.setInterval(() => {
+      setElapsed(Math.round((Date.now() - startedAt) / 1000));
+    }, 1_000);
+    timers.current.poll = window.setInterval(() => {
+      void localServiceApi
+        .state()
+        .then((next) => {
+          if (next.reachable) {
+            setState(next);
+            clearTimers();
+            setStarting(false);
+          }
+        })
+        .catch(() => undefined);
+    }, 3_000);
+
     try {
       await localServiceApi.toggle(true);
       setState(await localServiceApi.state());
+    } catch {
+      // 失败也把状态刷新一次：可能是地址不对 / 整合包缺失，交给页面上的通用报错
+      setState(await localServiceApi.state().catch(() => null));
     } finally {
+      clearTimers();
       setStarting(false);
     }
   };
+
+  const percent = Math.min(95, Math.round((elapsed / EXPECTED_START_SEC) * 100));
 
   return (
     <div
@@ -67,17 +118,30 @@ export function SovitsServiceNotice({
           出于显存考虑，这个服务<strong>默认关闭</strong>（把显存留给网易主服务）。
           开启后首次要 import torch，数十秒才就绪 —— 之后训练 / 批量 / 变声 / 翻唱才能用。
         </p>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void start()} disabled={starting}>
-            {starting ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <Power className="mr-1.5 size-3.5" />}
-            直接开启
-          </Button>
-          {onGoSettings ? (
-            <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={onGoSettings}>
-              去设置页
+        {starting ? (
+          <div className="space-y-1.5">
+            <div className="flex items-center gap-1.5">
+              <Loader2 className="size-3.5 shrink-0 animate-spin" />
+              <span>
+                启动中，约需数十秒（首次要 import torch）· 已等待 {elapsed} 秒
+              </span>
+            </div>
+            <Progress value={percent} className="h-1.5" />
+            <p className="opacity-80">到点会自动继续，不用守在这儿；也可以先切去别的页面。</p>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void start()}>
+              <Power className="mr-1.5 size-3.5" />
+              直接开启
             </Button>
-          ) : null}
-        </div>
+            {onGoSettings ? (
+              <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={onGoSettings}>
+                去设置页
+              </Button>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );

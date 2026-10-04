@@ -22,6 +22,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Progress } from '@/components/ui/progress';
 import { TermTip } from '@/components/features/TermTip';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -181,6 +182,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
 
   const [serviceState, setServiceState] = useState<LocalServiceState | null>(null);
   const [toggling, setToggling] = useState(false);
+  /** 是否正在**开启**（开启要走数十秒冷启动，关闭不用等） */
+  const [pendingEnable, setPendingEnable] = useState(false);
+  const [toggleElapsed, setToggleElapsed] = useState(0);
 
   const refreshServiceState = useCallback(() => {
     localServiceApi
@@ -195,6 +199,10 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
 
   const toggleService = async (enabled: boolean) => {
     setToggling(true);
+    setPendingEnable(enabled);
+    setToggleElapsed(0);
+    const startedAt = Date.now();
+    const ticker = window.setInterval(() => setToggleElapsed(Math.round((Date.now() - startedAt) / 1000)), 1_000);
     try {
       const result = await localServiceApi.toggle(enabled);
       toast.success(enabled ? '已启用 GPT-SoVITS 本地服务' : '已关闭 GPT-SoVITS 本地服务', {
@@ -206,7 +214,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
       const error = requestError as RequestError;
       toast.error('切换失败', { description: error.fullMessage ?? error.message });
     } finally {
+      window.clearInterval(ticker);
       setToggling(false);
+      setPendingEnable(false);
     }
   };
 
@@ -380,6 +390,15 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
                     : '已停用（默认）'
                   : '读取中…'}
               </p>
+              {/* 开启是数十秒的冷启动，只让开关转圈会让人以为卡住 */}
+              {toggling && pendingEnable ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    启动中，约需数十秒（首次要 import torch）· 已等待 {toggleElapsed} 秒
+                  </p>
+                  <Progress value={Math.min(95, Math.round((toggleElapsed / 45) * 100))} className="h-1.5" />
+                </div>
+              ) : null}
             </div>
             <Switch
               id="sovits-enabled"
