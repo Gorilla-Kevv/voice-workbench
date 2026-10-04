@@ -32,6 +32,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
+import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
@@ -280,7 +281,7 @@ let retained: TrainSession = loadSession();
  * - **阶段开关**：想只重跑某一段（例如只重新标注）就把其它关掉，不必从头再来；
  * - **成果回填**：训练产出的权重路径直接展示出来，可以立刻拿去合成试听。
  */
-export function TrainingPage() {
+export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {}) {
   const [health, setHealth] = useState<SovitsHealth | null>(null);
   const [catalog, setCatalog] = useState<SovitsCatalog | null>(null);
   const [connectionError, setConnectionError] = useState<string | null>(null);
@@ -835,6 +836,7 @@ export function TrainingPage() {
 
       {/* 训练是最吃显存的一项（门槛 6 GB），开跑前先把账算清楚 */}
       <ResourceBudget task="training" />
+      <SovitsServiceNotice onGoSettings={onGoSettings} />
       <ResourceSiteLink />
 
       <Card>

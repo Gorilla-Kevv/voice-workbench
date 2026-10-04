@@ -29,6 +29,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { TermTip } from '@/components/features/TermTip';
+import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
@@ -55,7 +56,7 @@ import type { SovitsCatalog, SovitsVoice } from '@/types';
  *    而不是等模型报错；
  * 3. **允许引用磁盘文件**：很多人的素材库已经在硬盘上了，没必要复制一份。
  */
-export function VoiceLibraryPage() {
+export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void } = {}) {
   const [voices, setVoices] = useState<SovitsVoice[]>([]);
   const [catalog, setCatalog] = useState<SovitsCatalog | null>(null);
   const [loading, setLoading] = useState(true);
@@ -267,6 +268,7 @@ export function VoiceLibraryPage() {
 
   return (
     <div className="space-y-5">
+      <SovitsServiceNotice onGoSettings={onGoSettings} />
       <Alert>
         <Mic className="size-4" />
         <AlertTitle>GPT-SoVITS 没有内置音色</AlertTitle>

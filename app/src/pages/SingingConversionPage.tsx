@@ -13,6 +13,7 @@ import { Switch } from '@/components/ui/switch';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
 import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
+import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
@@ -47,7 +48,7 @@ const ACCENT_SOLID = 'bg-rose-600 text-white hover:bg-rose-600/90 active:scale-[
  * 直接跳过分分离（实测 30 秒 → 0.04 秒），这是整条链路最省时的一环。
  * 「只做分离」与「直接转换」是给进阶用户的旁路，参数与向导共用同一套契约。
  */
-export function SingingConversionPage() {
+export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => void } = {}) {
   const [catalog, setCatalog] = useState<SvcCatalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -81,6 +82,7 @@ export function SingingConversionPage() {
         upstream="翻唱的歌声转换走 DDSP-SVC，第一步的人声 / 伴奏分离走整合包自带的 UVR5 —— 两个上游项目各管一段，本项目只串流程"
       />
       <ResourceSiteLink label="缺歌声转换模型或伴奏素材？去 AI Hobbyist 资源库" className="self-start" />
+      <SovitsServiceNotice onGoSettings={onGoSettings} />
       <div className="flex items-center gap-2">
         <EngineBadge catalog={catalog} />
       </div>

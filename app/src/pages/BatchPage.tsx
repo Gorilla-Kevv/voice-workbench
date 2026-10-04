@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
@@ -186,7 +187,7 @@ const LANG_IDS = LANGUAGES.map((item) => item.id);
 /** 兜底语种：用户没选、音色语种又不可用时用它 */
 const FALLBACK_LANG = 'zh';
 
-export function BatchPage({ settings }: BatchPageProps) {
+export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSettings?: () => void }) {
   // 初值一律取自 retained：切页回来时恢复成离开时的样子
   const [voices, setVoices] = useState<SovitsVoice[]>(retained.voices);
   const [loadingVoices, setLoadingVoices] = useState(true);
@@ -726,6 +727,7 @@ export function BatchPage({ settings }: BatchPageProps) {
     <div className="space-y-5">
       {/* 批量一次几十条，跑之前先看显存够不够（门槛 3 GB，条数越多峰值越高） */}
       <ResourceBudget task="batch" />
+      <SovitsServiceNotice onGoSettings={onGoSettings} />
 
       {/* ---------------- 音色与文本 ---------------- */}
       <Card>

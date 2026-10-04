@@ -445,6 +445,37 @@
 
 ---
 
+## 阶段 20 — 依赖 GPT-SoVITS 的页面补「服务已停用」直达提示
+
+- **起因**：阶段 17 把 GPT-SoVITS 改成默认停用后，训练 / 批量 / 变声 / 翻唱 / 音色库
+  这五个页面会直接失败，而通用报错只说「本地服务不可用」——
+  用户既不知道有这个开关，也不知道该去哪开。
+
+- **已完成**
+  - **新增 `components/features/SovitsServiceNotice.tsx`**
+    - 只在「已停用且未运行」时渲染（读不到状态或已启用→不显示，**宁可漏提示也不误报**）
+    - 两个动作：**「直接开启」**（`localServiceApi.toggle(true)`，不用离开本页）+
+      **「去设置页」**（可选 `onGoSettings` 回调，App 传入 `setActive('settings')`）
+    - 文案说明为什么默认关闭（显存留给网易主服务）与首次开启要等 torch 导入
+  - **接入五个依赖页**：训练 / 批量 / 语音变声 / 歌声转换 / 音色库，
+    App 统一传 `goSettings`
+
+- **未完成**：`直接开启` 的等待过程没有进度反馈（只有按钮转圈），
+  首次要 import torch 数十秒，用户可能以为卡住 —— 后续可加「启动中，约需数十秒」的进度条
+
+- **改动文件**：新增 `app/src/components/features/SovitsServiceNotice.tsx`；
+  改 `app/src/App.tsx`、`app/src/pages/{TrainingPage,BatchPage,VoiceConversionPage,SingingConversionPage,VoiceLibraryPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
+  `/api/sovits/service` 当前返回 `{enabled:false, reachable:false}` → 提示条件成立，五页会显示
+
+- **风险**：提示依赖 `/api/sovits/service` 的实时探活；网关不可达时组件拿不到状态而**不显示**
+  （fail-safe：此时页面本来也用不了）
+
+- **下一阶段入口**：给「直接开启」加启动进度反馈；确认五页提示的位置与文案是否碍眼
+
+---
+
 ## 阶段 19 — 资源站入口 + 仲裁持有期与任务时长挂钩
 
 - **起因**：用户要求内嵌 https://res.acgnai.top/ 的跳转链接（该站提供角色语音数据集与

@@ -367,6 +367,9 @@ function App() {
 
   const maxTextLength = health?.limits.maxTextLength ?? 3000;
 
+  /** 依赖 GPT-SoVITS 的页面用它把用户送到设置页开服务 */
+  const goSettings = useCallback(() => setActive('settings'), []);
+
   return (
     <TooltipProvider delayDuration={200}>
       <AppShell
@@ -397,14 +400,14 @@ function App() {
             maxTextLength={maxTextLength}
           />
         ) : null}
-        {active === 'batch' ? <BatchPage settings={settings} /> : null}
+        {active === 'batch' ? <BatchPage settings={settings} onGoSettings={goSettings} /> : null}
         {active === 'design' ? (
           <VoiceDesignPage settings={settings} controller={designController} maxTextLength={maxTextLength} />
         ) : null}
         {active === 'clone' ? (
           <VoiceClonePage settings={settings} controller={cloneController} maxTextLength={maxTextLength} />
         ) : null}
-        {active === 'voices' ? <VoiceLibraryPage /> : null}
+        {active === 'voices' ? <VoiceLibraryPage onGoSettings={goSettings} /> : null}
         {active === 'history' ? (
           <HistoryPage
             records={records}
@@ -415,9 +418,9 @@ function App() {
             onLoadAudio={loadAudio}
           />
         ) : null}
-        {active === 'training' ? <TrainingPage /> : null}
-        {active === 'rvc' ? <VoiceConversionPage /> : null}
-        {active === 'svc' ? <SingingConversionPage /> : null}
+        {active === 'training' ? <TrainingPage onGoSettings={goSettings} /> : null}
+        {active === 'rvc' ? <VoiceConversionPage onGoSettings={goSettings} /> : null}
+        {active === 'svc' ? <SingingConversionPage onGoSettings={goSettings} /> : null}
         {active === 'asr' ? <AsrPage /> : null}
         {active === 'netease-tts' ? (
           <NeteaseTtsPage onFallback={() => setActive('batch')} />

@@ -14,6 +14,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
 import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
+import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
@@ -40,7 +41,7 @@ const ACCENT_SOLID = 'bg-indigo-600 text-white hover:bg-indigo-600/90 active:sca
  * 与歌声转换页刻意保持结构对称但能力不同：这里没有分离与混音，
  * 多出来的是检索索引与音色工坊。
  */
-export function VoiceConversionPage() {
+export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => void } = {}) {
   const [catalog, setCatalog] = useState<VcCatalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -79,6 +80,7 @@ export function VoiceConversionPage() {
         upstream="本项目只做流程封装与本地服务调用，不改动上游代码"
       />
       <ResourceSiteLink label="缺 .pth 音色模型？去 AI Hobbyist 资源库（SVC 开源模型）" className="self-start" />
+      <SovitsServiceNotice onGoSettings={onGoSettings} />
       <EngineBadge catalog={catalog} onRefresh={refresh} accent={ACCENT_TEXT} />
       <ModelLibrary catalog={catalog} onChanged={refresh} accent={ACCENT_SOLID} />
       <ConvertCard catalog={catalog} accentText={ACCENT_TEXT} accentSolid={ACCENT_SOLID} onChanged={refresh} />
