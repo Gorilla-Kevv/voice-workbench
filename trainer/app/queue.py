@@ -66,8 +66,9 @@ def quota_exceeded(scope: str, limit: int) -> AdmissionError:
 def free_vram_mb() -> Optional[int]:
     """查询可用显存（MB）。未知时返回 None，调用方据此决定是否拦截。
 
-    本服务与模型跑在同一进程里，直接问 torch 最准；
-    它比 `nvidia-smi` 还多一层好处：不需要外部可执行文件在 PATH 上。
+    走 `runtime.free_vram_mb()`：**优先 nvidia-smi 的跨进程真实值**，拿不到才退回 torch。
+    早期注释写的「直接问 torch 最准」是错的 —— 在 Windows WDDM 下 torch 只看到本进程视图，
+    网易服务常驻 4.9 GB 时它会误判成「显存够」，任务跑到一半才 OOM（详见 HANDOFF 坑 17）。
     """
     from .runtime import free_vram_mb as _free_vram_mb  # noqa: PLC0415 - 避免循环导入
 

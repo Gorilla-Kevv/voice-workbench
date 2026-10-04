@@ -19,6 +19,7 @@ import platform
 import shutil
 import subprocess
 import threading
+import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -81,7 +82,10 @@ class RuntimeInfo:
     device_count: int = 0
     device_names: List[str] = field(default_factory=list)
     vram_total_mb: Optional[int] = None
+    #: 真实可用量（nvidia-smi 跨进程口径）
     vram_free_mb: Optional[int] = None
+    #: 对照值：torch 的本进程视图。与 `vram_free_mb` 的差 = 别的进程占了多少
+    vram_free_mb_torch: Optional[int] = None
     libs: Dict[str, Optional[str]] = field(default_factory=dict)
     torch_error: Optional[str] = None
     probe_ok: bool = False
@@ -130,6 +134,7 @@ class RuntimeInfo:
             "device_names": self.device_names,
             "vram_total_mb": self.vram_total_mb,
             "vram_free_mb": self.vram_free_mb,
+            "vram_free_mb_torch": self.vram_free_mb_torch,
             "libs": dict(self.libs),
             "torch_error": self.torch_error,
             "probe_ok": self.probe_ok,
@@ -247,10 +252,13 @@ def _probe_in_process() -> RuntimeInfo:
             ]
             try:
                 free, total = torch.cuda.mem_get_info()
-                info.vram_free_mb = int(free / 1024 / 1024)
+                # torch 的读数留作对照：它与下面真实值的差 = 别的进程占了多少
+                info.vram_free_mb_torch = int(free / 1024 / 1024)
                 info.vram_total_mb = int(total / 1024 / 1024)
             except Exception:  # noqa: BLE001 - 部分驱动不支持 mem_get_info
                 pass
+            # 对外展示“真实可用量”：用 nvidia-smi 的跨进程口径（退回 torch）
+            info.vram_free_mb = free_vram_mb()
     except Exception as exc:  # noqa: BLE001
         info.torch_error = "%s: %s" % (type(exc).__name__, exc)
 
@@ -264,8 +272,58 @@ def _probe_in_process() -> RuntimeInfo:
     return info
 
 
+def _nvidia_smi_free_mb() -> Optional[int]:
+    """用 nvidia-smi 读**物理**空闲显存（MB）。读不到返回 None。
+
+    为什么不能只信 torch：Windows WDDM 下 `torch.cuda.mem_get_info` 看到的是
+    **本进程的虚拟视图**，别的进程（浏览器、模拟器、网易服务常驻的 4.9 GB）它一概不算。
+    实测同一时刻 torch 报 7099 MB、nvidia-smi 只报 2238 MB —— 差 4.9 GB。
+    准入判断要的是「现在还装得下吗」，必须看进程外的真实占用。
+    """
+    try:
+        import subprocess  # noqa: PLC0415
+
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            return None
+        first = result.stdout.strip().splitlines()[0]
+        return int(float(first.split(",")[0]))
+    except Exception:  # noqa: BLE001 - 没装驱动工具 / 解析异常，退回 torch
+        return None
+
+
+#: nvidia-smi 每次调用要起一个外部进程（约 0.2~0.5 秒），
+#: 而 `/health` 会被前端轮询 —— 这里缓存几秒，避免探活把 CPU 打上去，
+#: 又不会让准入判断用到过期数据（准入的间隔远大于这个 TTL）。
+_SMI_CACHE: Dict[str, Any] = {"at": 0.0, "value": None}
+_SMI_CACHE_TTL_SEC = 3.0
+
+
+def _nvidia_smi_free_mb_cached() -> Optional[int]:
+    now = time.time()
+    if now - _SMI_CACHE["at"] < _SMI_CACHE_TTL_SEC:
+        return _SMI_CACHE["value"]
+    value = _nvidia_smi_free_mb()
+    _SMI_CACHE["at"] = now
+    _SMI_CACHE["value"] = value
+    return value
+
+
 def free_vram_mb() -> Optional[int]:
-    """当前可用显存（MB）。未知时返回 None，调用方据此决定是否拦截。"""
+    """当前可用显存（MB）。未知时返回 None，调用方据此决定是否拦截。
+
+    取数顺序：**nvidia-smi（跨进程真实值）→ 退回 torch**。
+    这是与网易模块同一个修法（详见 HANDOFF 坑 17）。
+    """
+    smi_free = _nvidia_smi_free_mb_cached()
+    if smi_free is not None:
+        return smi_free
+
     try:
         import torch  # noqa: PLC0415
 

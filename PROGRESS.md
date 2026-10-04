@@ -445,6 +445,49 @@
 
 ---
 
+## 阶段 21 — 冷启动进度反馈 + trainer 侧显存口径同步改为 nvidia-smi
+
+- **起因**：① 上一阶段遗留「直接开启」只有转圈，首次要数十秒会被当成卡死；
+  ② 用户拍板：trainer 侧显存口径也改（坑 17 的第二半）。
+
+- **已完成**
+  - **冷启动进度反馈**
+    - `SovitsServiceNotice`：启动中显示「启动中，约需数十秒（首次要 import torch）· 已等待 N 秒」
+      + 进度条（按实测 45 秒量级推进，只到 95%，不做假精确）+ 每秒走表；
+      同时每 3 秒探真实状态，探到就绪提前收尾，不等 `toggle()` 返回
+    - 设置页开关同样补秒表与进度条（只在**开启**时显示，关闭不用等）
+  - **trainer 显存口径（坑 17 收尾）**
+    - `trainer/app/runtime.py`：新增 `_nvidia_smi_free_mb()`（跨进程真实值）
+      与 3 秒 TTL 缓存（避免 `/health` 轮询频繁起外部进程）；
+      `free_vram_mb()` 改为 nvidia-smi 优先 → 退回 torch
+    - `RuntimeInfo` 新增 `vram_free_mb_torch` 对照字段并进入序列化
+      （两者之差 = 别的进程占了多少）
+    - `/health` 的 `runtime.vram_free_mb` 随之变准
+    - 修正 `trainer/app/queue.py` 里「直接问 torch 最准」的过时注释
+
+- **未完成**：门槛数值（训练 6144 / UVR5 4096 等）仍按旧口径定，未重新校准
+
+- **改动文件**：`trainer/app/{runtime.py,queue.py}`、
+  `app/src/components/features/SovitsServiceNotice.tsx`、`app/src/pages/SettingsPage.tsx`、
+  `HANDOFF.md`、`PROGRESS.md`
+
+- **测试结果**
+  - 冷启动实测 **43.9 秒**（与进度条 45 秒设定吻合）
+  - 口径实测：`/v1/engines` 的 `free_vram_mb` = **2550 MB**，nvidia-smi = **2544 MB**（一致）；
+    `/health` 显示 `vram_free_mb=2550`、`vram_free_mb_torch=7099` → 差 4549 MB 即外部占用
+    （改前 trainer 一律报 7099）
+  - 用整合包 py3.9 解释器导入验证通过（`python.exe -c "from app.runtime import free_vram_mb"`）
+
+- **风险**
+  - 判定变严格：可能出现「看着没跑别的却被拦」—— 这正是修掉的目标（宁可多等也不半途 OOM），
+    但若发现门槛过严需重新校准数值
+  - nvidia-smi 不在 PATH 的机器上会退回 torch，修复不生效（但不会更差）
+  - `/health` 每次最多多一次（有 3 秒缓存）外部进程调用
+
+- **下一阶段入口**：观察新口径下是否有任务被误拦；若有，按真实口径重新校准各引擎门槛
+
+---
+
 ## 阶段 20 — 依赖 GPT-SoVITS 的页面补「服务已停用」直达提示
 
 - **起因**：阶段 17 把 GPT-SoVITS 改成默认停用后，训练 / 批量 / 变声 / 翻唱 / 音色库
