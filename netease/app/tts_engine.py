@@ -212,7 +212,14 @@ class TtsPipeline:
 
     # ------------------------------------------------------------------ 推理
 
-    def generate(self, text: str, lang: str, prompt_wav: Path) -> dict[str, Any]:
+    def generate(
+        self,
+        text: str,
+        lang: str,
+        prompt_wav: Path,
+        num_beams: Optional[int] = None,
+        n_timesteps: Optional[int] = None,
+    ) -> dict[str, Any]:
         if not text.strip():
             raise NeteaseError("EMPTY_TEXT", "合成文本为空", "请输入要合成的文本。")
         if lang not in {item["code"] for item in TTS_LANGUAGES}:
@@ -236,7 +243,17 @@ class TtsPipeline:
                 import soundfile as sf  # noqa: PLC0415
                 import torch  # noqa: PLC0415
 
-                audio = self._model.generate(text=text, lang=lang, prompt_wav=str(prompt_wav), verbose=False)
+                # 只把**显式给了**的参数传下去，其余交给上游默认（官方默认 num_beams=3 / n_timesteps=25）。
+                # 这两个是速度与质量的主旋钮：num_beams 管 T2S 自回归（3 → 1 大约快 2~3 倍），
+                # n_timesteps 管 S2A 扩散步数（越少越快）。
+                kwargs: dict[str, Any] = {}
+                if num_beams is not None:
+                    kwargs["num_beams"] = max(1, int(num_beams))
+                if n_timesteps is not None:
+                    kwargs["n_timesteps"] = max(1, int(n_timesteps))
+                audio = self._model.generate(
+                    text=text, lang=lang, prompt_wav=str(prompt_wav), verbose=False, **kwargs
+                )
                 if hasattr(audio, "detach"):  # torch.Tensor → numpy
                     audio = audio.detach().cpu().float().numpy()
                 # 统一成 float32：fp16 精度下上游可能直接给出 float16 数组，

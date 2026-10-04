@@ -17,6 +17,7 @@ from ..errors import NeteaseError
 from ..hardware import probe, vram_mb
 from ..models import CatalogResponse, HealthResponse
 from ..tts_engine import TTS_LANGUAGES, REQUIRED_VRAM_MB
+from .confucius import DEFAULT_QUALITY, QUALITY_NOTES, QUALITY_PRESETS
 
 router = APIRouter()
 
@@ -70,6 +71,12 @@ def catalog(request: Request) -> dict[str, Any]:
             "default_language": "zh",
             "ref_audio_note": "参考音频 ≥3 秒即可，无需逐字转写文本；支持从现有音色库直接选取",
             "required_vram_mb": REQUIRED_VRAM_MB,
+            # 速度 / 质量档位：num_beams 管 T2S 自回归，n_timesteps 管 S2A 扩散步数
+            "quality_presets": [
+                {"id": key, "num_beams": value[0], "n_timesteps": value[1], "note": QUALITY_NOTES[key]}
+                for key, value in QUALITY_PRESETS.items()
+            ],
+            "default_quality": DEFAULT_QUALITY,
             "install": tts_install,
         },
         "asr": {

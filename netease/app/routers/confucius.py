@@ -55,6 +55,24 @@ def unload(request: Request) -> dict[str, Any]:
     return {"ok": True, "engine": status, "lock": ctx.lock.describe()}
 
 
+#: 速度 / 质量档位 → (num_beams, n_timesteps)。
+#: 官方默认是 (3, 25) ——  beams=3 会让 T2S 自回归跑三条候选，代价约 3 倍；
+#: 本机 8 GB 卡上这是「慢」的主因之一，所以默认给到 balanced。
+QUALITY_PRESETS: dict[str, tuple[int, int]] = {
+    "fast": (1, 10),
+    "balanced": (1, 18),
+    "quality": (3, 25),
+}
+DEFAULT_QUALITY = "balanced"
+
+#: 给界面看的说明：说清「快在哪、牺牲什么」，不写「更快」这种空话
+QUALITY_NOTES: dict[str, str] = {
+    "fast": "贪心解码 + 10 步扩散：最快，长句偶有发音松散",
+    "balanced": "贪心解码 + 18 步扩散：速度与质量的折中（默认）",
+    "quality": "官方默认：3 束搜索 + 25 步扩散，最稳但约慢 2~3 倍",
+}
+
+
 @router.post("/tts", response_model=TtsResult)
 def tts(
     request: Request,
@@ -63,9 +81,19 @@ def tts(
     file: Optional[UploadFile] = File(None),
     ref_path: Optional[str] = Form(None),
     preempt: bool = Form(True),
+    quality: str = Form(DEFAULT_QUALITY),
+    num_beams: Optional[int] = Form(None),
+    n_timesteps: Optional[int] = Form(None),
 ) -> dict[str, Any]:
     ctx = _ctx(request)
     prompt_wav = _resolve_ref(ctx, file, ref_path)
+
+    beams, steps = QUALITY_PRESETS.get(quality, QUALITY_PRESETS[DEFAULT_QUALITY])
+    # 裸参数优先：给了就用调用方的，方便调参
+    if num_beams is not None:
+        beams = num_beams
+    if n_timesteps is not None:
+        steps = n_timesteps
 
     if not ctx.tts.loaded:
         preempted = ctx.lock.acquire("tts", preempt=preempt, wait_seconds=0)
@@ -80,7 +108,7 @@ def tts(
     else:
         preempted = None
 
-    result = ctx.tts.generate(text=text, lang=lang, prompt_wav=prompt_wav)
+    result = ctx.tts.generate(text=text, lang=lang, prompt_wav=prompt_wav, num_beams=beams, n_timesteps=steps)
     audio_bytes = Path(result["path"]).read_bytes()
     return {
         "ok": True,

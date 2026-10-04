@@ -92,6 +92,9 @@ export interface NeteaseCatalog {
     default_language: string;
     ref_audio_note: string;
     required_vram_mb: number;
+    /** 速度 / 质量档位（num_beams 管 T2S 自回归，n_timesteps 管 S2A 扩散步数） */
+    quality_presets?: { id: string; num_beams: number; n_timesteps: number; note: string }[];
+    default_quality?: string;
     install: NeteaseTtsEngineInfo;
   };
   asr: {

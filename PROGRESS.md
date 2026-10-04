@@ -445,6 +445,46 @@
 
 ---
 
+## 阶段 22 — 网易合成速度 / 质量档位（**半成品，UI 选择器未做**）
+
+- **起因**：用户问「官方 demo 为什么快」→ 排查结论（vLLM + 数据中心显卡 + 官方默认
+  `num_beams=3`）之后，用户要求把速度 / 质量做成可调参数。
+
+- **已完成（后端与 API 层，功能可用）**
+  - `netease/app/routers/confucius.py`：新增三档预设
+    `fast (1,10)` / `balanced (1,18)` / `quality (3,25)`（官方默认为 `(3,25)`），
+    `POST /v1/confucius/tts` 接收 `quality` 表单字段，高级用法可直接传
+    `num_beams` / `n_timesteps` 裸参数（优先于档位）
+  - `tts_engine.generate()` 接受可选 `num_beams` / `n_timesteps` 并透传上游
+    （只传显式给出的，其余走官方默认）
+  - `/v1/netease/catalog` 的 `tts` 块暴露 `quality_presets`（含给界面看的说明文案）
+    与 `default_quality`（= balanced）
+  - 前端：类型、`neteaseApi.synthesize` 请求字段、页面状态与请求都已接好，
+    初始值取服务端 `default_quality`
+  - **分析结论（供后续参考）**：官方 demo 快的原因 = 数据中心显卡（带宽 8~13 倍）
+    + vLLM（PagedAttention 等，2~5 倍）+ 他们可承担 beams=3；与 Gradio 无关（那只是 UI 壳）
+
+- **未完成（本次被叫停）**
+  - **界面上没有档位选择器** —— 页面会一直用服务端默认的 `balanced`，
+    功能等价于「默认变快了」，但用户**暂时无法在界面上切档**。
+    补做点：`NeteaseTtsPage` 的「合成内容」卡里加一个 Select，
+    选项来自 `catalog.tts.quality_presets`（note 字段做说明），选中值进 `quality` state
+  - 未实测各档位的实际加速比与音质差异
+
+- **改动文件**：`netease/app/{tts_engine.py,routers/confucius.py,routers/netease.py}`、
+  `app/src/{lib/netease.ts,types/netease.ts,pages/NeteaseTtsPage.tsx}`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过
+  （当前状态自洽：API 可用，UI 缺选择器但不报错）
+
+- **风险**：默认档从官方 `quality (3,25)` 改成了 `balanced (1,18)` ——
+  合成会明显变快，但音质稳定性可能有细微差别；要回到官方默认，
+  在界面（补做后）选「质量优先」或请求里传 `quality=quality`
+
+- **下一阶段入口**：补 UI 档位选择器（约 10 行）；实测三档的 RTF 与听感
+
+---
+
 ## 阶段 21 — 冷启动进度反馈 + trainer 侧显存口径同步改为 nvidia-smi
 
 - **起因**：① 上一阶段遗留「直接开启」只有转圈，首次要数十秒会被当成卡死；

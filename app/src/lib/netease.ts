@@ -114,6 +114,12 @@ export interface NeteaseTtsPayload {
   file?: File | null;
   refPath?: string;
   preempt?: boolean;
+  /** 速度 / 质量档位：fast / balanced / quality（服务端默认 balanced） */
+  quality?: string;
+  /** 高级：直接指定 T2S 束搜索宽度（1 = 贪心，官方默认 3） */
+  numBeams?: number;
+  /** 高级：直接指定 S2A 扩散步数（官方默认 25） */
+  nTimesteps?: number;
 }
 
 export interface NeteaseTranscribePayload {
@@ -154,6 +160,10 @@ export const neteaseApi = {
       lang: payload.lang,
       ref_path: payload.refPath,
       preempt: payload.preempt ?? true,
+      // 速度 / 质量档位：不给时服务端用自己的默认（balanced）
+      quality: payload.quality,
+      num_beams: payload.numBeams,
+      n_timesteps: payload.nTimesteps,
     });
     return neteaseRequest('/v1/confucius/tts', { method: 'POST', body: form, timeoutMs: 0 }, baseUrl);
   },

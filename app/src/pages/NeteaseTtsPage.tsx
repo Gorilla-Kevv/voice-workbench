@@ -54,6 +54,8 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
   const [engine, setEngine] = useState<NeteaseEngineStatus | null>(null);
   const [text, setText] = useState('这是网易 Confucius4-TTS 的零样本克隆合成：只需三秒参考音频，无需逐字转写文本。');
   const [lang, setLang] = useState('zh');
+  /** 速度 / 质量档位：优先用服务端 catalog 给的，拿不到再退回 'balanced' */
+  const [quality, setQuality] = useState('balanced');
   const [refSource, setRefSource] = useState<RefSource>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [voices, setVoices] = useState<SovitsVoice[]>([]);
@@ -92,6 +94,7 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
           neteaseApi.ttsPipeline().catch(() => null),
         ]);
         setCatalog(catalogResult.tts);
+        if (catalogResult.tts.default_quality) setQuality(catalogResult.tts.default_quality);
         setEngine(pipeline);
       } catch (requestError) {
         // 服务没起 / 装到一半：页面保持可用，状态卡里给出原因（探活轮询由侧栏负责）
@@ -189,6 +192,7 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
           text,
           lang,
           file: upload,
+          quality,
         });
         results.push({
           result: response,

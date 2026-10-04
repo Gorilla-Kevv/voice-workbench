@@ -109,6 +109,7 @@
 | 渲染错误用错误边界兜底 | React 渲染抛错会卸载整棵树 → 纯白页面，无信息 |
 | 术语提示：桌面悬浮 / 触屏点击 | Radix Tooltip 在触摸设备体验不可靠（悬浮不存在） |
 | 资源站入口：`ResourceSiteLink` 组件，三处（训练 / 变声 / 翻唱） | https://res.acgnai.top/ 提供角色语音数据集与 TTS·SVC 开源模型，正好补「训练没数据、变声没模型」两头；外部链接一律新窗口 + `noopener noreferrer` |
+| 网易合成默认档位 **balanced**（非官方默认） | 官方默认 `num_beams=3` 会让 T2S 自回归跑三条候选（约 3 倍代价），是本机「慢」的主因之一；`balanced=(1,18)` 明显更快。档位定义在 `netease/app/routers/confucius.py::QUALITY_PRESETS`，要回官方默认选 `quality` |
 | 网易模块**不进 Provider 抽象**、独立成 `netease/` 运行时 | 上游要求 py≥3.10 + torch≥2.5 + cu≥12.6，与 trainer 的 py3.9/torch2.0 互斥（`MODERN-TTS-FEASIBILITY.md` 已论证）；它是本地引擎不是云端 BYOK，塞进 Provider 抽象反而要特化密钥态 |
 | R2T2 走**子进程 worker**（stdin/stdout JSON 行协议） | vLLM 引擎要求 `__main__` 环境启动（上游 README 明确警告）；worker 自成主进程规避，还能用 `NETEASE_R2T2_PYTHON` 独立解释器解决依赖冲突 |
 | 网易两引擎**进程内互斥**，跨进程显存协调暂不做 | 8 GB 卡同时常驻 GPT-SoVITS + 1.3B LLM 本就不现实；先靠加载前空闲显存检查 + 明确报错兜底 |
@@ -287,6 +288,7 @@
 | --- | --- | --- |
 | 高 | 端到端实测阶段 6 的新 UI | 跑一轮真实训练：确认 s2→s1 顺序、切分结果面板、设置页权重加载联动；`step_stages()` 已用真模块断言过，浏览器侧未测 |
 | 高 | 网易合成页的 UI 交互人工过一遍 | **接口链路已验完**（四端口在跑，网关透传 `/api/netease/*` 正常，经代理合成 200）；剩下上传参考音频、音色库选取、跨语种切换、结果卡播放/下载的手感 |
+| 中 | 补网易合成页的**速度/质量档位选择器** | 阶段 22 半成品：后端三档（fast/balanced/quality）与 API 已可用，页面会固定用 balanced；补做点在 `NeteaseTtsPage` 合成内容卡里加 Select（选项来自 `catalog.tts.quality_presets`），并实测三档 RTF 与听感 |
 | 高 | **拍板：装不装 WSL2 跑 R2T2** | 勘察已完成（WSL 2.7.14 就位、驱动 572.61 支持直通、Docker 未装），方案与成本见 `netease/README.md`「R2T2 落地方案」：**推荐只把 worker 放进 WSL**（TTS 不动），代价是 10~15 GB 磁盘 + 一次管理员权限。代码侧准备已做好（未配置时零影响）。装之前需要你点头 |
 | 中 | fp16 音质人工确认 | 已出声（RMS 0.08~0.10），但没做过 A/B；若嫌糊，用 `NETEASE_TTS_PRECISION=fp32` 重试（需要 ≥8 GB 空闲显存） |
 | 低 | 首条合成预热（实测 378 s） | 稳态 RTF 2.0~2.5，但冷启动第一条要几分钟。可考虑 warmup 时跑一句空合成把算子预热掉 |
