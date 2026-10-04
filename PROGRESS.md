@@ -445,6 +445,41 @@
 
 ---
 
+## 阶段 19 — 资源站入口 + 仲裁持有期与任务时长挂钩
+
+- **起因**：用户要求内嵌 https://res.acgnai.top/ 的跳转链接（该站提供角色语音数据集与
+  TTS / SVC 开源模型，站点名「AI Hobbyist 资源库」）；同时继续阶段 18 的下一步
+  （训练页仲裁持有期与任务时长挂钩）。
+
+- **已完成**
+  - **新增 `components/features/ResourceSiteLink.tsx`**：统一的资源站入口
+    （新窗口打开 + `rel="noopener noreferrer"` 防反向 tabnabbing），
+    放在三处「缺素材 / 缺模型」的地方：
+    - 训练页：缺训练数据集
+    - 语音变声页：缺 .pth 音色模型
+    - 歌声转换页：缺歌声转换模型 / 伴奏素材
+  - **仲裁持有期与任务时长挂钩**（阶段 18 遗留）：
+    - 训练：`focusBeforeRun('training', 6 * 3600)`（训练动辄数小时，默认 10 分钟根本不够）
+    - 批量：`focusBeforeRun('sovits', 3600)`（几十条可能跑很久）
+    - 其余短任务维持默认 600 秒
+  - `focusBeforeRun` 增加 `holdSeconds` 参数，注释写明「长任务必须给大值」的原因
+
+- **未完成**：无（链接是静态的；若站点改版无需同步）
+
+- **改动文件**：新增 `app/src/components/features/ResourceSiteLink.tsx`；
+  改 `app/src/lib/arbiter.ts`、`app/src/pages/{TrainingPage,VoiceConversionPage,SingingConversionPage,BatchPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
+  站点内容已抓取确认（「AI Hobbyist 资源库」：数据集 / TTS / SVS / SVC / GSV 部署工具），
+  链接文案与站点定位一致
+
+- **风险**：外部站点可用性不受本系统控制；链接全部新窗口打开，不劫持当前页
+
+- **下一阶段入口**：训练页仲裁持有期目前是固定 6 小时，更准确的做法是按语料时长估算；
+  仲裁结果可在页面上做轻提示（当前只进 toast）
+
+---
+
 ## 阶段 18 — 资源仲裁：单模型独占，自动停掉本系统内竞争模型
 
 - **起因**：用户要求「一个模型运行时，自动停止系统内与之竞争资源的其它模型并释放显存；

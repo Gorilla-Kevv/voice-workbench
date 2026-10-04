@@ -31,6 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
@@ -746,8 +747,9 @@ export function TrainingPage() {
 
   const handleStart = useCallback(async () => {
     if (!validate()) return;
-    // 训练最吃显存：开跑前把另一端的常驻模型（网易 TTS / 转写）全部卸掉
-    void focusBeforeRun('training');
+    // 训练最吃显存：开跑前把另一端的常驻模型（网易 TTS / 转写）全部卸掉。
+    // 训练动辄数小时，仲裁持有期必须覆盖全程（默认 10 分钟根本不够）
+    void focusBeforeRun('training', 6 * 3600);
     setSubmitting(true);
     setJob(null);
     try {
@@ -833,6 +835,7 @@ export function TrainingPage() {
 
       {/* 训练是最吃显存的一项（门槛 6 GB），开跑前先把账算清楚 */}
       <ResourceBudget task="training" />
+      <ResourceSiteLink />
 
       <Card>
         <CardHeader className="pb-3">

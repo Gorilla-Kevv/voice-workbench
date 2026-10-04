@@ -12,6 +12,7 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
+import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
@@ -79,6 +80,7 @@ export function SingingConversionPage() {
         location="vendor/ddsp-svc · 整合包 tools/uvr5"
         upstream="翻唱的歌声转换走 DDSP-SVC，第一步的人声 / 伴奏分离走整合包自带的 UVR5 —— 两个上游项目各管一段，本项目只串流程"
       />
+      <ResourceSiteLink label="缺歌声转换模型或伴奏素材？去 AI Hobbyist 资源库" className="self-start" />
       <div className="flex items-center gap-2">
         <EngineBadge catalog={catalog} />
       </div>

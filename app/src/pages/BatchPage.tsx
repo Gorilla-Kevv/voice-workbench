@@ -539,8 +539,9 @@ export function BatchPage({ settings }: BatchPageProps) {
       toast.warning('请先输入要合成的文本');
       return;
     }
-    // 批量开跑前把另一端的常驻模型（网易 TTS / 转写）卸掉，显存整块留给 GPT-SoVITS
-    void focusBeforeRun('sovits');
+    // 批量开跑前把另一端的常驻模型（网易 TTS / 转写）卸掉，显存整块留给 GPT-SoVITS。
+    // 批量几十条可能跑很久，持有期按 1 小时给
+    void focusBeforeRun('sovits', 3600);
     if (!voiceId) {
       toast.warning('请先选择音色', {
         description: 'GPT-SoVITS 没有内置音色，需要先在「音色库」导入参考音频',

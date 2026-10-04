@@ -13,6 +13,7 @@ import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
+import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
@@ -77,6 +78,7 @@ export function VoiceConversionPage() {
         location="vendor/rvc"
         upstream="本项目只做流程封装与本地服务调用，不改动上游代码"
       />
+      <ResourceSiteLink label="缺 .pth 音色模型？去 AI Hobbyist 资源库（SVC 开源模型）" className="self-start" />
       <EngineBadge catalog={catalog} onRefresh={refresh} accent={ACCENT_TEXT} />
       <ModelLibrary catalog={catalog} onChanged={refresh} accent={ACCENT_SOLID} />
       <ConvertCard catalog={catalog} accentText={ACCENT_TEXT} accentSolid={ACCENT_SOLID} onChanged={refresh} />

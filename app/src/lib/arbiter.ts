@@ -81,10 +81,14 @@ export const arbiterApi = {
  * 设计上**不因为仲裁失败就阻断任务**：仲裁是「尽力而为」的优化，
  * 真正的准入判断由各服务自己的显存检查负责。所以这里吞掉错误 ——
  * 但会把失败透给调用方，由调用方决定是否提示用户。
+ *
+ * @param holdSeconds 仲裁持有期（秒）。**长任务必须给大值**：
+ *        训练数小时给 21600，批量给 3600；默认 600 只够短任务 ——
+ *        过期后仲裁失效，另一端可能又被拉起来抢显存。
  */
-export async function focusBeforeRun(engine: FocusEngine): Promise<FocusReport | null> {
+export async function focusBeforeRun(engine: FocusEngine, holdSeconds = 600): Promise<FocusReport | null> {
   try {
-    return await arbiterApi.focus(engine);
+    return await arbiterApi.focus(engine, holdSeconds);
   } catch {
     return null;
   }
