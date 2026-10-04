@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { markGuideEvent } from '@/hooks/useGuideProgress';
+import { focusBeforeRun } from '@/lib/arbiter';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
@@ -124,6 +125,8 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
 
   const handleWarmup = () => {
     setWarming(true);
+    // 预热前先把 GPT-SoVITS 那边的常驻模型卸掉，显存整块留给主服务
+    void focusBeforeRun('netease-tts');
     neteaseApi
       .ttsWarmup()
       .then((response) => {

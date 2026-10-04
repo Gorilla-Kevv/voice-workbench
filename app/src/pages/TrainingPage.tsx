@@ -31,6 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { focusBeforeRun } from '@/lib/arbiter';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
 import { cn } from '@/lib/utils';
@@ -745,6 +746,8 @@ export function TrainingPage() {
 
   const handleStart = useCallback(async () => {
     if (!validate()) return;
+    // 训练最吃显存：开跑前把另一端的常驻模型（网易 TTS / 转写）全部卸掉
+    void focusBeforeRun('training');
     setSubmitting(true);
     setJob(null);
     try {

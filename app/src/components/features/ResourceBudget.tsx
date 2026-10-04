@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 import { localServiceApi } from '@/lib/localService';
+import { arbiterApi } from '@/lib/arbiter';
 import {
   RESOURCE_TASK_LABEL,
   estimateTask,
@@ -49,6 +50,7 @@ export function ResourceBudget({
   const [loading, setLoading] = useState(false);
   const [releasing, setReleasing] = useState(false);
   const [stopping, setStopping] = useState(false);
+  const [focusing, setFocusing] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -76,6 +78,23 @@ export function ResourceBudget({
     () => (snapshot ? estimateTask(task, snapshot) : null),
     [snapshot, task],
   );
+
+  const handleFocus = useCallback(async () => {
+    setFocusing(true);
+    try {
+      // 批量走的是 GPT-SoVITS 引擎，仲裁器只认引擎名
+      const report = await arbiterApi.focus(task === 'batch' ? 'sovits' : task);
+      toast.success('已把资源集中给这一个模型', {
+        description: `${report.hint}${report.failed.length > 0 ? ` · ${report.failed.length} 项未成功` : ''}`,
+      });
+      await refresh();
+    } catch (error) {
+      const requestError = error as Error;
+      toast.error('让出资源失败', { description: requestError.message });
+    } finally {
+      setFocusing(false);
+    }
+  }, [refresh, task]);
 
   const handleStopSovits = useCallback(async () => {
     setStopping(true);
@@ -189,6 +208,10 @@ export function ResourceBudget({
       {estimate.verdict !== 'ok' ? (
         <div className="space-y-1.5">
           <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleFocus()} disabled={focusing}>
+              {focusing ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
+              只跑这一个模型
+            </Button>
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleRelease()} disabled={releasing}>
               {releasing ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
               释放常驻显存

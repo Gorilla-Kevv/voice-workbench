@@ -13,6 +13,7 @@ import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
+import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { resolveAudioUrl, vcApi } from '@/lib/vc';
@@ -250,6 +251,8 @@ function ConvertCard({
     }
     setSubmitting(true);
     setError(null);
+    // 开跑前先把本系统内其它常驻模型（网易 TTS / 转写）卸掉，显存整块让给 RVC
+    void focusBeforeRun('rvc');
     // 源音频另开一个地址快照：预览用的那条会随下次选文件被回收，
     // 列表里旧结果要能一直回放，不能跟着失效
     pendingRef.current = {

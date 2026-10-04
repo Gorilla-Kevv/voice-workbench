@@ -445,6 +445,64 @@
 
 ---
 
+## 阶段 18 — 资源仲裁：单模型独占，自动停掉本系统内竞争模型
+
+- **起因**：用户要求「一个模型运行时，自动停止系统内与之竞争资源的其它模型并释放显存；
+  严格限制在本系统内，绝不触及系统外的进程」。
+  这正是 HANDOFF 里挂了很久的「跨运行时显存仲裁」项（阶段 7 未完成清单第一条）。
+
+- **边界定义（先于实现）**
+  - **本系统** = 本项目自己拉起的两个 Python 服务：GPT-SoVITS（:9881）与网易（:9882），
+    网关（:8787）是 Node 进程不占 GPU；
+  - 仲裁器**只向这两个地址发请求**，且发请求前校验目标是回环地址
+    （`SOVITS_URL` 若被配成非回环，会在启动阶段直接拒绝）；
+  - 不扫描进程、不 kill 任何 PID、不触碰电脑上其它任何程序 ——
+    浏览器 / 模拟器 / 游戏占的显存由资源预估卡提示用户自己处理。
+
+- **已完成**
+  - **`server/src/services/arbiter.ts`（新）**
+    - `focus(engine)`：把资源集中给单一引擎 —— 卸载**另一端**服务上的全部模型
+      （sovits 端：`/v1/engines/unload` + `/v1/pipeline/unload`；
+      netease 端：`/v1/confucius/unload` + `/v1/r2t2/unload`），
+      并在 netease 内部保证 TTS / ASR 二选一；
+    - **心跳复检**：focus 持有期内（默认 10 分钟，可传 `holdSeconds`）每 15 秒
+      重新卸载另一端，防止它被别的请求重新拉起；定时器 `unref` 不阻塞退出；
+    - `releaseAll()`：全停，本系统内不留任何常驻模型；
+    - 卸载失败不抛出（分类：服务没起=正常跳过；真失败=记入 `failed` 返回给界面）
+  - **`server/src/routes/resources.ts`（新）**：`POST /api/resources/focus`、
+    `POST /api/resources/release`、`GET /api/resources/focus`
+  - **前端 `lib/arbiter.ts`（新）**：`focusBeforeRun(engine)` —— **仲裁失败不阻断任务**
+    （它是优化，真正的准入由各服务自己的显存检查负责）
+  - **接入开跑点**（7 处）：网易预热、训练、批量、变声、翻唱、分离、ASR 转写
+  - **资源预估卡**：显存不足时新增「只跑这一个模型」按钮（= `focus(task)`）
+
+- **未完成**
+  - 页面上的「自动打勾」没有延伸到仲裁（仲裁结果只在 toast 里体现）；
+  - 网易引擎内部互斥依赖它的 `engine_lock`（acquire 时抢占），仲裁器只是提前触发，未做深校验
+
+- **改动文件**：新增 `server/src/services/arbiter.ts`、`server/src/routes/resources.ts`、
+  `app/src/lib/arbiter.ts`；改 `server/src/routes/index.ts`、
+  `app/src/components/features/ResourceBudget.tsx`、
+  `app/src/pages/{NeteaseTtsPage,TrainingPage,BatchPage,VoiceConversionPage,SingingConversionPage,AsrPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过。接口实测：
+  - 非法引擎 → 400 `BAD_ENGINE`；
+  - `focus netease-tts` → 卸载 netease 内部 r2t2，sovits 端未运行则跳过；
+  - `focus sovits` → 卸载 netease 端 confucius + r2t2（两处）；
+  - `release` → 全停后 `GET focus` 回 `{engine:null, remainSec:0}`；
+  - `GET /focus` 正确显示持有者与剩余秒数
+
+- **风险**
+  - 心跳复检是「轮询卸载」，极端情况下两次心跳之间另一端可能短暂加载 ——
+    但它会立刻被下一次心跳卸掉，不会与焦点引擎长期共存
+  - focus 的 TTL（默认 10 分钟）过期后仲裁失效，长任务（训练数小时）需要传更大的 `holdSeconds`
+    —— 目前训练页用的是默认值，**后续应把 TTL 与任务时长挂钩**
+  - 只防「本系统内」的竞争：用户机器上其它程序的显存占用不在管辖范围（这是需求边界，不是缺陷）
+
+- **下一阶段入口**：训练页把 `holdSeconds` 与预计训练时长挂钩；`focus` 结果在页面上做轻提示
+
+---
+
 ## 阶段 17 — GPT-SoVITS 改为默认停用 + 可一键关闭（释放显存）
 
 - **起因**：显存不足的报错写「先关闭 GPT-SoVITS 本地服务」，但界面里没有任何入口能关。

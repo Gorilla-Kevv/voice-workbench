@@ -30,6 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { formatBytes, formatDuration } from '@/lib/audio';
@@ -538,6 +539,8 @@ export function BatchPage({ settings }: BatchPageProps) {
       toast.warning('请先输入要合成的文本');
       return;
     }
+    // 批量开跑前把另一端的常驻模型（网易 TTS / 转写）卸掉，显存整块留给 GPT-SoVITS
+    void focusBeforeRun('sovits');
     if (!voiceId) {
       toast.warning('请先选择音色', {
         description: 'GPT-SoVITS 没有内置音色，需要先在「音色库」导入参考音频',

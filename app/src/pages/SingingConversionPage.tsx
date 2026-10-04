@@ -12,6 +12,7 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
+import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { resolveAudioUrl, svcApi, uvrApi } from '@/lib/vc';
@@ -154,6 +155,8 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
     }
     setBusy(true);
     setError(null);
+    // 开跑前先把另一端的常驻模型卸掉（翻唱含分离，最吃显存）
+    void focusBeforeRun('svc');
     pendingRef.current = { songName: state.file.name, model: state.model };
     try {
       const result = await svcApi.cover({
@@ -390,6 +393,7 @@ function SeparateOnlyCard() {
     if (!file) return;
     setBusy(true);
     setError(null);
+    void focusBeforeRun('uvr5');
     try {
       const payload = await uvrApi.separate({ file, preset, wait: true });
       if (!payload.ok) throw new Error('分离失败');

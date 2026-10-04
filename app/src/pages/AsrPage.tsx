@@ -26,6 +26,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { JobPanel } from '@/components/features/JobPanel';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { SourceNote } from '@/components/features/SourceNote';
+import { focusBeforeRun } from '@/lib/arbiter';
 import { useResultStack } from '@/hooks/useResultStack';
 import { asrApi } from '@/lib/asr';
 import { formatBytes } from '@/lib/audio';
@@ -168,6 +169,8 @@ export function AsrPage() {
       toast.warning('请选择音频文件，或填写一个本机路径');
       return;
     }
+    // 转写前把另一端的常驻模型卸掉（网易 TTS 常驻 4.9 GB，会挤掉 ASR）
+    void focusBeforeRun('asr');
     setTranscribing(true);
     try {
       const result = await asrApi.transcribe({
