@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { config } from '../config/index.js';
 import { logger } from '../lib/logger.js';
@@ -75,7 +76,12 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
   },
 };
 
-const FLAG_FILE = path.join(process.cwd(), 'server', '.data', 'preload.json');
+// 注意：cwd 是 `server/` 目录（dev 与 dist 两种启动方式都是），
+// 不能写成 path.join(process.cwd(), 'server', '.data') —— 那会落到 server/server/.data。
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+/** server/src/services → 项目根目录 */
+const PROJECT_ROOT = path.resolve(HERE, '..', '..', '..');
+const FLAG_FILE = path.join(PROJECT_ROOT, 'server', '.data', 'preload.json');
 
 interface Preference {
   /** 启动时要预加载的模型；'ask' = 每次启动问用户 */
