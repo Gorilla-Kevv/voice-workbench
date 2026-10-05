@@ -8,6 +8,7 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRouter } from './routes/index.js';
 import { neteaseProxyRouter } from './routes/netease.js';
 import { sovitsProxyRouter, sovitsServiceRouter } from './routes/sovits.js';
+import { preloadService } from './services/preload.js';
 import { sovitsSupervisor } from './services/sovits.js';
 
 const app = express();
@@ -121,6 +122,16 @@ const server = app.listen(config.port, config.host, () => {
     .ensureStarted()
     .then(() => sovitsSupervisor.announceReady())
     .catch((error: Error) => logger.error('启动 GPT-SoVITS 本地服务异常', { message: error.message }));
+
+  // 按用户偏好预加载一个模型（'ask' 表示每次启动由界面问他，这里不动）。
+  // 同样不 await —— 加载要数十秒，界面必须先看得到。
+  const preference = preloadService.preference().model;
+  if (preference !== 'ask' && preference !== 'none') {
+    logger.info('按偏好预加载模型', { model: preference });
+    void preloadService.preload(preference).catch((error: Error) => {
+      logger.error('启动预加载异常', { model: preference, message: error.message });
+    });
+  }
 });
 
 let shuttingDown = false;

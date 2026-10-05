@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { StartupPreloadDialog } from '@/components/features/StartupPreloadDialog';
+import { preloadApi } from '@/lib/preload';
 import { toast, Toaster } from 'sonner';
 import { AppShell } from '@/components/layout/AppShell';
 import { KeyGate } from '@/components/features/KeyGate';
@@ -370,6 +372,22 @@ function App() {
   /** 依赖 GPT-SoVITS 的页面用它把用户送到设置页开服务 */
   const goSettings = useCallback(() => setActive('settings'), []);
 
+  // 启动预加载：偏好为 'ask' 时弹选择框（谁当主力由使用测试定，不预设）；
+  // 若是具体模型，网关启动时已经自己加载了，这里不打扰用户。
+  const [preloadAsking, setPreloadAsking] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    preloadApi
+      .catalog()
+      .then((next) => {
+        if (!cancelled && next.preference === 'ask') setPreloadAsking(true);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   return (
     <TooltipProvider delayDuration={200}>
       <AppShell
@@ -437,6 +455,9 @@ function App() {
           />
         ) : null}
       </AppShell>
+
+      {/* 启动时选一个模型预加载（显存一次只够常驻一个） */}
+      <StartupPreloadDialog open={preloadAsking} onOpenChange={setPreloadAsking} />
 
       <Toaster position="top-center" richColors closeButton />
     </TooltipProvider>

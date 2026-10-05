@@ -590,6 +590,53 @@
 
 ---
 
+## 阶段 24 — 启动预加载选择（双轨策略 + 显存与模型挂钩）
+
+- **起因**：用户裁决 —— IndexTTS 与网易谁当主力**由使用测试判断**，不预设；
+  先走**双轨**，新增「网页启动时选择预加载哪个模型」的功能；
+  磁盘不是瓶颈，**真正的问题是运行性能与显存**，需要细致处理；不考虑商用。
+
+- **已完成**
+  - **网关自己会读显存**（`server/src/lib/vram.ts`）：nvidia-smi 优先，3 秒缓存。
+    为什么需要：原来显存数字来自网易服务，**它没起时就没有这个数**，
+    而「启动要不要预加载」这个判断恰恰要在任何服务都还没起来时做
+  - **预加载服务**（`server/src/services/preload.ts`）
+    - 模型账本写成一张表，每个模型的 `vram_mb` 标注来源（网易 6144 取自
+      `tts_engine.REQUIRED_VRAM_MB`；GPT-SoVITS 3072 取自 trainer 引擎注册表），方便实测校准
+    - 执行顺序刻意是 **先让位 → 再检查 → 最后加载**：反过来会因为另一套还占着显存
+      而必然检查失败，且失败原因会误导用户（以为卡太小）
+    - 偏好持久化在 `server/.data/preload.json`；`'ask'` = 每次启动问用户
+  - **接口**：`GET /api/preload/catalog`（账本 + 当前显存 + 装不装得下）、
+    `GET /api/preload`、`PUT /api/preload/preference`、`POST /api/preload`（执行）
+  - **网关启动**时按偏好自动预加载（不 await，界面先出来）
+  - **前端**：`StartupPreloadDialog`（偏好为 ask 时开机弹出，列出每个模型的显存代价与当前余量，
+    默认选中第一个**装得下**的，可勾「记住这次选择」）；设置页新增「启动时预加载的模型」分组
+
+- **未完成**
+  - IndexTTS 尚未接入，账本里暂时只有网易与 GPT-SoVITS；接入时只需在
+    `preload.ts::MODELS` 加一项（方案见 `docs/INDEX-TTS-INTEGRATION.md`）
+  - 未实测「预加载 GPT-SoVITS」的完整耗时（走的是与设置页开关相同的路径，此前实测 43.9 秒）
+
+- **改动文件**：新增 `server/src/lib/vram.ts`、`server/src/services/preload.ts`、
+  `server/src/routes/preload.ts`、`app/src/lib/preload.ts`、
+  `app/src/components/features/StartupPreloadDialog.tsx`；
+  改 `server/src/{index.ts,routes/index.ts}`、`app/src/{App.tsx,pages/SettingsPage.tsx}`
+
+- **测试结果**：`typecheck` / eslint / `build` 全通过。接口实测：
+  `GET /api/preload/catalog` → 偏好 ask、空闲 **3527 MB / 共 8188 MB**（nvidia-smi）、
+  `netease-tts needs 6144 fits=false`、`sovits needs 3072 fits=true` —— 判断与事实一致，
+  且**如实提示网易当前装不下**；`POST /api/preload {model:none}`、`PUT preference {model:ask}`
+  返回正常；非法取值走 400
+
+- **风险**
+  - 预加载失败只进 toast 与日志，界面没有常驻提示（后续可在侧栏状态卡体现）
+  - 显存门槛是估计值/上游值，实测后需回填校准
+  - 预加载 GPT-SoVITS 会把「默认停用的服务」打开 —— 这是预期行为，但会改变用户的默认状态
+
+- **下一阶段入口**：用实际合成对比两套模型（决定主力）；IndexTTS 接入后往账本加一项
+
+---
+
 ## 阶段 23 — 文档修正：R2T2 可用性分层 + IndexTTS 接入方案
 
 - **起因**：用户转述了别人在同一模型上的排查结论，指出我此前「Windows 装不了 vLLM → R2T2 整体不可用」

@@ -32,6 +32,7 @@ import { Switch } from '@/components/ui/switch';
 import { api } from '@/lib/api';
 import { RequestError } from '@/lib/errors';
 import { localServiceApi, type LocalServiceState } from '@/lib/localService';
+import { preloadApi, type PreloadCatalog, type PreloadPreference } from '@/lib/preload';
 import { DEFAULT_SETTINGS, MODE_META } from '@/lib/constants';
 import { PROVIDERS, getProvider, languageLabel, resolveLanguages } from '@/lib/providers/registry';
 import { SELFHOSTED_PRESETS } from '@/lib/providers/selfhosted';
@@ -185,6 +186,44 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
   /** 是否正在**开启**（开启要走数十秒冷启动，关闭不用等） */
   const [pendingEnable, setPendingEnable] = useState(false);
   const [toggleElapsed, setToggleElapsed] = useState(0);
+
+  // ------------------------------------------------------------------
+  // 启动预加载偏好
+  // ------------------------------------------------------------------
+
+  const [preloadCatalog, setPreloadCatalog] = useState<PreloadCatalog | null>(null);
+  const [preloadPreference, setPreloadPreference] = useState<PreloadPreference | null>(null);
+  const [preloadSaving, setPreloadSaving] = useState(false);
+
+  const refreshPreload = useCallback(() => {
+    preloadApi
+      .catalog()
+      .then((next) => {
+        setPreloadCatalog(next);
+        setPreloadPreference(next.preference);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    refreshPreload();
+  }, [refreshPreload]);
+
+  const applyPreloadPreference = async (model: PreloadPreference) => {
+    setPreloadSaving(true);
+    try {
+      await preloadApi.savePreference(model);
+      setPreloadPreference(model);
+      toast.success('已保存启动预加载设置', {
+        description: model === 'ask' ? '以后开机都会问你要加载哪个模型' : `以后开机自动加载：${model}`,
+      });
+    } catch (error) {
+      const requestError = error as RequestError;
+      toast.error('保存失败', { description: requestError.fullMessage ?? requestError.message });
+    } finally {
+      setPreloadSaving(false);
+    }
+  };
 
   const refreshServiceState = useCallback(() => {
     localServiceApi
@@ -407,6 +446,47 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
               onCheckedChange={(checked) => void toggleService(checked === true)}
               className="shrink-0"
             />
+          </div>
+
+          {/* 启动预加载：谁当主力由使用测试决定，这里只管「开机先装谁」 */}
+          <div className="space-y-2 rounded-lg border p-3">
+            <Label className="text-sm font-medium">启动时预加载的模型</Label>
+            <p className="text-xs leading-relaxed text-muted-foreground">
+              显存一次只够常驻一个模型。选了谁，开机就把这块显存给它，另一套会被让出；
+              想每次开机自己选就选「每次问我」。
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {preloadCatalog?.models.map((item) => (
+                <Button
+                  key={item.id}
+                  size="sm"
+                  variant={preloadPreference === item.id ? 'default' : 'outline'}
+                  className="h-7 text-xs"
+                  onClick={() => void applyPreloadPreference(item.id)}
+                  disabled={preloadSaving}
+                >
+                  {item.label}（{(item.vram_mb / 1024).toFixed(1)} GB）
+                </Button>
+              ))}
+              <Button
+                size="sm"
+                variant={preloadPreference === 'ask' ? 'default' : 'outline'}
+                className="h-7 text-xs"
+                onClick={() => void applyPreloadPreference('ask')}
+                disabled={preloadSaving}
+              >
+                每次问我
+              </Button>
+              <Button
+                size="sm"
+                variant={preloadPreference === 'none' ? 'default' : 'outline'}
+                className="h-7 text-xs"
+                onClick={() => void applyPreloadPreference('none')}
+                disabled={preloadSaving}
+              >
+                不预加载
+              </Button>
+            </div>
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">

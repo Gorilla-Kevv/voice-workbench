@@ -5,6 +5,7 @@ import { generalLimiter } from '../middleware/rateLimit.js';
 import { logger } from '../lib/logger.js';
 import { configRouter } from './config.js';
 import { resourcesRouter } from './resources.js';
+import { preloadRouter } from './preload.js';
 import { neteaseSummary } from './netease.js';
 import { sovitsSummary } from './sovits.js';
 import { ttsRouter } from './tts.js';
@@ -70,5 +71,7 @@ apiRouter.use('/voices', generalLimiter, voiceRouter);
 apiRouter.use('/config', generalLimiter, configRouter);
 /** 资源仲裁：把本系统内的资源集中给单一模型（只作用于自有服务） */
 apiRouter.use('/resources', generalLimiter, resourcesRouter);
+/** 启动预加载：选一个模型提前装进显存 */
+apiRouter.use('/preload', generalLimiter, preloadRouter);
 
 logger.debug('API 路由已注册', { prefixes: ['/health', '/tts', '/voices', '/config', '/sovits', '/netease'] });
