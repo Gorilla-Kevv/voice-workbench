@@ -37,6 +37,7 @@ import { focusBeforeRun } from '@/lib/arbiter';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
 import { cn } from '@/lib/utils';
+import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
 import type {
   SovitsAnnotationItem,
   SovitsCatalog,
@@ -569,7 +570,7 @@ export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {
   // 语料
   // ------------------------------------------------------------------
 
-  const handleUpload = useCallback(async (files: FileList) => {
+  const handleUpload = useCallback(async (files: File[] | FileList) => {
     if (files.length === 0) return;
     setUploading(true);
     try {
@@ -586,6 +587,15 @@ export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {
       setUploading(false);
     }
   }, []);
+
+  // 语料最自然的动作是从资源管理器里拖一个目录进来：拖文件夹会递归取里面的音频
+  const { dragging: corpusDragging, rootProps: corpusDropProps } = useFileDrop({
+    onFiles: (files) => void handleUpload(files),
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac,.wma',
+    multiple: true,
+    disabled: uploading,
+    inputRef: fileRef,
+  });
 
   // ------------------------------------------------------------------
   // 预检与提交
@@ -806,9 +816,11 @@ export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {
         <AlertDescription className="space-y-2">
           <p>{connectionError}</p>
           <p className="text-xs opacity-90">
-            训练需要本机有 GPU 与完整环境。请确认已执行 `npm run dev`，或单独运行
-            scripts/start.ps1 / start.sh。
+            训练需要本机有 GPU 与完整环境。这个服务<strong>默认停用</strong>（把显存留给网易主服务），
+            `npm run dev` 不再自动拉起 —— 要先开启它，训练才跑得起。
           </p>
+          {/* 整页报错时把「直接开启」的入口一起带上，别让用户对着一条做不到的建议 */}
+          <SovitsServiceNotice onGoSettings={onGoSettings} />
           <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
             <RefreshCw className="mr-1.5 size-3.5" />
             重新加载
@@ -871,12 +883,15 @@ export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {
               <Label htmlFor="train-dir">
                 <TermTip term="语料目录" />
               </Label>
-              <div className="flex gap-2">
+              <div
+                className={cn('flex gap-2 rounded-lg px-1 py-1 transition', dropHighlight(corpusDragging))}
+                {...corpusDropProps}
+              >
                 <Input
                   id="train-dir"
                   value={sourceDir}
                   onChange={(event) => setSourceDir(event.target.value)}
-                  placeholder="D:\\素材\\我的声音  或上传后自动填入"
+                  placeholder="D:\\素材\\我的声音  或拖进来自动填入"
                   spellCheck={false}
                   className="font-mono text-sm"
                 />
@@ -908,7 +923,8 @@ export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {
                 </Button>
               </div>
               <p className="text-[11px] text-muted-foreground">
-                目录里放原始音频；若开启切分则必须同时开启语音识别（切分会丢掉原文本）
+                目录里放原始音频；若开启切分则必须同时开启语音识别（切分会丢掉原文本）。
+                也可以把<strong>语料文件夹整个拖进这一行</strong>，系统会取里面的音频上传。
               </p>
             </div>
           </div>

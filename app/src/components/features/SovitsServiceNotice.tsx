@@ -58,8 +58,11 @@ export function SovitsServiceNotice({
 
   useEffect(() => clearTimers, []);
 
-  // 读不到状态或已启用：不打扰用户（宁可漏提示，也不误报）
-  if (!state || state.enabled || state.reachable) return null;
+  // 读不到状态、服务已就绪、或本来就启用着（且不是本页正在启动）：不打扰用户。
+  // `starting` 这个条件不能省 —— 开启请求一落地，服务端的 enabled 就翻成 true，
+  // 而进程还要数十秒才起来；只看 enabled 会让这张卡在 3 秒内自己消失，
+  // 用户点完「直接开启」就再没有任何进度可看（阶段 21 的反馈等于白做）。
+  if (!state || state.reachable || (state.enabled && !starting)) return null;
 
   /**
    * 开启并给出进度反馈。
@@ -113,7 +116,11 @@ export function SovitsServiceNotice({
     >
       <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
       <div className="min-w-0 space-y-1.5">
-        <p className="font-medium">本页需要 GPT-SoVITS 本地服务，它当前是停用的</p>
+        <p className="font-medium">
+          {starting
+            ? '正在启动 GPT-SoVITS 本地服务'
+            : '本页需要 GPT-SoVITS 本地服务，它当前是停用的'}
+        </p>
         <p className="opacity-90">
           出于显存考虑，这个服务<strong>默认关闭</strong>（把显存留给网易主服务）。
           开启后首次要 import torch，数十秒才就绪 —— 之后训练 / 批量 / 变声 / 翻唱才能用。

@@ -16,7 +16,7 @@ from ..engine import EngineBusy
 from ..errors import NeteaseError
 from ..hardware import probe, vram_mb
 from ..models import CatalogResponse, HealthResponse
-from ..tts_engine import TTS_LANGUAGES, REQUIRED_VRAM_MB
+from ..tts_engine import TTS_LANGUAGES, required_vram_mb
 from .confucius import DEFAULT_QUALITY, QUALITY_NOTES, QUALITY_PRESETS
 
 router = APIRouter()
@@ -47,7 +47,7 @@ def health(request: Request) -> dict[str, Any]:
         "engine_lock": ctx.lock.describe(),
         "configuration": {
             "tts_home": str(ctx.settings.tts_home),
-            "tts_required_vram_mb": REQUIRED_VRAM_MB,
+            "tts_required_vram_mb": required_vram_mb(ctx.settings.precision),
             "tts_precision": ctx.settings.precision,
             "r2t2_backend": ctx.settings.r2t2_backend,
             "r2t2_gpu_util": ctx.settings.r2t2_gpu_util,
@@ -70,7 +70,7 @@ def catalog(request: Request) -> dict[str, Any]:
             "languages": TTS_LANGUAGES,
             "default_language": "zh",
             "ref_audio_note": "参考音频 ≥3 秒即可，无需逐字转写文本；支持从现有音色库直接选取",
-            "required_vram_mb": REQUIRED_VRAM_MB,
+            "required_vram_mb": required_vram_mb(ctx.settings.precision),
             # 速度 / 质量档位：num_beams 管 T2S 自回归，n_timesteps 管 S2A 扩散步数
             "quality_presets": [
                 {"id": key, "num_beams": value[0], "n_timesteps": value[1], "note": QUALITY_NOTES[key]}

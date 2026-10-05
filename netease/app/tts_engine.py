@@ -53,9 +53,19 @@ TTS_LANGUAGES: list[dict[str, str]] = [
     {"code": "vi", "label": "Tiếng Việt"},
 ]
 
-#: 显存放行门槛（MB）。fp16 实测常驻 + 推理峰值约 4.9 GB（RTX 4060 Laptop 8 GB，
-#: 22050 Hz、7.7 s 音频），这里留一档余量。宁高勿低 —— 估高只是提前拒绝，估低是跑到一半 OOM。
+#: 显存放行门槛（MB）**按推理精度分档**：
+#: - fp16：实测常驻 + 推理峰值约 4.9 GB（RTX 4060 Laptop 8 GB，22050 Hz、7.7 s 音频），取 5120 留一点余量；
+#: - fp32：全量约 7.5 GB，6144 已经是偏乐观的下限。
+#: 旧版不分档一律 6144 —— 那是按 fp32 估的，套在默认就是 fp16 的机器上，
+#: 配上跨进程（nvidia-smi）口径后等于把 8 GB 卡的主服务锁死：Windows 桌面常驻就要吃掉 2.9~5 GB。
+#: 宁高勿低的原旨不变：估高只是提前拒绝，估低是跑到一半 OOM。
 REQUIRED_VRAM_MB = 6144
+REQUIRED_VRAM_MB_FP16 = 5120
+
+
+def required_vram_mb(precision: str) -> int:
+    """按精度取准入门槛；ASR（R2T2）不走这里，它仍用 `REQUIRED_VRAM_MB`。"""
+    return REQUIRED_VRAM_MB if precision == "fp32" else REQUIRED_VRAM_MB_FP16
 
 #: 只能通过 **HF 缓存** 拿到的（上游硬编码 `hf_hub_download(repo_id, filename)`）：
 #: (HF repo id, 文件名)。缺哪个就点名哪个，方便直接补下载。

@@ -38,6 +38,8 @@ import { asrApi } from '@/lib/asr';
 import { formatBytes, formatDuration, formatRelativeTime } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
+import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
+import { cn } from '@/lib/utils';
 import type { SovitsCatalog, SovitsVoice } from '@/types';
 
 /**
@@ -226,6 +228,29 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
     [load],
   );
 
+  // 两处「参考音频」都收拖拽：新建时填表用一条，编辑时替换用另一条
+  const { dragging: newAudioDragging, rootProps: newAudioDropProps } = useFileDrop({
+    onFiles: (files) => {
+      const next = files[0] ?? null;
+      setFile(next);
+      if (next) setExternalPath('');
+    },
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac,.wma',
+    disabled: submitting,
+    inputRef: fileRef,
+  });
+
+  const replaceAudioRef = useRef<HTMLInputElement>(null);
+  const { dragging: replaceAudioDragging, rootProps: replaceAudioDropProps } = useFileDrop({
+    onFiles: (files) => {
+      const next = files[0];
+      if (next && editing) void handleReplaceAudio(editing, next);
+    },
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac,.wma',
+    disabled: submitting || !editing,
+    inputRef: replaceAudioRef,
+  });
+
   const handleDelete = useCallback(
     async (voice: SovitsVoice) => {
       if (!window.confirm(`确定删除音色「${voice.name}」吗？此操作不可撤销。`)) return;
@@ -411,9 +436,9 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
               />
             </div>
 
-            <div className="space-y-2">
+            <div className="space-y-2" {...newAudioDropProps}>
               <Label htmlFor="voice-file">
-                  <TermTip term="参考音频" />
+                  <TermTip term="参考音频" />（可拖文件进来）
                 </Label>
               <input
                 ref={fileRef}
@@ -427,7 +452,12 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
                   event.target.value = '';
                 }}
               />
-              <div className="flex flex-wrap items-center gap-2">
+              <div
+                className={cn(
+                  'flex flex-wrap items-center gap-2 rounded-lg border border-transparent px-1 py-1 transition',
+                  dropHighlight(newAudioDragging),
+                )}
+              >
                 <Button size="sm" variant="outline" onClick={() => fileRef.current?.click()}>
                   <Upload className="mr-1.5 size-3.5" />
                   选择音频文件
@@ -612,11 +642,12 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
 
               <Separator />
 
-              <div className="space-y-2">
+              <div className="space-y-2" {...replaceAudioDropProps}>
                 <Label>
-                  <TermTip term="参考音频">替换参考音频</TermTip>
+                  <TermTip term="参考音频">替换参考音频</TermTip>（可拖文件进来）
                 </Label>
                 <input
+                  ref={replaceAudioRef}
                   type="file"
                   accept="audio/*"
                   onChange={(event) => {
@@ -624,7 +655,10 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
                     if (next) void handleReplaceAudio(editing, next);
                     event.target.value = '';
                   }}
-                  className="block w-full text-xs file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs"
+                  className={cn(
+                    'block w-full text-xs file:mr-3 file:rounded-md file:border file:border-input file:bg-background file:px-3 file:py-1.5 file:text-xs',
+                    dropHighlight(replaceAudioDragging),
+                  )}
                 />
                 <p className="text-[11px] text-muted-foreground">
                   当前时长 {editing.duration_s ? `${editing.duration_s.toFixed(1)} 秒` : '未知'}，

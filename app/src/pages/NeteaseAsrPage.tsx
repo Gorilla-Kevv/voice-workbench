@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, Captions, Copy, Download, Eraser, Flame, Loader2, RefreshCw, Square, Zap } from 'lucide-react';
 import { toast } from 'sonner';
 import { Badge } from '@/components/ui/badge';
@@ -11,6 +11,8 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TermTip } from '@/components/features/TermTip';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
+import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
+import { cn } from '@/lib/utils';
 import { RequestError } from '@/lib/errors';
 import { neteaseApi } from '@/lib/netease';
 import type { NeteaseAsrEngineInfo, NeteaseCatalog, NeteaseEngineStatus, NeteaseStreamEvent, NeteaseTranscribeResult } from '@/types';
@@ -60,6 +62,7 @@ export function NeteaseAsrPage({ onFallback }: { onFallback?: () => void } = {})
   const abortRef = useRef<(() => void) | null>(null);
   // 「已等待 N 秒」计时器：与 useSynthesis 同模式（ref 持有，提交动作启停）
   const timerRef = useRef<number | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -126,6 +129,26 @@ export function NeteaseAsrPage({ onFallback }: { onFallback?: () => void } = {})
     setLoading(false);
     abortRef.current = null;
   }, [stopTimer]);
+
+  const pickAudio = useCallback((files: File[]) => {
+    setFile(files[0] ?? null);
+    setStreamText('');
+    setError(null);
+  }, []);
+
+  // 试听用的地址要跟着换文件回收，不能每渲染一次开一个
+  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => {
+    if (!previewUrl) return undefined;
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  // 音频支持直接拖进来（拖文件夹则取里面的音频）
+  const { dragging, rootProps: dropProps } = useFileDrop({
+    onFiles: pickAudio,
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac',
+    inputRef: fileInputRef,
+  });
 
   const handleTranscribe = () => {
     if (!file) {
@@ -362,24 +385,29 @@ export function NeteaseAsrPage({ onFallback }: { onFallback?: () => void } = {})
           </CardHeader>
           <CardContent className="space-y-4">
             <input
+              ref={fileInputRef}
               id="netease-asr-file"
               type="file"
               accept="audio/*"
               className="sr-only"
-              onChange={(event) => {
-                setFile(event.target.files?.[0] ?? null);
-                setStreamText('');
-                setError(null);
-              }}
+              onChange={(event) => pickAudio(Array.from(event.target.files ?? []))}
             />
             <Label
               htmlFor="netease-asr-file"
-              className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-sm text-muted-foreground transition hover:border-violet-400 hover:bg-violet-500/5"
+              {...dropProps}
+              className={cn(
+                'flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-sm text-muted-foreground transition hover:border-violet-400 hover:bg-violet-500/5',
+                dropHighlight(dragging),
+              )}
             >
               <Captions className="size-4" />
-              {file ? `${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）` : '点击选择要转写的音频（wav / mp3 / flac）'}
+              {file
+                ? `${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）`
+                : dragging
+                  ? '松手即可开始转写'
+                  : '点击选择，或把音频 / 音频文件夹拖到这里（wav / mp3 / flac）'}
             </Label>
-            {file ? <audio controls src={URL.createObjectURL(file)} className="w-full" key={file.name + file.size} /> : null}
+            {previewUrl ? <audio controls src={previewUrl} className="w-full" /> : null}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">

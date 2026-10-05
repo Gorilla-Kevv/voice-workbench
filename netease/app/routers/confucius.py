@@ -17,7 +17,7 @@ from fastapi import APIRouter, File, Form, Request, UploadFile
 
 from ..errors import NeteaseError
 from ..models import TtsResult
-from ..tts_engine import check_vram
+from ..tts_engine import check_vram, required_vram_mb
 
 router = APIRouter(prefix="/v1/confucius")
 
@@ -38,7 +38,8 @@ def warmup(request: Request) -> dict[str, Any]:
     preempted = ctx.lock.acquire("tts", preempt=True, wait_seconds=0)
     if preempted == "asr":
         ctx.asr.unload()
-    check_vram()
+    # 门槛按当前推理精度取：fp16 实测峰值 4.9 GB，套 fp32 的 6144 会把 8 GB 卡直接锁死
+    check_vram(required_vram_mb(ctx.settings.precision))
     try:
         status = ctx.tts.ensure_loaded()
     except NeteaseError:
@@ -99,7 +100,7 @@ def tts(
         preempted = ctx.lock.acquire("tts", preempt=preempt, wait_seconds=0)
         if preempted == "asr":
             ctx.asr.unload()
-        check_vram()
+        check_vram(required_vram_mb(ctx.settings.precision))
         try:
             ctx.tts.ensure_loaded()
         except NeteaseError:

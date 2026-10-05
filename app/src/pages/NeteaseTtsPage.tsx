@@ -16,8 +16,10 @@ import { ResultStack, type ResultStackEntry } from '@/components/features/Result
 import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
 import { neteaseApi } from '@/lib/netease';
-import { resolveAudioUrl } from '@/lib/sovits';
-import { sovitsApi } from '@/lib/sovits';
+import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
+import { cn } from '@/lib/utils';
+import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
+import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import type { NeteaseCatalog, NeteaseEngineStatus, NeteaseTtsResult } from '@/types';
 import type { SovitsVoice } from '@/types';
 
@@ -49,7 +51,13 @@ function base64ToUrl(base64: string, mime = 'audio/wav'): string {
  * 也因此现有音色库里的每条音色都能直接拿来用 —— 只取它的参考音频，
  * 转写文本不参与合成（页面里明确标注，避免「文本也要跟着改」的误解）。
  */
-export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {}) {
+export function NeteaseTtsPage({
+  onFallback,
+  onGoSettings,
+}: {
+  onFallback?: () => void;
+  onGoSettings?: () => void;
+} = {}) {
   const [catalog, setCatalog] = useState<NeteaseCatalog['tts'] | null>(null);
   const [engine, setEngine] = useState<NeteaseEngineStatus | null>(null);
   const [text, setText] = useState('这是网易 Confucius4-TTS 的零样本克隆合成：只需三秒参考音频，无需逐字转写文本。');
@@ -60,6 +68,8 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
   const [file, setFile] = useState<File | null>(null);
   const [voices, setVoices] = useState<SovitsVoice[]>([]);
   const [voicesLoading, setVoicesLoading] = useState(false);
+  /** 上一次拉取失败（服务停着 / 网络问题）；失败后不再自动重试，只给手动入口 */
+  const [voicesFailed, setVoicesFailed] = useState(false);
   const [voiceId, setVoiceId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -76,6 +86,7 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
   // 「已等待 N 秒」计时器：跟 useSynthesis 同一模式 —— 挂在 ref 上，
   // 由提交动作启动/清理，而不是用 effect 监听 loading（会触发级联渲染告警）
   const timerRef = useRef<number | null>(null);
+  const refAudioInputRef = useRef<HTMLInputElement>(null);
 
   const stopTimer = useCallback(() => {
     if (timerRef.current !== null) {
@@ -104,20 +115,48 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
   }, []);
 
   // 切到「从音色库选择」时按需拉一次音色列表（GPT-SoVITS 侧的服务）
-  useEffect(() => {
-    if (refSource !== 'voice' || voices.length > 0 || voicesLoading) return;
+  const loadVoices = useCallback(() => {
     setVoicesLoading(true);
+    setVoicesFailed(false);
     sovitsApi
       .listVoices()
       .then((response) => setVoices(response.voices.filter((voice) => voice.exists)))
-      .catch(() => toast.error('音色库列表获取失败', { description: '需要 GPT-SoVITS 本地服务在线（start.bat 会拉起它）。' }))
+      .catch(() => setVoicesFailed(true))
       .finally(() => setVoicesLoading(false));
-  }, [refSource, voices.length, voicesLoading]);
+  }, []);
+
+  // 依赖里不能再放 voicesLoading：服务停着时「失败 → loading 归 false → effect 重跑」
+  // 会转成无限重试，请求和报错 toast 一起刷屏（实测每 1~2 秒一发 503）。
+  useEffect(() => {
+    if (refSource !== 'voice' || voices.length > 0 || voicesLoading || voicesFailed) return;
+    loadVoices();
+  }, [refSource, voices.length, voicesLoading, voicesFailed, loadVoices]);
 
   const install = catalog?.install;
   const installMissing = install && !install.installed;
 
   const selectedVoice = useMemo(() => voices.find((voice) => voice.id === voiceId) ?? null, [voices, voiceId]);
+
+  // 试听用的 Blob 地址：换文件或卸载页面时回收，不能每渲染一次开一个（那样旧的永远留在内存里）
+  const previewUrl = useMemo(() => (file ? URL.createObjectURL(file) : null), [file]);
+  useEffect(() => {
+    if (!previewUrl) return undefined;
+    return () => URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
+
+  const pickRefAudio = useCallback((files: File[]) => {
+    const next = files[0] ?? null;
+    setFile(next);
+    // 指引里「准备参考音频」这一步就此自动打勾
+    if (next) markGuideEvent('netease:ref-ready');
+  }, []);
+
+  // 参考音频支持直接拖进来（从桌面拖一个文件夹也一样，只取里面的音频）
+  const { dragging: refDragging, rootProps: refDropProps } = useFileDrop({
+    onFiles: pickRefAudio,
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac',
+    inputRef: refAudioInputRef,
+  });
 
   const refreshEngine = useCallback(() => {
     neteaseApi
@@ -179,11 +218,17 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
       try {
         let upload: File | null = refFile;
         if (refSource === 'voice' && selectedVoice) {
-          // 音色库音色 → 取它的参考音频（经 GPT-SoVITS 网关），转写文本不参与合成
-          const url = resolveAudioUrl(selectedVoice.audio_path);
+          // 音色库音色 → 取它的参考音频（经 GPT-SoVITS 网关），转写文本不参与合成。
+          // audio_path 是服务端磁盘路径，不能当 URL 用；可访问的是试听那条 /v1/voices/{id}/audio。
+          const url = resolveAudioUrl(`/v1/voices/${selectedVoice.id}/audio`);
           if (!url) throw new RequestError(400, { code: 'REF_AUDIO_MISSING', message: `音色「${selectedVoice.name}」没有可用的参考音频` });
           const blob = await fetch(url).then((response) => {
-            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+            if (!response.ok) throw new RequestError(response.status, {
+              code: 'REF_AUDIO_FETCH_FAILED',
+              message: `参考音频取回失败（HTTP ${response.status}）`,
+              retryable: true,
+              hint: `音色「${selectedVoice.name}」登记的音频可能已不在本机；可改用「上传音频」，或到音色库页重新登记这条。`,
+            });
             return response.blob();
           });
           upload = new File([blob], `${selectedVoice.name}.wav`, { type: blob.type || 'audio/wav' });
@@ -208,11 +253,20 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
         toast.success('合成完成', {
           description: `${response.duration_sec.toFixed(1)} 秒 · ${(response.elapsed_sec).toFixed(1)} 秒生成 · ${response.sample_rate} Hz`,
         });
-      } catch (requestError) {
-        if (requestError instanceof RequestError) {
-          setError(requestError);
-          toast.error('合成失败', { description: requestError.fullMessage });
-        }
+      } catch (rawError) {
+        // 非 RequestError（网络层直接抛错等）也要报出来：以前只认 RequestError，
+        // 失败时界面既不弹 toast 也不显示错误卡，按钮闪一下就回到原样
+        const requestError =
+          rawError instanceof RequestError
+            ? rawError
+            : new RequestError(0, {
+                code: 'SYNTH_FAILED',
+                message: (rawError as Error)?.message || '合成请求未能发出',
+                retryable: true,
+                hint: '确认网关与网易模块服务在跑（npm run dev），再重试。',
+              });
+        setError(requestError);
+        toast.error('合成失败', { description: requestError.fullMessage });
       } finally {
         stopTimer();
         setLoading(false);
@@ -351,32 +405,45 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
             {refSource === 'upload' ? (
               <div className="space-y-2">
                 <input
+                  ref={refAudioInputRef}
                   id="netease-tts-file"
                   type="file"
                   accept="audio/*"
                   className="sr-only"
-                  onChange={(event) => {
-                    setFile(event.target.files?.[0] ?? null);
-                    // 指引里「准备参考音频」这一步就此自动打勾
-                    if (event.target.files?.[0]) markGuideEvent('netease:ref-ready');
-                  }}
+                  onChange={(event) => pickRefAudio(Array.from(event.target.files ?? []))}
                 />
                 <Label
                   htmlFor="netease-tts-file"
-                  className="flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-sm text-muted-foreground transition hover:border-violet-400 hover:bg-violet-500/5"
+                  {...refDropProps}
+                  className={cn(
+                    'flex cursor-pointer items-center justify-center gap-2 rounded-lg border border-dashed p-6 text-sm text-muted-foreground transition hover:border-violet-400 hover:bg-violet-500/5',
+                    dropHighlight(refDragging),
+                  )}
                 >
                   <Waves className="size-4" />
-                  {file ? `${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）` : '点击选择一段 3 秒以上的音频'}
+                  {file
+                    ? `${file.name}（${(file.size / 1024 / 1024).toFixed(2)} MB）`
+                    : refDragging
+                      ? '松手即可作为参考音频'
+                      : '点击选择，或把音频 / 音频文件夹拖到这里（3 秒以上）'}
                 </Label>
-                {file ? (
-                  <audio controls src={URL.createObjectURL(file)} className="w-full" key={file.name + file.size} />
-                ) : null}
+                {previewUrl ? <audio controls src={previewUrl} className="w-full" /> : null}
               </div>
             ) : (
               <div className="space-y-2">
                 <Select value={voiceId} onValueChange={setVoiceId}>
                   <SelectTrigger className="w-full">
-                    <SelectValue placeholder={voicesLoading ? '正在加载音色库…' : '选择一条音色'} />
+                    <SelectValue
+                      placeholder={
+                        voicesLoading
+                          ? '正在加载音色库…'
+                          : voicesFailed
+                            ? '音色库未能加载'
+                            : voices.length === 0
+                              ? '音色库暂无可用音色'
+                              : '选择一条音色'
+                      }
+                    />
                   </SelectTrigger>
                   <SelectContent>
                     {voices.map((voice) => (
@@ -388,6 +455,18 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
                     ))}
                   </SelectContent>
                 </Select>
+                {voicesFailed ? (
+                  <div className="space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      音色库列表来自 GPT-SoVITS 本地服务，它没在线时这里取不到数据。
+                    </p>
+                    <SovitsServiceNotice onGoSettings={onGoSettings} />
+                    <Button size="sm" variant="outline" onClick={loadVoices} disabled={voicesLoading}>
+                      <RefreshCw className="mr-1.5 size-3.5" />
+                      重新加载
+                    </Button>
+                  </div>
+                ) : null}
                 {selectedVoice ? (
                   <div className="flex items-start gap-2 rounded-lg bg-muted/50 p-3 text-xs text-muted-foreground">
                     <Sparkles className="mt-0.5 size-3.5 shrink-0 text-violet-500" />

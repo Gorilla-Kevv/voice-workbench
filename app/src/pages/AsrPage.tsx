@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Captions,
   ClipboardCopy,
@@ -28,6 +28,8 @@ import { ResultStack, type ResultStackEntry } from '@/components/features/Result
 import { SourceNote } from '@/components/features/SourceNote';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { useResultStack } from '@/hooks/useResultStack';
+import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
+import { cn } from '@/lib/utils';
 import { asrApi } from '@/lib/asr';
 import { formatBytes } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
@@ -164,6 +166,28 @@ export function AsrPage() {
 
   // ---------------- 单条转写 ----------------
 
+  const singleFileRef = useRef<HTMLInputElement>(null);
+  const datasetFilesRef = useRef<HTMLInputElement>(null);
+
+  // 两个音频入口都支持拖拽 —— 拖进来的若是文件夹，取其中符合 accept 的音频
+  const { dragging: singleDragging, rootProps: singleDropProps } = useFileDrop({
+    onFiles: (files) => {
+      setFile(files[0] ?? null);
+      if (files[0]) setSource('');
+    },
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac,.wma',
+    disabled: submitting,
+    inputRef: singleFileRef,
+  });
+
+  const { dragging: datasetDragging, rootProps: datasetDropProps } = useFileDrop({
+    onFiles: (files) => void handleUpload(files),
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac,.wma',
+    multiple: true,
+    disabled: submitting,
+    inputRef: datasetFilesRef,
+  });
+
   const handleTranscribe = useCallback(async () => {
     if (!file && !source.trim()) {
       toast.warning('请选择音频文件，或填写一个本机路径');
@@ -288,11 +312,11 @@ export function AsrPage() {
     ],
   );
 
-  const handleUpload = useCallback(async (files: FileList | null) => {
+  const handleUpload = useCallback(async (files: File[] | null) => {
     if (!files || files.length === 0) return;
     setSubmitting(true);
     try {
-      const result = await asrApi.upload(Array.from(files));
+      const result = await asrApi.upload(files);
       setUploaded((prev) => [...prev, ...result.files]);
       const skipped = result.skipped.length ? `，跳过 ${result.skipped.length} 个` : '';
       toast.success(`已上传 ${result.files.length} 个音频${skipped}`);
@@ -564,11 +588,14 @@ export function AsrPage() {
         <CardContent className="space-y-3">
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="asr-file">上传音频</Label>
+              <Label htmlFor="asr-file">上传音频（也可直接拖文件 / 文件夹进来）</Label>
               <Input
+                ref={singleFileRef}
                 id="asr-file"
                 type="file"
                 accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac,.wma"
+                {...singleDropProps}
+                className={cn('cursor-pointer rounded-lg text-xs', dropHighlight(singleDragging))}
                 onChange={(event) => {
                   const next = event.target.files?.[0] ?? null;
                   setFile(next);
@@ -661,8 +688,11 @@ export function AsrPage() {
           </div>
 
           <div className="space-y-1.5">
-            <Label htmlFor="asr-ds-files">或上传音频（可选，与目录二选一）</Label>
-            <div className="flex flex-wrap items-center gap-2">
+            <Label htmlFor="asr-ds-files">或上传音频（可选，与目录二选一；支持拖文件 / 文件夹）</Label>
+            <div
+              className={cn('flex flex-wrap items-center gap-2 rounded-lg px-1 py-1 transition', dropHighlight(datasetDragging))}
+              {...datasetDropProps}
+            >
               <Button size="sm" variant="outline" asChild>
                 <label htmlFor="asr-ds-files" className="cursor-pointer">
                   <Upload className="mr-1.5 size-3.5" />
@@ -670,12 +700,13 @@ export function AsrPage() {
                 </label>
               </Button>
               <input
+                ref={datasetFilesRef}
                 id="asr-ds-files"
                 type="file"
                 multiple
                 accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac,.wma"
                 className="hidden"
-                onChange={(event) => void handleUpload(event.target.files)}
+                onChange={(event) => void handleUpload(Array.from(event.target.files ?? []))}
               />
               <span className="text-xs text-muted-foreground">
                 已上传 {uploaded.length} 个{uploaded.length > 0 ? '（落盘在服务的数据目录里）' : ''}

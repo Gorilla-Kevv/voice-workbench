@@ -264,7 +264,17 @@ export function AppShell({
   const visibleCards = probing || showAllStatuses ? statusCards : pendingCards;
 
   return (
-    <div className="flex min-h-screen flex-col lg:flex-row">
+    <div
+      className="flex min-h-screen flex-col lg:flex-row"
+      onDragOver={(event) => {
+        // 落在上传区之外的误拖，浏览器默认会把整个 SPA 导航走（当前表单状态全没）。
+        // 上传区的处理器先 preventDefault，冒泡到这里时已置位，所以只管兜住剩下的。
+        if (!event.defaultPrevented) event.preventDefault();
+      }}
+      onDrop={(event) => {
+        if (!event.defaultPrevented) event.preventDefault();
+      }}
+    >
       {/* 侧边导航 */}
       <aside className="sticky top-0 z-30 shrink-0 border-b bg-sidebar lg:flex lg:h-screen lg:w-64 lg:flex-col lg:border-b-0 lg:border-r">
         <div className="flex h-16 items-center gap-2.5 px-4 lg:h-20 lg:px-5">

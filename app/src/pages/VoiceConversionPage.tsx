@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Loader2, Upload, Waves } from 'lucide-react';
+import { toast } from 'sonner';
+import { RequestError } from '@/lib/errors';
+import { dropHighlight, applyFilesToInput, useFileDrop } from '@/hooks/useFileDrop';
+import { cn } from '@/lib/utils';
 import { ABPlayer } from '@/components/features/ABPlayer';
 import { JobPanel } from '@/components/features/JobPanel';
 import { Badge } from '@/components/ui/badge';
@@ -125,12 +129,34 @@ function ModelLibrary({ catalog, onChanged, accent }: { catalog: VcCatalog | nul
     try {
       await vcApi.uploadModel(weight, index, weight.name.replace(/\.pth$/i, ''));
       onChanged();
+    } catch (err) {
+      // 没有这一条，拖错文件（或网络失败）时只有按钮闪一下，用户不知道发生了什么
+      toast.error('音色导入失败', { description: (err as RequestError).fullMessage });
     } finally {
       setPending(false);
       if (weightRef.current) weightRef.current.value = '';
       if (indexRef.current) indexRef.current.value = '';
     }
   };
+
+  // 音色模型支持整卡拖入：.pth 是主体，配套的 .index 可以一起拖、也可以后补
+  const { dragging: libraryDragging, rootProps: libraryDropProps } = useFileDrop({
+    accept: '.pth,.index',
+    multiple: true,
+    disabled: pending,
+    onFiles: (files) => {
+      const weight = files.find((item) => /\.pth$/i.test(item.name));
+      const index = files.find((item) => /\.index$/i.test(item.name));
+      if (weight && weightRef.current) {
+        applyFilesToInput(weightRef.current, [weight]);
+        if (index && indexRef.current) applyFilesToInput(indexRef.current, [index]);
+        void upload();
+      } else if (index && indexRef.current) {
+        applyFilesToInput(indexRef.current, [index]);
+        toast.info('已拿到配套 .index', { description: '再拖入同名 .pth 就会一起导入。' });
+      }
+    },
+  });
 
   return (
     <Card>
@@ -142,7 +168,10 @@ function ModelLibrary({ catalog, onChanged, accent }: { catalog: VcCatalog | nul
           一个音色 = 一个 .pth（可选配套 .index 检索索引）。放在 {catalog?.models_dir ?? '.data/vc/models'} 或直接导入。
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent
+        className={cn('space-y-3 rounded-lg transition', dropHighlight(libraryDragging))}
+        {...libraryDropProps}
+      >
         {models.length === 0 ? (
           <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
             还没有音色。导入一个 .pth，或先用「音色工坊」训练一个。
@@ -222,6 +251,13 @@ function ConvertCard({
   onChanged: () => void;
 }) {
   const [file, setFile] = useState<File | null>(null);
+  const audioInputRef = useRef<HTMLInputElement>(null);
+  // 干声支持直接拖进来
+  const { dragging: audioDragging, rootProps: audioDropProps } = useFileDrop({
+    onFiles: (files) => setFile(files[0] ?? null),
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.webm',
+    inputRef: audioInputRef,
+  });
   const [model, setModel] = useState('');
   const [keyShift, setKeyShift] = useState(0);
   const [f0Method, setF0Method] = useState('rmvpe');
@@ -331,16 +367,20 @@ function ConvertCard({
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="space-y-2">
+          <div className="space-y-2" {...audioDropProps}>
             <Label htmlFor="vc-audio">
-                  <TermTip term="源音频" />
+                  <TermTip term="源音频" />（可拖文件进来）
                 </Label>
             <input
+              ref={audioInputRef}
               id="vc-audio"
               type="file"
               accept="audio/*"
               onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-              className="w-full cursor-pointer rounded-lg border bg-background px-3 py-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+              className={cn(
+                'w-full cursor-pointer rounded-lg border bg-background px-3 py-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs',
+                dropHighlight(audioDragging),
+              )}
             />
             {sourceUrl ? (
               <audio src={sourceUrl} controls preload="metadata" className="mt-1 w-full" />

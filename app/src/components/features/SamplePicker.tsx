@@ -5,6 +5,7 @@ import { Progress } from '@/components/ui/progress';
 import { ACCEPTED_SAMPLE_TYPES, MAX_SAMPLE_BYTES } from '@/lib/constants';
 import { blobToDataUri, formatBytes, formatDuration } from '@/lib/audio';
 import { useRecorder } from '@/hooks/useRecorder';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import { cn } from '@/lib/utils';
 import type { VoiceSample } from '@/types';
 
@@ -20,7 +21,6 @@ interface SamplePickerProps {
  */
 export function SamplePicker({ value, onChange, onError }: SamplePickerProps) {
   const inputRef = useRef<HTMLInputElement>(null);
-  const [dragging, setDragging] = useState(false);
   const [busy, setBusy] = useState(false);
   const recorder = useRecorder({ maxSeconds: 60 });
 
@@ -118,13 +118,19 @@ export function SamplePicker({ value, onChange, onError }: SamplePickerProps) {
     };
   }, [recorder.result, onChange, onError]);
 
-  const handleFiles = useCallback(
-    (files: FileList | null) => {
-      const file = files?.[0];
+  const acceptFiles = useCallback(
+    (files: File[]) => {
+      const file = files[0];
       if (file) void acceptFile(file);
     },
     [acceptFile],
   );
+
+  const { dragging, rootProps } = useFileDrop({
+    onFiles: acceptFiles,
+    accept: 'audio/mpeg,audio/mp3,audio/wav,audio/x-wav,.mp3,.wav',
+    disabled: busy,
+  });
 
   const clear = () => {
     if (value?.url) URL.revokeObjectURL(value.url);
@@ -178,16 +184,7 @@ export function SamplePicker({ value, onChange, onError }: SamplePickerProps) {
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') inputRef.current?.click();
         }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          setDragging(true);
-        }}
-        onDragLeave={() => setDragging(false)}
-        onDrop={(event) => {
-          event.preventDefault();
-          setDragging(false);
-          handleFiles(event.dataTransfer.files);
-        }}
+        {...rootProps}
         className={cn(
           'flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-6 py-8 text-center transition',
           dragging ? 'border-violet-500 bg-violet-500/5' : 'border-border hover:border-violet-300 hover:bg-muted/50',
@@ -202,7 +199,7 @@ export function SamplePicker({ value, onChange, onError }: SamplePickerProps) {
           type="file"
           accept="audio/mpeg,audio/mp3,audio/wav,audio/x-wav,.mp3,.wav"
           className="hidden"
-          onChange={(event) => handleFiles(event.target.files)}
+          onChange={(event) => acceptFiles(Array.from(event.target.files ?? []))}
         />
       </div>
 

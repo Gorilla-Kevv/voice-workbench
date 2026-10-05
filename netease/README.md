@@ -183,11 +183,17 @@ $env:NETEASE_R2T2_WORKER  = '/mnt/f/schoolCompWorks/clone/ttstool/netease/app/r2
 
 ## 已知限制（首版）
 
-- **R2T2（ASR）在 Windows 上跑不起来**：上游依赖 vLLM，而 PyPI 上 `vllm` 只有 Linux
-  wheel（0.30.0 实测 0 个 Windows 产物），r2t2 自带的 llama.cpp 后端也只有
-  `*.so` + `cpython-312-x86_64-linux-gnu` 产物。Windows 上想用 R2T2 只能走
-  **WSL2 或 Docker**（官方推荐镜像 `qwenllm/qwen3-asr`）。TTS 不受影响；
-  体检时加 `--allow-missing-asr` 即可只校验 TTS 链路。
+- **R2T2（ASR）在 Windows 上要分两层看**（2026-10 修正，早期「整体跑不起来」的结论过重）：
+  - **离线转写（一次性出全文）：Windows 原生可行** —— 装 `qwen-asr==0.0.6`
+    （**不带** `[vllm]` extra，纯 Python wheel `py3-none-any`，已验证可装），
+    走 transformers 后端；`r2t2.R2T2ASRModel` 本就是 `Qwen3ASRModel` 的子类。
+    本仓库**尚未接入**这条路径（worker 目前写死 vllm 后端）
+  - **流式转写：Windows 原生不可能** —— `r2t2/r2t2_asr.py` 有 5 处
+    `if self.backend != "vllm": raise ValueError(...)`（行 267/352/527/621/802）。
+    要就走 **WSL2 或官方 Docker 镜像** `qwenllm/qwen3-asr`
+  - 官方两条路确实都是 Linux（`INFER_MODE` 仅 `stream_vllm/onetime_vllm`；Docker 为推荐路径），
+    但那只针对**推理栈**，不是权重本身
+  - 体检时加 `--allow-missing-asr` 即可只校验 TTS 链路
 - TTS 流式合成需要上游 vLLM 后端，未接入（见方案文档 §6 阶段 7）；
 - 麦克风实时流式转写未接入（需要浏览器→网关→上游全链路 WebSocket）；
 - R2T2 worker 的流式增量取值**已按官方 README 校准**（增量文本在 `streaming_transcribe`

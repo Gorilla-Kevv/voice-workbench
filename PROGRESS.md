@@ -445,6 +445,192 @@
 
 ---
 
+## 阶段 24 — 全站文件/文件夹拖拽导入
+
+- **起因**：用户要求「所有需要文件/文件夹导入的都要支持拖动导入」。
+  盘点后全站 13 处 `<input type=file>`，只有 MiMo 声音克隆的 `SamplePicker` 支持拖文件，
+  且**没有一处能接住文件夹**（语料目录这种最自然的动作只能点开面板多选）。
+
+- **已完成**
+  - **共用底座 `app/src/hooks/useFileDrop.ts`**
+    - 返回 `{ dragging, rootProps }`，`rootProps` 直接展开到任意容器（div / label / CardContent）
+    - **文件夹递归**：走 `webkitGetAsEntry` + `createReader().readEntries` 分批读到底
+      （`dataTransfer.files` 对目录只给一个 0 字节壳）；老浏览器没有 entry API 时退回 `files`
+    - **按 `accept` 过滤**：拖进来不符类型的文件直接忽略，不会污染表单
+    - **回填 `input.files`**（导出 `applyFilesToInput`）：原生控件靠它显示文件名，
+      不回填就一直写着「未选择任何文件」，看着像没成功
+    - `dragleave` 用深度计数器（`depth`）而不是直接置 false —— 否则拖过子元素时高亮会闪
+    - 回调引用走 `useEffect` 保最新（React 19 禁止渲染期写 ref，eslint `react-hooks/refs` 会拦）
+  - **13 处全部接入**（拖拽高亮 + 「可拖文件/文件夹进来」文案提示）：
+    `SamplePicker`（升级为支持文件夹）、`NeteaseTtsPage` 参考音频、`NeteaseAsrPage` 音频、
+    `AsrPage` 单条转写 + 数据集批量上传、`BatchPage` txt/csv 清单（整块文本区可接）、
+    `TrainingPage` **语料目录（整个文件夹拖进来 → 递归取音频 → 自动填 `source_audio_dir`）**、
+    `VoiceLibraryPage` 新建 + 替换参考音频、`VoiceConversionPage` 源音频 + 音色模型库
+    （`.pth` 主体 / `.index` 可先拖后补，给了对应提示）、`SingingConversionPage` 歌曲 + 只做分离
+  - **`AppShell` 全局兜底**：落在上传区之外的误拖不再把 SPA 导航走
+    （浏览器默认会打开拖入的文件，当前表单状态全丢）；上传区自己 preventDefault 过就跳过
+  - **顺带补的静默失败**：RVC `upload()` 只有 try/finally 没有 catch，导入失败时界面毫无反应
+    （按钮路径同样受影响，拖拽会让误操作更常见）→ 补 `toast.error` 带 `hint`
+  - **顺带修的泄漏**：`NeteaseAsrPage` 试听用 `URL.createObjectURL(file)` 写在 JSX 里，
+    每次渲染泄漏一个 Blob 地址 → 改 `useMemo` + 换文件/卸载时 revoke（与阶段 23 同一条坑 18）
+
+- **未完成**
+  - **文件夹拖拽没做真机验证**：Playwright/合成事件造不出 `FileSystemDirectoryEntry`，
+    只能验到「多文件拖入 + accept 过滤 + 回填 + 上传成功」这一层。递归分支需要用户
+    从资源管理器真实拖一次
+  - 拖进来的目录若混有非音频文件是**静默跳过**（与训练页官方口径一致），没有给「跳过了 N 个」的汇总
+
+- **改动文件**：新增 `app/src/hooks/useFileDrop.ts`；
+  改 `app/src/components/layout/AppShell.tsx`、`app/src/components/features/SamplePicker.tsx`、
+  `app/src/pages/{NeteaseTtsPage,NeteaseAsrPage,AsrPage,BatchPage,TrainingPage,VoiceLibraryPage,VoiceConversionPage,SingingConversionPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / 改动文件 eslint / `npm run build` 全通过；
+  浏览器合成 DragEvent 逐项实测：网易合成页（高亮 + 文件名 + `input.files=1` + 开始合成解禁）、
+  网易转写页（同上 + 试听条出现）、训练页语料（3 个文件拖入 → 2 个音频被收、`notes.txt` 按 accept 过滤掉，
+  **`POST /v1/train/upload` 返回 200 且目录字段自动填入** `trainer/.data/uploads/74c67028fe`）、
+  批量页（拖入 3 行 .txt → 文本框出现 3 条 · 23 字）、音色库导入（文件名显示 + 回填）、
+  变声/翻唱（文件进 input 且试听条出现）、RVC 音色模型库（只拖 `.index` → 给「再拖入同名 .pth 就会一起导入」提示；
+  拖 `.pth` → 走完整上传链路）
+
+- **风险**
+  - 真实 OS 拖拽（尤其文件夹）与合成事件不完全等价，递归分支未真机验证
+  - `applyFilesToInput` 依赖 `new DataTransfer()`（Chromium / Firefox / Safari 14+ 可用）；
+    失败时只影响原生控件的文件名显示，功能本身已生效（已 try/catch）
+  - 上传区大小按各页容器而定，训练页那条是「输入框 + 按钮」那一行，落点需要看提示文案
+  - 测试过程中产生过两处残留（`trainer/.data/uploads/74c67028fe`、`.data/vc/models/fake-weight.*`），
+    已按规矩送进**回收站**（未硬删除），模型目录复核后只剩原有 3 个 .pth
+
+- **下一阶段入口**：请用户从资源管理器真拖一个语料文件夹进训练页，确认递归取文件；
+  若要更贴心，可在拖目录后汇总「收了 N 个、跳过 M 个非音频」
+
+---
+
+## 阶段 23 — 浏览器走查网易合成页 + 阶段 6 新 UI（修掉 6 处实测出来的缺陷）
+
+- **起因**：HANDOFF「下一步」两条高优先级项 —— 网易合成页的 UI 交互人工过一遍、
+  端到端实测阶段 6 的新 UI。接口链路早就验完了，这次专挑「只有人（或浏览器）才能发现」的问题。
+
+- **已完成（走查结论 + 修复）**
+  - **`NeteaseTtsPage`：音色库取不到音频（合成必挂）**
+    取参考音频时把服务端的磁盘路径 `voice.audio_path` 直接丢给 `resolveAudioUrl()`，
+    拼出 `GET /api/sovits/F:/…/voices/xxx.mp3` → **404**，且这条失败被 `catch` 里的
+    `instanceof RequestError` 静默吞掉：按钮闪一下回到原样，**既不弹 toast 也没有错误卡**。
+    改为走试听同一条路由 `/v1/voices/{id}/audio`（音色库页 359 行一直是这么用的），
+    并把非 RequestError 的异常也翻成带 `hint` 的结构化错误。
+  - **`NeteaseTtsPage`：服务停着时 `/v1/voices` 无限重试**
+    effect 依赖里放了 `voicesLoading` —— 失败 → loading 归 false → effect 重跑 →
+    再失败，实测每 1~2 秒一发 503 并伴随一条 toast。改为「失败就停，只给手动入口」。
+  - **`NeteaseTtsPage`：音色库不可用时的界面从「卡在正在加载」变成可操作**
+    新增 `voicesFailed` 三态占位（未加载 / 空库 / 失败），失败时页面内嵌
+    `SovitsServiceNotice`（直接开启 / 去设置页）+「重新加载」按钮；
+    顺带删掉过时文案「start.bat 会拉起它」（阶段 17 起默认停用）。
+  - **`NeteaseTtsPage`：预览音频的 Blob 地址每次渲染泄漏一个**
+    `src={URL.createObjectURL(file)}` 写在 JSX 里 → 每次渲染新开一个且永不回收。
+    改成 `useMemo` + 卸载/换文件时 revoke。
+  - **`SovitsServiceNotice`：启动进度反馈 3 秒就自己消失（阶段 21 白做）**
+    服务端 `setEnabled(true)` 落盘在拉起**之前**，组件每 3 秒复检看到 `enabled=true`
+    就 `return null`，而进程还要数十秒 —— 用户点完「直接开启」立刻失去所有反馈。
+    改为「本页发起的启动过程（`starting`）期间不隐藏」，标题随之切成「正在启动 GPT-SoVITS 本地服务」。
+  - **`BatchPage` / `TrainingPage`：整页报错时把「直接开启」入口弄丢 + 文案过时**
+    两页 `if (connectionError) return <Alert/>` 会把页面里的 `SovitsServiceNotice` 一起替掉，
+    而 Alert 正文写着「请确认已执行 `npm run dev`（会自动拉起）」—— 阶段 17 起这句不成立。
+    改为把 Notice 嵌进 Alert 里（自带「只在停用时渲染」的语义），文案改说「默认停用，要先开启」。
+  - **`trainer/app/api.py`：设置页权重下拉显示空白（阶段 6 交付的 UI 实测不通过）**
+    `/v1/weights` 的 `pretrained.gpt/sovits` 回的是整合包**相对路径**，而前端把
+    `default.*`（**绝对路径**）当选中值，两个口径对不上 → Radix 找不到匹配项，
+    下拉框什么都不显示（实测两个触发器 innerText 均为空）。改为 `installation.path()` 绝对形式。
+  - **走查通过、无需改动的部分**：语种下拉 14 项齐全、跨语种可切；上传参考音频（5.0s 预览正常、
+    按钮按前置条件禁用）；音色库选取（服务在线时列表 + 「仅借用参考音频」说明卡）；
+    「改用 GPT-SoVITS 批量合成」回退按钮可跳转且落地页正确显示停用提示；
+    显存不足的错误卡带 `hint`（实测「需要约 6144 MB，当前仅 1069 MB」「有约 6030 MB 被其它进程占用」）；
+    训练页流水线顺序 **SoVITS 先于 GPT**（阶段 6 核心项）+ 两条官方顺序 hint + 训练完成卡的 E/S 解释；
+    设置页 WeightsPanel 结构完整（含「当前生效」「加载所选权重」）。
+
+  - **显存准入门槛按精度分档（用户拍板后落地）**
+    走查中发现 8 GB 卡在这套口径下根本开不起来：Windows 桌面常驻 2.9~5 GB + GPT-SoVITS 预加载 1.8 GB，
+    空闲常年 1~3 GB，而门槛写死 6144（那是按 **fp32** 估的，默认却是 fp16）。
+    新增 `netease/app/tts_engine.py::required_vram_mb(precision)` —— fp16 **5120**（实测峰值 4.9 GB）、
+    fp32 保持 6144；预热、合成两条准入路径与 `/health`、catalog 暴露的数值统一按实际精度取。
+    R2T2 的准入仍用 `REQUIRED_VRAM_MB = 6144`（不在这次范围内）。**需重启 9882 才生效**。
+  - **其余模块页面状态走查（无需 GPU 的部分）**：变声 / 翻唱 / 转写三页的「能力来源」条、
+    变声页资源预估卡、音色库页（1 条音色、状态正常）、网易转写页的「Windows 装不了 vLLM」如实 WIP 卡、
+    MiMo 声音克隆页的「未配置密钥」引导 —— 渲染与文案均正常，未发现新问题。
+    （ASR 转写页没有资源预估卡，属阶段 14 的接入范围选择，未擅自补）
+
+- **未完成**
+  - **网易合成成功路径的结果卡（播放 / 下载 / 多条并存）仍未实测** —— 门槛已按精度分档，
+    但这台机器桌面常驻就把卡占了约 5 GB，重启 9882 后能报出 5120 的口径；真要跑得先腾显存
+  - **阶段 6 的切分结果面板**：现有历史任务没有一个带 `slice` 阶段（`/v1/jobs` 核对过），
+    要么跑一轮开切分的短任务，要么等有真实语料再看
+  - 阶段 22 的速度/质量档位选择器：**未动**（用户上次明确叫停）
+
+- **改动文件**：`app/src/pages/{NeteaseTtsPage,BatchPage,TrainingPage}.tsx`、
+  `app/src/components/features/SovitsServiceNotice.tsx`、`app/src/App.tsx`、`trainer/app/api.py`、
+  `netease/app/{tts_engine.py,routers/confucius.py,routers/netease.py}`
+
+- **测试结果**：`npm run typecheck` / 改动文件 eslint / `npm run build` 全通过；
+  `trainer/app/api.py` `ast.parse` 通过；服务重启后 `/v1/weights` 实测
+  `default.gpt == pretrained.gpt`（MATCH），设置页两个权重触发器显示「官方预训练底模 · 零样本克隆」；
+  浏览器复验：音色库失败态只发 1 次请求（`performance` 计数 8 秒内 18→18 不再增长）、
+  「直接开启」进度条活过 10 秒并在就绪后自动收起、「重新加载」取回 1 条音色、
+  选音色后合成能真正打到后端并返回结构化显存错误（旧版这里是无声 404）；
+  netease venv 直接调用 `required_vram_mb()` 验证：precision=fp16 → 5120、fp32 → 6144；
+  三个 netease 文件 `ast.parse` 通过
+
+- **风险 / 新发现（需拍板）**：**nvidia-smi 口径 + 6144 MB 门槛在 8 GB 机器上近乎不可满足** ——
+  Windows 桌面本身（MyDockFinder / explorer / webview 等）就稳定吃掉约 2.9~5 GB，
+  GPT-SoVITS 一启动预加载再占约 1.8 GB，空闲长期在 1~3 GB 徘徊。
+  改口径前（torch 视图）这类请求会被放行、模型靠抖动加载、代价是首条合成 378 秒；
+  改口径后被正确拦下，但**主服务在正常用机的状态下也开不了**。
+  建议（待用户点头）：`REQUIRED_VRAM_MB` 按精度分档 —— fp16 实测峰值 4.9 GB，
+  门槛可从 6144 降到约 5120；fp32 保留 6144。门槛属服务端单一真源（坑 19），改一处即可。
+
+- **下一阶段入口**：① 按上面建议校准准入门槛（或用户手动腾显存）后补测「合成成功 → 结果卡播放/下载」；
+  ② 跑一条开切分的短任务验证阶段 6 的切分结果面板；③ 档位选择器仍等用户重新开工
+
+---
+
+## 阶段 23 — 文档修正：R2T2 可用性分层 + IndexTTS 接入方案
+
+- **起因**：用户转述了别人在同一模型上的排查结论，指出我此前「Windows 装不了 vLLM → R2T2 整体不可用」
+  下得过重；并要求**更新文档**，然后给出 **IndexTTS**（https://github.com/index-tts/index-tts）
+  的本地化接入方案，且同样要有显存 / 内存 / 检测等性能管控。
+
+- **已完成（纯文档，代码未动）**
+  - **修正坑 12（R2T2 分层结论）**，证据全部取自本地仓库：
+    - `Confucius4-R2T2/pyproject.toml:67-69` 默认 `dependencies=["qwen-asr[vllm]", ...]` → 官方两条路
+      （`INFER_MODE` 仅 `stream_vllm/onetime_vllm`；Docker 用 `qwenllm/qwen3-asr`）确实是 Linux 路线，
+      但 **extra 可拆**
+    - `pyproject.toml:104-106` + `r2t2/r2t2_asr.py:23/189`：`qwen_asr` 是 PyPI 包，
+      `R2T2ASRModel(Qwen3ASRModel)` 是继承 → transformers 后端天然可用
+    - **流式被写死**：`r2t2_asr.py` 有 5 处 `if self.backend != "vllm": raise ValueError(...)`
+      （行 267/352/527/621/802）→ 流式 Windows 原生不可能
+    - 实测验证：`qwen_asr-0.0.6-py3-none-any.whl`（141 KB 纯 Python）在本机可下载 → Windows 可装
+    - 结论：**离线转写 Windows 原生可行（我们没接，是判死刑的损失）；流式需 WSL2/Docker**
+    - 同步记录他人实测的代价：显存槛 ~5.5/6.5 GB、`SEGMENT_LENGTH=240`、`MAX_INFERENCE_BATCH_SIZE=1`、
+      首 token 慢（torch 分配池未预热）
+  - **新增 `docs/INDEX-TTS-INTEGRATION.md`**：IndexTTS-2.5 一手资料（0.8B / 5 语种 / BF16 /
+    官方 RTF 0.2065@4090 / `uv` 必需 / CUDA ≥12.8 / bilibili 许可）+ 与现有三套模型的对比 +
+    部署形态（9883 独立端口、网关无 supervisor、opt-in）+ **资源管控设计**（复用 ResourceBudget
+    成本表、arbiter 增加 `indextts` 引擎项、nvidia-smi 口径、体检脚本）+ 8 阶段计划 + 风险登记
+  - HANDOFF：决策表补「IndexTTS 定位为补充」；下一步清单把原来「装不装 WSL2 跑 R2T2」
+    改成「先接离线（Windows 原生可行），流式再议」
+
+- **未完成**：代码一律未动（用户此前要求「停下所有任务」，本轮只做文档）
+
+- **改动文件**：`netease/README.md`、`docs/INDEX-TTS-INTEGRATION.md`（新）、`HANDOFF.md`、`PROGRESS.md`
+
+- **测试结果**：无代码改动，未跑构建；所有引用的行号均在本仓库实际核对过
+
+- **风险**
+  - IndexTTS 的 RTF 是从官方 4090 数据外推的，本机 4060 Laptop 需实测，方案里明确标注为估计值
+  - 许可为 bilibili 模型使用协议（非 Apache），商用前必须单独确认 —— 已在文档显著位置标注
+  - 若不采纳该方案，文档会成为噪音；建议保留在 `docs/`（与既有可行性评估同层），不进主流程
+
+- **下一阶段入口**：等用户拍板 IndexTTS（定位 / 磁盘 / 许可）；若拍板，从阶段 0（环境核实）开始
+
+---
+
 ## 阶段 22 — 网易合成速度 / 质量档位（**半成品，UI 选择器未做**）
 
 - **起因**：用户问「官方 demo 为什么快」→ 排查结论（vLLM + 数据中心显卡 + 官方默认

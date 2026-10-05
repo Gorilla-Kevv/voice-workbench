@@ -88,6 +88,9 @@
 - 网易契约：`app/src/types/netease.ts`（与后端 `netease/app/models.py` 一一对应，**改一边必改另一边**）
 - **结果列表底座**：`app/src/hooks/useResultStack.ts` + `app/src/components/features/ResultStack.tsx`
   —— 所有模块的结果栏都走这两个；别在某个页面再自造单值结果 state（见坑 18）
+- **文件/文件夹拖拽底座**：`app/src/hooks/useFileDrop.ts`
+  —— 全站 13 处上传点都展开它的 `rootProps`（含 `accept` 过滤、`input.files` 回填、目录递归）；
+  新增上传入口请复用它，别再手写一遍 dragover/drop（见坑 25）
 - **资源预估底座**：`app/src/lib/resources.ts` + `app/src/components/features/ResourceBudget.tsx`
   —— 显存门槛**只从服务端取**（trainer `/v1/engines`、`netease /health`），前端只留兜底常量；
   内存由网关 `/api/health` 的 `host` 提供（见坑 19）
@@ -110,6 +113,7 @@
 | 术语提示：桌面悬浮 / 触屏点击 | Radix Tooltip 在触摸设备体验不可靠（悬浮不存在） |
 | 资源站入口：`ResourceSiteLink` 组件，三处（训练 / 变声 / 翻唱） | https://res.acgnai.top/ 提供角色语音数据集与 TTS·SVC 开源模型，正好补「训练没数据、变声没模型」两头；外部链接一律新窗口 + `noopener noreferrer` |
 | 网易合成默认档位 **balanced**（非官方默认） | 官方默认 `num_beams=3` 会让 T2S 自回归跑三条候选（约 3 倍代价），是本机「慢」的主因之一；`balanced=(1,18)` 明显更快。档位定义在 `netease/app/routers/confucius.py::QUALITY_PRESETS`，要回官方默认选 `quality` |
+| **第二套本地 TTS（IndexTTS-2.5）定位为「补充」** | 0.8B / BF16 / 官方 RTF 0.2065，显存压力比网易小；独有价值是**情感向量 / 拼音注音 / 语速倍率**这类精细可控。但它只有 5 语种，跨语种弱于网易 → 不抢主服务位置。方案见 `docs/INDEX-TTS-INTEGRATION.md`（**未开工**） |
 | 网易模块**不进 Provider 抽象**、独立成 `netease/` 运行时 | 上游要求 py≥3.10 + torch≥2.5 + cu≥12.6，与 trainer 的 py3.9/torch2.0 互斥（`MODERN-TTS-FEASIBILITY.md` 已论证）；它是本地引擎不是云端 BYOK，塞进 Provider 抽象反而要特化密钥态 |
 | R2T2 走**子进程 worker**（stdin/stdout JSON 行协议） | vLLM 引擎要求 `__main__` 环境启动（上游 README 明确警告）；worker 自成主进程规避，还能用 `NETEASE_R2T2_PYTHON` 独立解释器解决依赖冲突 |
 | 网易两引擎**进程内互斥**，跨进程显存协调暂不做 | 8 GB 卡同时常驻 GPT-SoVITS + 1.3B LLM 本就不现实；先靠加载前空闲显存检查 + 明确报错兜底 |
@@ -160,7 +164,21 @@
     「训完 SoVITS 重新提取语义 Token」评估过、不需要 —— `3-get-semantic.py` 用官方底模
     （`pretrained_s2G`）提取语义 Token，GPT 训练不依赖 SoVITS 微调产物。详见 `training.py` 模块注释。
 
-12. **R2T2 worker 的流式增量取值：已按官方 README 校准，但仍未在真机跑过**
+12. **R2T2 的可用性要分两层说（2026-10 修正，之前判错了）**
+    原结论「Windows 装不了 vLLM → R2T2 整个不可用」**过重**，实际是：
+    - `pyproject.toml:67-69` 默认依赖 `qwen-asr[vllm]`（所以官方两条路都是 Linux：
+      `INFER_MODE` 只有 `stream_vllm/onetime_vllm`；Docker 用 `qwenllm/qwen3-asr`）；
+      但 **extra 可拆** —— 装 `qwen-asr==0.0.6`（纯 Python wheel，`py3-none-any`，Windows 可装，
+      已验证下载）就走 transformers 后端；
+    - `r2t2/r2t2_asr.py:23` `from qwen_asr.inference.qwen3_asr import Qwen3ASRModel`，
+      `:189` `class R2T2ASRModel(Qwen3ASRModel)` —— **继承**，transformers 后端天然可用；
+    - 但 `:267/352/527/621/802` 有 **5 处** `if self.backend != "vllm": raise ValueError(...)`
+      → **流式被代码写死成 vLLM-only**。
+    所以：**离线转写 Windows 原生可行**（我们没接，是判死刑导致的损失）；
+    **流式转写 Windows 原生不可能**，只能 WSL2 / Docker。
+    8 GB 卡上跑这条路径的已知代价（他人实测）：显存槛 ~5.5/6.5 GB、`SEGMENT_LENGTH=240` 外层切块、
+    `MAX_INFERENCE_BATCH_SIZE=1`（默认 32 会爆 KV cache）、首 token 慢（torch 分配池未预热，
+    预热一条空音频可规避）。
     官方 README 写明 `_, text = asr.streaming_transcribe(seg, state, max_new_tokens=4)`
     —— **增量文本在返回值的第二个元素**，不是从 `state` 读；定稿是 `finish_streaming_transcribe(state)`
     之后读 `state.text`。`r2t2_worker.py` 已按此改（`_coerce_text()` + `_state_text()` 兜底）。
@@ -227,6 +245,43 @@
     `/api/sovits` 与 `/api/netease` 都挂在 `express.json()` 之前（index.ts 内有注释）。新增代理路由时
     再犯「multipart/NDJSON 被 body-parser 消费」的老错，症状是上传与流式全部 400/空体。
 
+21. **音色库的 `audio_path` 是服务端磁盘路径，不能当 URL 用**
+    `resolveAudioUrl(voice.audio_path)` 会拼出 `/api/sovits/F:/…/xxx.mp3` → 404。
+    可访问的地址只有试听那条：`/v1/voices/{id}/audio`（音色库页与网易合成页现都走它）。
+    **同一处还有第二个坑**：`catch (e) { if (e instanceof RequestError) ... }` 会把
+    fetch 层的普通 Error 静默吞掉，表现为「按钮闪一下、什么都没发生」——
+    失败必须一律转成带 `hint` 的结构化错误再展示（阶段 23 已在网易合成页修）。
+
+22. **`/v1/weights` 的 `default` 与 `pretrained` 必须是同一口径的路径**
+    设置页权重面板拿 `default.*` 作下拉的选中值、拿 `pretrained.*` 作选项值；
+    一个绝对一个相对时 Radix 匹配不上，**两个下拉框显示为空白**（看起来像「没有权重」）。
+    现两边都是 `installation.path()` 的绝对形式。
+
+23. **GPT-SoVITS 的 `enabled` 开关在进程就绪之前就已落盘**
+    `setEnabled(true)` 先写 `server/.data/sovits-service.json` 再 `ensureStarted()`，
+    而 Python 侧冷启动要数十秒。所以任何「看到 enabled 就认为没事了」的逻辑都会误判 ——
+    `SovitsServiceNotice` 现在必须同时看 `starting`（本页正在开启就先留着给进度）。
+
+24. **显存准入门槛按推理精度分档（已修，2026-10）**
+    nvidia-smi 口径改对之后（坑 17），6144 MB 这个**按 fp32 估的**门槛套在默认 fp16 上，
+    等于把 8 GB 卡的主服务锁死 —— Windows 桌面（MyDockFinder / explorer / webview）常驻就吃掉
+    2.9~5 GB，GPT-SoVITS 一启动预加载再占约 1.8 GB，空闲常年只有 1~3 GB。
+    现 `netease/app/tts_engine.py::required_vram_mb(precision)`：fp16 → **5120**（实测峰值 4.9 GB），
+    fp32 → 6144 原值；预热与合成两条准入路径、`/health` 的 `tts_required_vram_mb`、
+    catalog 的 `required_vram_mb` 都按实际精度取值（坑 19：真源在服务端，前端只有兜底常量）。
+    ⚠️ 分档只是不再按错口径拦人，**不等于这台机器一定跑得起来**：桌面把卡占满时空闲仍不足 5 GB，
+    得用户自己关占显存的程序。R2T2 的准入仍用 `REQUIRED_VRAM_MB = 6144`，本次未动。
+
+25. **拖拽导入必须走 `app/src/hooks/useFileDrop.ts`，别各自写 onDrop**
+    三个容易漏的点（阶段 24 踩过）：
+    - **文件夹只能靠 `webkitGetAsEntry`**：`dataTransfer.files` 对目录只给一个 0 字节壳，
+      里面有什么要 `createReader().readEntries()` **分批读到返回 0 条为止**（一次不一定返全）。
+    - **拖完要回填 `input.files`**（`applyFilesToInput`）：原生控件靠它显示文件名，
+      不回填就一直写着「未选择任何文件」，看着像没成功。
+    - **`dragleave` 要用深度计数器**：指针掠过子元素会反复触发，直接置 false 会让高亮狂闪。
+    `AppShell` 上有一层全局 `preventDefault` 兜底 —— 落在上传区之外的误拖，浏览器默认会
+    把整个 SPA 导航走（表单状态全丢）。新增上传点只要展开 `rootProps` 就自动带上过滤与回填。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -272,6 +327,12 @@
   TTS `installed=true / missing=0`、R2T2 `installed=false`（两张状态卡如实显示已就绪 / 待补齐）；
   经网关代理合成一条 200（4.99 s 音频 / 24.36 s）。**GPT-SoVITS 的后台预加载已手动卸掉**
   （`POST /v1/engines/unload` + `/v1/pipeline/unload`）让位，下次用它会自动重新加载
+- **浏览器人工走查已做完（阶段 23）**：网易合成页 + 阶段 6 新 UI 逐项点过，修掉 6 处只有实测才会
+  暴露的缺陷（音色库取参考音频 404、失败被静默吞掉、`/v1/voices` 无限重试、启动进度 3 秒自消失、
+  整页报错时丢掉「直接开启」入口、权重下拉显示空白）；新增坑 21~24
+- **全站拖拽导入已就位（阶段 24）**：13 处上传点统一走 `app/src/hooks/useFileDrop.ts`，
+  支持文件与**文件夹**（entry API 递归）、按 accept 过滤、回填 `input.files`；
+  `AppShell` 加了全局 preventDefault 兜底（误拖不再把 SPA 导航走）；新增坑 25
 
 ### 验收标准
 
@@ -286,14 +347,17 @@
 
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
-| 高 | 端到端实测阶段 6 的新 UI | 跑一轮真实训练：确认 s2→s1 顺序、切分结果面板、设置页权重加载联动；`step_stages()` 已用真模块断言过，浏览器侧未测 |
-| 高 | 网易合成页的 UI 交互人工过一遍 | **接口链路已验完**（四端口在跑，网关透传 `/api/netease/*` 正常，经代理合成 200）；剩下上传参考音频、音色库选取、跨语种切换、结果卡播放/下载的手感 |
-| 中 | 补网易合成页的**速度/质量档位选择器** | 阶段 22 半成品：后端三档（fast/balanced/quality）与 API 已可用，页面会固定用 balanced；补做点在 `NeteaseTtsPage` 合成内容卡里加 Select（选项来自 `catalog.tts.quality_presets`），并实测三档 RTF 与听感 |
-| 高 | **拍板：装不装 WSL2 跑 R2T2** | 勘察已完成（WSL 2.7.14 就位、驱动 572.61 支持直通、Docker 未装），方案与成本见 `netease/README.md`「R2T2 落地方案」：**推荐只把 worker 放进 WSL**（TTS 不动），代价是 10~15 GB 磁盘 + 一次管理员权限。代码侧准备已做好（未配置时零影响）。装之前需要你点头 |
+| 高 | 端到端实测阶段 6 的新 UI | **走查已做完一半**（阶段 23）：训练页 s2→s1 顺序 / 官方 hint / 完成卡 E-S 解释、设置页权重下拉（**实测出下拉显示空白，已修**，见坑 22）均浏览器验过；仍缺 ① 带 `slice` 阶段的任务来验切分结果面板（现有历史任务无一含切分），② 权重「加载所选权重」联动（本机 `GPT/SoVITS_weights_v2ProPlus/` 为空，没有训练产物可选） |
+| 高 | 网易合成页的 UI 交互人工过一遍 | **已做完**（阶段 23）：上传、音色库选取（**实测必挂，已修**，见坑 21）、语种切换、回退按钮、显存不足报错均验过；**唯一没验到的是「合成成功 → 结果卡播放/下载」**，被显存准入拦死（见下一条），需要先把门槛口径拍板或手动腾显存 |
+| 高 | **显存准入门槛按精度分档** | **已按用户拍板落地**（坑 24）：fp16 → 5120、fp32 → 6144，真源改为 `netease/app/tts_engine.py::required_vram_mb(precision)`。**需重启 9882 才生效**；另外这台机器 Windows 桌面常驻约 5 GB，5120 只是「不再按 fp32 的口径误拦」，真跑仍要用户先腾显存 |
+| 中 | **真机验证拖拽导入的文件夹分支**（阶段 24） | 合成事件造不出 `FileSystemDirectoryEntry`，目录递归这条只能由用户从资源管理器真拖一个语料文件夹进训练页来确认（其余 13 处入口均已浏览器实测：过滤、回填、上传都正常） |
+| 中 | 补网易合成页的**速度/质量档位选择器** | 阶段 22 半成品：后端三档（fast/balanced/quality）与 API 已可用，页面会固定用 balanced；补做点在 `NeteaseTtsPage` 合成内容卡里加 Select（选项来自 `catalog.tts.quality_presets`），并实测三档 RTF 与听感。**上次由用户叫停，重开需其点头** |
+| 高 | **R2T2：先接离线（Windows 原生可行），流式再议** | 见坑 12 的修正：离线转写用 `qwen-asr` transformers 后端即可，不需 vLLM/WSL；流式被源码写死成 vLLM-only。已搁置的 WSL2 方案只服务于**流式**，不再是「ASR 整体」的前提 |
 | 中 | fp16 音质人工确认 | 已出声（RMS 0.08~0.10），但没做过 A/B；若嫌糊，用 `NETEASE_TTS_PRECISION=fp32` 重试（需要 ≥8 GB 空闲显存） |
 | 低 | 首条合成预热（实测 378 s） | 稳态 RTF 2.0~2.5，但冷启动第一条要几分钟。可考虑 warmup 时跑一句空合成把算子预热掉 |
-| 低 | 观察新口径是否过严 | trainer 准入改用 nvidia-smi 后判定更严格，若出现「明明没跑别的却被拦」，回来看门槛数值是否需要按真实口径重新校准 |
+| 低 | 观察新口径是否过严 | **已有结论，见上面「显存准入门槛是否按精度分档」与坑 24** —— 确实过严，正常用机状态下主服务开不起来 |
 | 低 | 首条合成 378 s 复测 | 怀疑就是显存不足导致的抖动（当时只剩 ~300 MB 却被放行），口径修好后**在显存充足时复测**；若仍慢再考虑 warmup 里跑一句空合成预热 |
+| 中 | **拍板：是否接入 IndexTTS-2.5** | 方案已就绪（`docs/INDEX-TTS-INTEGRATION.md`）：0.8B/BF16/情感可控，资源管控复用现有 ResourceBudget + arbiter + preflight 模式。需确认三点：定位（补充不抢主服务）/ 磁盘 5~8 GB / 商用许可（bilibili 协议非 Apache） |
 | 中 | 决策：是否推进三模型整合 | `docs/` 已有 OmniVoice/VoxCPM2/Qwen3-TTS 可行性评估，待拍板；若推进，复用 netease 阶段验证过的「第二个运行时 + 无 supervisor 网关透传」模式 |
 | 低 | 毛玻璃观感浏览器确认 | 阶段 5 遗留，多次预览被跳过 |
 | 低 | BS-RoFormer 补 `.yaml` | 整合包有权重缺配置；补齐后模型列表自动变为可用（无需改代码） |
@@ -304,6 +368,6 @@
 - 改动前先看「已知坑」第 1、5、6 条（bat 编码、Python 3.9 限制、弹窗依赖）；
   动 `netease/` 前必看第 12~17 条（R2T2 平台阻塞、HF 缓存、hf-mirror、fp16、float32 写盘、显存口径）；
   动任何结果栏前必看第 18 条（统一走 `useResultStack`）；动资源预估前看第 19 条（门槛值在服务
-  端）
+  端）；动任何上传/导入入口前看第 21、25 条（磁盘路径不能当 URL、拖拽统一走 `useFileDrop`）
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志

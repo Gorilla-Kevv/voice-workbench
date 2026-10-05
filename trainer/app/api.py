@@ -465,9 +465,14 @@ def _register_pipeline(app: FastAPI, ctx: Context) -> None:
             payload["default"] = None
             payload["warning"] = exc.message
 
+        # 绝对路径形式返回：与上面 `default` 同源。前端下拉把这里当选项值、
+        # 把 `default` 当选中值，两者口径不一致时「官方底模」永远显示为未选中（界面空白）。
+        def _abs(relative: Optional[str]) -> Optional[str]:
+            return str(installation.path(relative)) if relative else None
+
         payload["pretrained"] = {
-            "gpt": catalog.PRETRAINED_GPT.get(target_version),
-            "sovits": catalog.PRETRAINED_SOVITS_G.get(target_version),
+            "gpt": _abs(catalog.PRETRAINED_GPT.get(target_version)),
+            "sovits": _abs(catalog.PRETRAINED_SOVITS_G.get(target_version)),
             "available": _pretrained_available(installation, target_version),
         }
         return payload

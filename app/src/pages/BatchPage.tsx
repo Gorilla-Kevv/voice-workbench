@@ -39,6 +39,7 @@ import { RequestError } from '@/lib/errors';
 import { SOVITS_PARAM_SPECS } from '@/lib/constants';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
 import { cn } from '@/lib/utils';
+import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
 import type { AppSettings, SovitsBatchItemResult, SovitsJob, SovitsJobState, SovitsVoice } from '@/types';
 
 interface BatchPageProps {
@@ -357,6 +358,13 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
     },
     [],
   );
+
+  // 清单文件支持直接拖进这一块（只取第一个符合 accept 的文件）
+  const { dragging: listDragging, rootProps: listDropProps } = useFileDrop({
+    onFiles: (files) => void handleImport(files[0]),
+    accept: '.txt,.csv,.tsv,text/plain,text/csv',
+    inputRef: fileRef,
+  });
 
   // ------------------------------------------------------------------
   // 解析清单（只做校验，不合成）
@@ -711,9 +719,11 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
         <AlertDescription className="space-y-2">
           <p>{connectionError}</p>
           <p className="text-xs opacity-90">
-            本地服务由项目内置的 Python 进程提供（默认 http://127.0.0.1:9881）。请确认已执行
-            `npm run dev`（会自动拉起），或单独运行 scripts/start.ps1 / start.sh。
+            本地服务由项目内置的 Python 进程提供（默认 http://127.0.0.1:9881）。它<strong>默认停用</strong>
+            （把显存留给网易主服务），`npm run dev` 不会再自动拉起 —— 要用批量合成得先开启。
           </p>
+          {/* 整页报错时把「直接开启」的入口一起带上：否则这张卡替掉了页面里的提示，用户只剩一条做不到的建议 */}
+          <SovitsServiceNotice onGoSettings={onGoSettings} />
           <Button size="sm" variant="outline" onClick={() => void loadVoices()}>
             <RefreshCw className="mr-1.5 size-3.5" />
             重新检测
@@ -737,12 +747,16 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
             文本清单
           </CardTitle>
           <CardDescription>
-            每行一条，空行自动忽略。也可以在「音色库」批量整理好素材后，直接把台词表粘贴进来。
+            每行一条，空行自动忽略。也可以在「音色库」批量整理好素材后，直接把台词表粘贴进来，
+            或把 .txt / .csv 清单文件**直接拖进这一块**。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
-            <div className="space-y-2">
+            <div
+              className={cn('space-y-2 rounded-lg px-1 py-1 transition', dropHighlight(listDragging))}
+              {...listDropProps}
+            >
               <div className="flex items-center justify-between">
                 <Label htmlFor="batch-text">待合成文本</Label>
                 <Badge variant="secondary" className="font-mono text-[11px]">

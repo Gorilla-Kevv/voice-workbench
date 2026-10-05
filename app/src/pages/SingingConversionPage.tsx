@@ -17,6 +17,8 @@ import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
+import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
+import { cn } from '@/lib/utils';
 import { resolveAudioUrl, svcApi, uvrApi } from '@/lib/vc';
 import type { SovitsJob, SvcCatalog } from '@/types';
 
@@ -152,6 +154,14 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
 
   const sourceUrl = useMemo(() => (state.file ? URL.createObjectURL(state.file) : null), [state.file]);
 
+  // 拖一整段伴奏进来比点按钮快得多，所以这里也收拖拽
+  const songInputRef = useRef<HTMLInputElement>(null);
+  const { dragging: songDragging, rootProps: songDropProps } = useFileDrop({
+    onFiles: (files) => patch({ file: files[0] ?? null }),
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac',
+    inputRef: songInputRef,
+  });
+
   const submit = async () => {
     if (!state.file || !state.model) {
       setError('请先选择歌曲与目标音色');
@@ -235,14 +245,18 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
         {/* 翻唱第一步就是分离（UVR5 门槛 4 GB），先把显存账摆出来 */}
         <ResourceBudget task="uvr5" />
         <div className="grid gap-4 lg:grid-cols-2">
-          <div className="space-y-2">
-            <Label htmlFor="svc-song">歌曲</Label>
+          <div className="space-y-2" {...songDropProps}>
+            <Label htmlFor="svc-song">歌曲（可拖文件进来）</Label>
             <input
+              ref={songInputRef}
               id="svc-song"
               type="file"
               accept="audio/*"
               onChange={(event) => patch({ file: event.target.files?.[0] ?? null })}
-              className="w-full cursor-pointer rounded-lg border bg-background px-3 py-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+              className={cn(
+                'w-full cursor-pointer rounded-lg border bg-background px-3 py-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs',
+                dropHighlight(songDragging),
+              )}
             />
             {sourceUrl ? <audio src={sourceUrl} controls preload="metadata" className="mt-1 w-full" /> : null}
 
@@ -385,6 +399,13 @@ function SeparateOnlyCard() {
   const [preset, setPreset] = useState('vocal_fast');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const separateInputRef = useRef<HTMLInputElement>(null);
+  const { dragging: separateDragging, rootProps: separateDropProps } = useFileDrop({
+    onFiles: (files) => setFile(files[0] ?? null),
+    accept: 'audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac',
+    disabled: busy,
+    inputRef: separateInputRef,
+  });
   // 多条结果并存：每次分离留一条，旧的还能回去听
   const results = useResultStack<SeparateResultItem>({
     limit: 12,
@@ -424,12 +445,16 @@ function SeparateOnlyCard() {
         <CardDescription>先听人声与伴奏，确认满意后再进向导转换 —— 分离结果会进入缓存，向导直接复用。</CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        <div className="flex flex-wrap items-end gap-3">
+        <div className="flex flex-wrap items-end gap-3" {...separateDropProps}>
           <input
+            ref={separateInputRef}
             type="file"
             accept="audio/*"
             onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            className="w-full max-w-sm cursor-pointer rounded-lg border bg-background px-3 py-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs"
+            className={cn(
+              'w-full max-w-sm cursor-pointer rounded-lg border bg-background px-3 py-2 text-xs file:mr-3 file:rounded-md file:border-0 file:bg-muted file:px-2 file:py-1 file:text-xs',
+              dropHighlight(separateDragging),
+            )}
           />
           <div className="w-56">
             <Select value={preset} onValueChange={setPreset}>

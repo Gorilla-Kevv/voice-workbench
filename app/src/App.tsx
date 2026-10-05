@@ -423,7 +423,7 @@ function App() {
         {active === 'svc' ? <SingingConversionPage onGoSettings={goSettings} /> : null}
         {active === 'asr' ? <AsrPage /> : null}
         {active === 'netease-tts' ? (
-          <NeteaseTtsPage onFallback={() => setActive('batch')} />
+          <NeteaseTtsPage onFallback={() => setActive('batch')} onGoSettings={goSettings} />
         ) : null}
         {active === 'netease-asr' ? <NeteaseAsrPage onFallback={() => setActive('asr')} /> : null}
 
