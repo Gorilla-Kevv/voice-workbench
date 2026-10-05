@@ -54,3 +54,9 @@ models/
 
 # 本地编辑器 / AI 工具配置
 .codebuddy/
+
+# IndexTTS（indextts/）：上游仓库与权重本地化，体积巨大
+indextts/upstream/
+indextts/.venv/
+indextts/checkpoints/
+indextts/.data/

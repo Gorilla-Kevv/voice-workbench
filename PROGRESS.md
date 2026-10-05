@@ -2,6 +2,12 @@
 
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
+## 进度看板
+- 当前正在开发任务：阶段 25 IndexTTS 本地服务骨架（服务已跑通，**真实合成未实测**）
+- 下一阶段任务：阶段 26 IndexTTS 真实合成实测 + 网关透传 + 前端页面 + 资源管控接入
+- 可提前进行的任务：阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理
+- 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）
+
 ## 阶段 1 — 本地化改造与架构搭建
 
 - **已完成**
@@ -590,7 +596,36 @@
 
 ---
 
-## 阶段 24 — 启动预加载选择（双轨策略 + 显存与模型挂钩）
+## 阶段 25 — IndexTTS 本地服务骨架落地 [计划时间：10.5 22:10 BY CodeBuddy][完成时间：10.6 00:20 BY CodeBuddy]
+- 分支：feature/vc-svc
+- 已完成：
+  - 阶段 0/1/2 连续执行（同会话自动续作）：环境核实（CUDA Toolkit 12.8.93 / uv 0.11.16 / 磁盘 664 GB）
+    → `git clone --depth 1` 上游到 `indextts/upstream` → `uv sync`（清华镜像，torch 2.8.0+cu128，
+    Python 3.11.13 由 uv 自动选择；DeepSpeed/WebUI extras 未装，fastapi/uvicorn/python-multipart 后补）
+    → ModelScope 下载 IndexTTS-2.5 权重 **5.11 GB** 到 `indextts/upstream/checkpoints`（含 config.yaml）
+  - 服务骨架：`indextts/server.py` + `indextts/app/{config,hardware,errors,indextts_engine,api}.py`，
+    端点与网易同构（`/health` 永远 200、`/v1/pipeline|warmup|unload|synth`），
+    显存口径 nvidia-smi 优先（与坑 17 修法一致），准入门槛 3072 MB（估计值）
+  - 启动器 `scripts/indextts.mjs`（含 `--skip-if-missing`），`package.json` 加 `dev:indextts` / `indextts:check`
+- 未完成：
+  - **真实合成未实测**（模型未加载跑过一次 infer）；情感向量 / 拼音注音 / 语速倍率未接
+  - 网关透传 `/api/indextts/*`、前端页面、`ResourceBudget` 成本表加 `indextts`、arbiter 引擎项 —— 全部未做
+  - 三套服务（trainer / netease / indextts）的预加载账本只登记了前两套
+- 改动文件：新增 `indextts/{server.py,app/*.py}`、`scripts/indextts.mjs`；
+  改 `package.json`、`.gitignore`（忽略 upstream / .venv / checkpoints / .data）
+- 测试结果：上游 venv 导入验证（indextts/omegaconf/librosa/modelscope 全 ok）；
+  torch 2.8.0+cu128 CUDA=True；`--check` 体检通过（权重 config.yaml 在位）；
+  服务启动后 `/health` = `{ok:true, cuda:true, vram.free=2963, source:nvidia-smi, engine.loaded:false}`
+- 风险：`infer()` 的实际调用签名按官方 README 写，未跑过 —— 首次真实合成可能要对参数；
+  `use_cuda_kernel` 默认关（Windows 编译环境不确定）；RTF 0.2065 是 4090 数据，本机需实测
+- 下一阶段入口：真实合成实测（`/v1/warmup` + `/v1/synth`，用上游 examples 音频）；
+  之后接网关透传与前端
+- 本次文档更新时间：10.6 00:35
+
+---
+
+## 阶段 24 — 启动预加载选择（双轨策略 + 显存与模型挂钩）[计划时间：10.5 22:10 BY CodeBuddy][完成时间：10.6 00:10 BY CodeBuddy]
+- 分支：feature/vc-svc
 
 - **起因**：用户裁决 —— IndexTTS 与网易谁当主力**由使用测试判断**，不预设；
   先走**双轨**，新增「网页启动时选择预加载哪个模型」的功能；
