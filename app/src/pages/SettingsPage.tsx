@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   CheckCircle2,
   ChevronDown,
@@ -55,10 +55,14 @@ interface SettingsPageProps {
   health: HealthInfo | null;
   /** 密钥配置变化后通知外层刷新状态 */
   onKeyChange: () => void;
+  /** 侧栏状态卡带来的锚点：preload / service-netease / service-indextts / service-sovits / cloud */
+  focusSection?: string | null;
+  /** 锚点消费完毕（避免重复滚动） */
+  onFocusHandled?: () => void;
 }
 
 /** 设置页：两套链路的服务地址、密钥、合成偏好与运行环境 */
-export function SettingsPage({ settings, update, reset, health, onKeyChange }: SettingsPageProps) {
+export function SettingsPage({ settings, update, reset, health, onKeyChange, focusSection, onFocusHandled }: SettingsPageProps) {
   const [showKey, setShowKey] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [verifyResult, setVerifyResult] = useState<{ ok: boolean; message: string } | null>(null);
@@ -265,8 +269,31 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
     return () => window.clearInterval(timer);
   }, [refreshRuntimeStates]);
 
-  const toggleRuntimeService = async (id: 'netease' | 'indextts', enabled: boolean) => {
-    setRuntimeToggling(id);
+  // ------------------------------------------------------------------
+  // 侧栏状态卡锚点：滚到对应区块并短暂高亮
+  // ------------------------------------------------------------------
+
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const focusDoneRef = useRef(onFocusHandled);
+  focusDoneRef.current = onFocusHandled;
+
+  useEffect(() => {
+    if (!focusSection) return;
+    const elId = `settings-${focusSection}`;
+    // 刚从别的页切过来时 DOM 还没挂上，延迟一拍再滚
+    const timer = window.setTimeout(() => {
+      document.getElementById(elId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setFlashId(elId);
+      window.setTimeout(() => setFlashId(null), 2600);
+      focusDoneRef.current?.();
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [focusSection]);
+
+  /** 给被锚点命中的区块加一圈临时高亮 */
+  const flashRing = (id: string) => (flashId === id ? 'ring-2 ring-violet-500/70 transition-shadow' : '');
+
+  const toggleRuntimeService = async (id: 'netease' | 'indextts', enabled: boolean) => {    setRuntimeToggling(id);
     try {
       const result = await runtimeServiceApi.toggle(id, enabled);
       toast.success(result.enabled ? '已启用服务' : '已关闭服务', { description: result.hint });
@@ -320,7 +347,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
   return (
     <div className="grid gap-5 lg:grid-cols-2">
       {/* ============ ① 模型与显存：开机先装谁 ============ */}
-      <Card className="lg:col-span-2">
+      <Card id="settings-preload" className={cn('lg:col-span-2', flashRing('settings-preload'))}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Cpu className="size-4 text-violet-600 dark:text-violet-400" />
@@ -423,7 +450,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
         </CardHeader>
         <CardContent className="space-y-3">
           {/* 网易 Confucius4-TTS */}
-          <div className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3">
+          <div id="settings-service-netease" className={cn('flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3', flashRing('settings-service-netease'))}>
             <div className="min-w-0 flex-1 space-y-1">
               <p className="text-sm font-medium">
                 网易 Confucius4-TTS
@@ -454,7 +481,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
           </div>
 
           {/* IndexTTS-2.5 */}
-          <div className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3">
+          <div id="settings-service-indextts" className={cn('flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3', flashRing('settings-service-indextts'))}>
             <div className="min-w-0 flex-1 space-y-1">
               <p className="text-sm font-medium">
                 IndexTTS-2.5
@@ -485,7 +512,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
           </div>
 
           {/* GPT-SoVITS：配置项最多的一条，高级设置收进行内展开 */}
-          <div className="rounded-lg border">
+          <div id="settings-service-sovits" className={cn('rounded-lg border', flashRing('settings-service-sovits'))}>
             <div className="flex flex-wrap items-start gap-x-4 gap-y-2 p-3">
               <div className="min-w-0 flex-1 space-y-1">
                 <p className="text-sm font-medium">
@@ -729,7 +756,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
       </Card>
 
       {/* ============ ③ 云端合成（MiMo）：页面后端 + 密钥 ============ */}
-      <Card className="lg:col-span-2">
+      <Card id="settings-cloud" className={cn('lg:col-span-2', flashRing('settings-cloud'))}>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Layers className="size-4 text-violet-600 dark:text-violet-400" />

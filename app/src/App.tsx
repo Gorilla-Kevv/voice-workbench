@@ -419,6 +419,16 @@ function App() {
   /** 依赖 GPT-SoVITS 的页面用它把用户送到设置页开服务 */
   const goSettings = useCallback(() => setActive('settings'), []);
 
+  // 侧栏状态卡点击 → 设置页对应锚点（滚动 + 高亮）。
+  // 用 state 传而不是 hash 路由：设置页是条件渲染，挂载时读一次即可。
+  const [settingsSection, setSettingsSection] = useState<string | null>(null);
+  const goSettingsSection = useCallback((section: string) => {
+    // 已在设置页时 setActive 不触发重挂载，靠 section 变化自己滚；
+    // 不在设置页时先切页，SettingsPage 挂载后再消费这个锚点
+    setSettingsSection(section);
+    setActive('settings');
+  }, []);
+
   // 启动预加载：偏好为 'ask' 时弹选择框（谁当主力由使用测试定，不预设）；
   // 若是具体模型，网关启动时已经自己加载了，这里不打扰用户。
   const [preloadAsking, setPreloadAsking] = useState(false);
@@ -447,6 +457,7 @@ function App() {
         header={header}
         sovitsState={sovitsState}
         moduleStates={moduleStates}
+        onOpenSettingsSection={goSettingsSection}
       >
         {/* BYOK 模式下，未配置密钥时提前引导；本地服务页面不依赖云端密钥 */}
         {!LOCAL_PAGES.includes(active) ? (
@@ -500,6 +511,8 @@ function App() {
             reset={reset}
             health={health}
             onKeyChange={() => undefined}
+            focusSection={settingsSection}
+            onFocusHandled={() => setSettingsSection(null)}
           />
         ) : null}
       </AppShell>

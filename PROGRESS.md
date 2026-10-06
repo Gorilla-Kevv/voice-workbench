@@ -8,6 +8,53 @@
 - 可提前进行的任务：阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理
 - 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）
 
+## 阶段 26补4 — 显存不足时报错列出「谁在占 GPU」 [计划时间：10.06 14:20 BY Qoder][完成时间：10.06 14:35 BY Qoder]
+- 分支：feature/vc-svc
+- **起因**：网易预热失败实为显存准入拦截（需 5120 MB、仅剩 3919 MB），但旧报错只说「关掉占显存的程序」，用户无从下手。
+- **已完成**：网关 `server/src/lib/gpuProcesses.ts`（nvidia-smi 进程表按名聚合、过滤无权限占位、10s 缓存）+
+  `GET /api/resources/gpu-processes`；ResourceBudget 在 insufficient/tight 时列出进程清单（WDDM 拿不到每进程显存数，
+  只报谁在与实例数）。实测本机 40+ GPU 进程（qemu 模拟器 / Epic / Trae / 网易云 / MyDockFinder 等）。
+- **改动文件**：`server/src/lib/gpuProcesses.ts`（新）、`server/src/routes/resources.ts`、
+  `app/src/lib/resources.ts`、`app/src/components/features/ResourceBudget.tsx`（提交 `b55744c`）
+- **测试**：typecheck / eslint / build ✓；端点与页面渲染实测 ✓
+- **风险**：无
+- **下一阶段入口**：用户关程序腾显存后重试预热
+- 本次文档更新时间：10.06 14:35
+
+---
+
+## 阶段 26补5 — 侧栏状态卡一键直达设置对应区块 [计划时间：10.06 14:40 BY Qoder][完成时间：10.06 15:00 BY Qoder]
+- 分支：feature/vc-svc
+
+- **起因**：用户要求左侧状态栏每张卡点击直达设置页对应位置，就地换模型 / 开关服务。
+
+- **已完成**
+  - `AppShell.tsx`：状态卡 div → button（hover 反馈 + title 提示），新增 `onOpenSettingsSection` prop；
+    卡 id → 设置锚点映射 `SETTINGS_SECTION_OF`（网易两卡→网易行、IndexTTS→其行、
+    sovits/rvc/svc/asr 四卡→GPT-SoVITS 行、MiMo→云端卡）。
+  - `App.tsx`：`settingsSection` state + `goSettingsSection`（切页 + 传锚点）。
+  - `SettingsPage.tsx`：`focusSection`/`onFocusHandled` props；挂载/变化后 120ms 滚动到
+    `settings-<section>` 锚点（block:center）并加 2.6 秒紫色 ring 高亮；五个锚点 id 落位：
+    preload / service-netease / service-indextts / service-sovits / cloud。
+  - **顺带修文案**：预加载卡「当前空闲不够，开机会让位后再试」→「当前空闲不够，开机可能加载失败（可先关程序再试）」（原句不通）。
+  - **验证了网关托管启停全链路**（26补3 的 supervisor 首次实测）：UI 点 IndexTTS 开关开 →
+    网关 spawn（managed=true, pid 就位, /health 200）→ 再点关 → 进程回收、free 回到 5346 MB、
+    状态卡变「未启动」。
+
+- **未完成**：无（本阶段范围内）
+
+- **改动文件**：`app/src/components/layout/AppShell.tsx`、`app/src/App.tsx`、`app/src/pages/SettingsPage.tsx`
+
+- **测试结果**：typecheck / eslint / build 全过；浏览器实测：点「IndexTTS · 未启动」卡 →
+  切到设置页、锚点滚进视口、高亮 ring 生效、行内开关可点；开关开→关全链路见上。
+
+- **风险**：锚点消费走一次性 state（onFocusHandled 清空），重复点同一张卡会重新触发滚动（预期行为）。
+
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.06 15:00
+
+---
+
 ## 阶段 26补3 — 三服务连接开关 + 设置页去嵌套 [计划时间：10.06 13:40 BY Qoder][完成时间：10.06 14:05 BY Qoder]
 - 分支：feature/vc-svc
 

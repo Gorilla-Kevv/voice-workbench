@@ -46,6 +46,8 @@ interface AppShellProps {
   sovitsState?: SovitsLinkState;
   /** 两个新板块（语音变声 / 歌声转换）的就绪状态，与 GPT-SoVITS 同一次探活得出 */
   moduleStates?: ModuleStates;
+  /** 点状态卡 → 跳到设置页对应区块（锚点见 SETTINGS_SECTION_OF） */
+  onOpenSettingsSection?: (section: string) => void;
 }
 
 /**
@@ -212,19 +214,23 @@ interface StatusCard {
   icon: 'shield' | 'server';
 }
 
-function LinkCard({ state, title, hint, icon = 'server' }: Omit<StatusCard, 'id'>) {
+function LinkCard({ state, title, hint, icon = 'server', onOpen }: Omit<StatusCard, 'id'> & { onOpen?: () => void }) {
   const ready = state === 'ready';
   const incomplete = state === 'incomplete';
   const Icon = icon === 'shield' ? (ready ? ShieldCheck : ShieldAlert) : state === 'checking' ? Loader2 : Server;
   return (
-    <div
+    <button
+      type="button"
+      onClick={onOpen}
+      title={onOpen ? '点击到设置页对应位置：可切换开机加载的模型，或直接开 / 关这个服务' : undefined}
       className={cn(
-        'flex items-start gap-1.5 rounded-md border px-2 py-1.5 text-[11px] leading-snug',
+        'flex w-full items-start gap-1.5 rounded-md border px-2 py-1.5 text-left text-[11px] leading-snug transition',
         ready
           ? 'bg-emerald-500/5 text-emerald-700 dark:text-emerald-400'
           : incomplete
             ? 'bg-amber-500/5 text-amber-700 dark:text-amber-400'
             : 'bg-muted/50 text-muted-foreground',
+        onOpen && 'cursor-pointer hover:border-violet-400/60 hover:bg-violet-500/5',
       )}
     >
       <Icon className={cn('mt-[1px] size-3 shrink-0', state === 'checking' && 'animate-spin')} />
@@ -232,9 +238,25 @@ function LinkCard({ state, title, hint, icon = 'server' }: Omit<StatusCard, 'id'
         <p className="truncate font-medium">{title}</p>
         <p className="opacity-80">{hint}</p>
       </div>
-    </div>
+    </button>
   );
 }
+
+/**
+ * 侧栏状态卡 → 设置页锚点。
+ * 点哪张卡，设置页就滚到哪一行：服务行上直接有开关，「模型与显存」卡能换开机加载的模型。
+ * rvc/svc/asr 都跑在 GPT-SoVITS 链路上，所以它们指向同一条服务行。
+ */
+const SETTINGS_SECTION_OF: Record<string, string> = {
+  neteaseTts: 'service-netease',
+  neteaseAsr: 'service-netease',
+  indexttsTts: 'service-indextts',
+  sovits: 'service-sovits',
+  rvc: 'service-sovits',
+  svc: 'service-sovits',
+  asr: 'service-sovits',
+  mimo: 'cloud',
+};
 
 /** 应用外壳：左侧导航 + 顶部标题栏 + 内容区 */
 export function AppShell({
@@ -248,6 +270,7 @@ export function AppShell({
   header,
   sovitsState = 'offline',
   moduleStates = { rvc: 'checking', svc: 'checking', asr: 'checking', neteaseTts: 'checking', neteaseAsr: 'checking', indexttsTts: 'checking' },
+  onOpenSettingsSection,
 }: AppShellProps) {
   const keyReady = hasServerKey || hasUserKey;
   const sovits = SOVITS_STATUS_TEXT[sovitsState];
@@ -366,7 +389,14 @@ export function AppShell({
             </button>
 
             {visibleCards.map((card) => (
-              <LinkCard key={card.id} state={card.state} title={card.title} hint={card.hint} icon={card.icon} />
+              <LinkCard
+                key={card.id}
+                state={card.state}
+                title={card.title}
+                hint={card.hint}
+                icon={card.icon}
+                onOpen={onOpenSettingsSection ? () => onOpenSettingsSection(SETTINGS_SECTION_OF[card.id] ?? 'preload') : undefined}
+              />
             ))}
           </div>
         </div>
