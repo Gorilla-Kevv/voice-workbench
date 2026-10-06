@@ -13,6 +13,7 @@ import { ResultStack, type ResultStackEntry } from '@/components/features/Result
 import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
 import { indexttsApi } from '@/lib/indextts';
+import { runtimeServiceApi } from '@/lib/localService';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
 import { cn } from '@/lib/utils';
 import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
@@ -105,6 +106,47 @@ export function IndexttsTtsPage({ onGoSettings }: { onGoSettings?: () => void } 
     })();
     return () => stopTimer();
   }, [stopTimer]);
+
+  /** 服务没起时的快捷开启：走网关托管（与设置页开关同一后端），不用离开本页 */
+  const [serviceStarting, setServiceStarting] = useState(false);
+  const startService = () => {
+    setServiceStarting(true);
+    setError(null);
+    void (async () => {
+      try {
+        const result = await runtimeServiceApi.toggle('indextts', true);
+        if (!result.reachable) {
+          throw new RequestError(503, {
+            code: 'INDEXTTS_START_FAILED',
+            message: '服务已启用但暂未就绪',
+            retryable: true,
+            hint: result.hint,
+          });
+        }
+        toast.success('IndexTTS 服务已启动', { description: '首次预热约需几分钟（含辅助模型探测）' });
+        const [catalogResult, pipeline] = await Promise.all([
+          indexttsApi.catalog(),
+          indexttsApi.pipeline().catch(() => null),
+        ]);
+        setCatalog(catalogResult);
+        setEngine(pipeline);
+      } catch (rawError) {
+        const requestError =
+          rawError instanceof RequestError
+            ? rawError
+            : new RequestError(0, {
+                code: 'INDEXTTS_START_FAILED',
+                message: (rawError as Error)?.message || '启动请求未能发出',
+                retryable: true,
+                hint: '确认网关在跑（npm run dev），或到设置页用开关启动。',
+              });
+        setError(requestError);
+        toast.error('启动 IndexTTS 服务失败', { description: requestError.fullMessage });
+      } finally {
+        setServiceStarting(false);
+      }
+    })();
+  };
 
   const loadVoices = useCallback(() => {
     setVoicesLoading(true);
@@ -341,9 +383,17 @@ export function IndexttsTtsPage({ onGoSettings }: { onGoSettings?: () => void } 
                 </div>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">
-                连不上 IndexTTS 服务。它是按需启动的模块：运行 <code className="rounded bg-muted px-1.5 py-0.5 text-xs">npm run dev:indextts</code> 启动。
-              </p>
+              <div className="space-y-3">
+                <p className="text-sm text-muted-foreground">
+                  连不上 IndexTTS 服务。它是按需启动的模块，点下面的按钮由网关直接拉起
+                  （首次 import torch 约需数十秒），或手动运行{' '}
+                  <code className="rounded bg-muted px-1.5 py-0.5 text-xs">npm run dev:indextts</code>。
+                </p>
+                <Button size="sm" variant="outline" onClick={startService} disabled={serviceStarting || loading}>
+                  {serviceStarting ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : <RefreshCw className="mr-1.5 size-3.5" />}
+                  {serviceStarting ? '正在启动服务（约需数十秒）…' : '启动服务'}
+                </Button>
+              </div>
             )}
           </CardContent>
         </Card>

@@ -23,6 +23,27 @@
 
 ---
 
+## 阶段 26补6 — IndexTTS 页引擎状态卡补「启动服务」快捷入口 [计划时间：10.06 15:20 BY Qoder][完成时间：10.06 15:35 BY Qoder]
+- 分支：feature/vc-svc
+
+- **起因**：用户要求 IndexTTS 引擎状态像 GPT-SoVITS 一样给快速开启入口——服务没起时不必离开本页去设置页/终端。
+
+- **已完成**：`IndexttsTtsPage` 引擎状态卡在连不上服务时显示「启动服务」按钮，
+  走 `runtimeServiceApi.toggle('indextts', true)`（与设置页开关同一后端，网关托管拉起）；
+  启动中按钮转圈带文案，成功后自动重拉 catalog/pipeline 恢复卡片，失败给带 hint 的结构化错误。
+
+- **改动文件**：`app/src/pages/IndexttsTtsPage.tsx`
+
+- **测试结果**：typecheck / eslint / build ✓；浏览器实测：服务关闭态进本页 → 点「启动服务」→
+  网关 spawn（managed=true）→ toast「服务已启动」→ 卡片恢复「未加载 + 预热」；测试后已关闭服务归还原状。
+
+- **风险**：无
+
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.06 15:35
+
+---
+
 ## 阶段 26补5 — 侧栏状态卡一键直达设置对应区块 [计划时间：10.06 14:40 BY Qoder][完成时间：10.06 15:00 BY Qoder]
 - 分支：feature/vc-svc
 
