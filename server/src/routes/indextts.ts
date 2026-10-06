@@ -14,6 +14,7 @@ import { Router } from 'express';
 
 import { config } from '../config/index.js';
 import { logger } from '../lib/logger.js';
+import { indexttsSupervisor } from '../services/runtime.js';
 
 export const indexttsProxyRouter = Router();
 
@@ -152,6 +153,8 @@ export async function indexttsSummary(): Promise<Record<string, unknown>> {
     reachable: cached.reachable,
     /** 按需模块：未启动是常态而不是故障 */
     optional: true,
+    /** 设置页开关状态（网关现已托管其生命周期） */
+    enabled: indexttsSupervisor.isEnabled(),
     lastError: cached.lastError || undefined,
   };
 }

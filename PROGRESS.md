@@ -3,10 +3,55 @@
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
 ## 进度看板
-- 当前正在开发任务：阶段 26 IndexTTS 全链路接入（真实合成实测 + 网关透传 + 前端页面 + 资源管控）—— **已完成，待用户听感 A/B 决定主力**
-- 下一阶段任务：用户实测对比网易 vs IndexTTS（决定主力后回填 preload 账本与门槛值）；R2T2 离线转写接入（Windows 原生可行，见 HANDOFF 坑 12）
+- 当前正在开发任务：无进行中阶段——阶段 26 / 26补2 / 26补3 已完成，**等用户实测对比网易 vs IndexTTS（听感 + 用时）拍板主力**
+- 下一阶段任务：主力拍板后回填 preload 账本与门槛值；R2T2 离线转写接入（Windows 原生可行，见 HANDOFF 坑 12）
 - 可提前进行的任务：阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理
 - 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）
+
+## 阶段 26补3 — 三服务连接开关 + 设置页去嵌套 [计划时间：10.06 13:40 BY Qoder][完成时间：10.06 14:05 BY Qoder]
+- 分支：feature/vc-svc
+
+- **起因**：用户三点反馈——① 本地服务三行都该有开关（两个服务同时在跑会各占显存，影响单独跑模型）；
+  ② 「GPT-SoVITS · 推理与训练配置」不该独立成卡，应并入 GPT-SoVITS 服务行内展开；
+  ③ 云端卡里又嵌了一套 GPT-SoVITS 配置，且 API Key 应只在选中 MiMo 时才出现。
+
+- **已完成**
+  - **网关新增运行时服务托管**（`server/src/services/runtime.ts`）：通用 `RuntimeSupervisor`，
+    网易(:9882) 与 IndexTTS(:9883) 各一实例。行为契约与 SovitsSupervisor 一致：
+    探活可达就复用外部实例（不重复占端口）；enabled 落盘 `server/.data/<id>-service.json`
+    （网易默认开=主服务随 dev，IndexTTS 默认关）；关闭 = **先卸常驻模型归还显存 → 再杀自己拉起的进程树**；
+    外部终端起的实例杀不掉，但模型照卸，hint 如实说明「请在对应终端 Ctrl+C」。
+    网关启动时按 enabled 后台拉起；SIGINT/exit 钩子收掉自己托管的子进程（tsx watch 重启不留孤儿）。
+  - **启停接口**：`GET/POST /api/netease/service`、`/api/indextts/service`（`routes/runtimeService.ts` 工厂，
+    挂在各自透明代理**之前**，与 sovitsServiceRouter 同规矩）；`/api/health` 的 netease/indextts 段补 `enabled`。
+  - **设置页卡片②**：三行服务全部带 Switch + 状态徽章（运行中/启动中/未启动）+ 错误行；
+    卡描述明确两层占用：「服务进程 ≈ 几百 MB torch 上下文；模型常驻数 GB，要预热/预加载才发生」。
+  - **GPT-SoVITS 高级配置行内展开**：原独立卡整块并入服务行下方（「高级配置」按钮 + ChevronDown），
+    默认收起；服务地址/运行时信息/weights/默认值/批量都在展开区里。
+  - **云端卡条件渲染**：选 MiMo 才出现公用密钥 Alert + API Key + 接口地址；
+    选 GPT-SoVITS 显示指引卡（「不需要密钥，配置统一在本地服务 → 高级配置」，消除双份配置的嵌套）；
+    选自托管显示其 fields/presets。
+  - 前端 `localService.ts` 加 `runtimeServiceApi`（state/toggle），30 秒轮询复查状态（服务可能被外部起停）。
+
+- **未完成**：无（本阶段范围内）
+
+- **改动文件**：新增 `server/src/services/runtime.ts`、`server/src/routes/runtimeService.ts`；
+  改 `server/src/index.ts`、`server/src/routes/{netease,indextts}.ts`、
+  `app/src/lib/localService.ts`、`app/src/pages/SettingsPage.tsx`、`app/src/types/index.ts`
+
+- **测试结果**：typecheck（app+server）/ eslint / build 全过；接口实测——
+  `GET /api/netease/service` = reachable+enabled+managed=false（复用 dev 起的实例）✓；
+  `POST /api/indextts/service {enabled:false}` → 模型卸掉（pipeline loaded=false）+ hint 说明外部实例 ✓；
+  浏览器走查：三行开关渲染、高级配置展开/收起、选 GPT-SoVITS 时密钥区隐藏 + 指引出现、
+  切回 MiMo 密钥区恢复；控制台无新报错。
+
+- **风险**：网关热重载（tsx watch）会连带回收**自己托管**的 netease/indextts 子进程并自动再拉起（enabled 时）——
+  与 sovits 同一已知代价；外部终端起的实例不受此影响。
+
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.06 14:05
+
+---
 
 ## 阶段 26补2 — 设置页整体重排（模型选择提级 + 服务平铺 + 去嵌套）[计划时间：10.06 13:00 BY Qoder][完成时间：10.06 13:20 BY Qoder]
 - 分支：feature/vc-svc

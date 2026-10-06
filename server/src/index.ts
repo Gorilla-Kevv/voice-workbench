@@ -8,6 +8,8 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRouter } from './routes/index.js';
 import { indexttsProxyRouter } from './routes/indextts.js';
 import { neteaseProxyRouter } from './routes/netease.js';
+import { createRuntimeServiceRouter } from './routes/runtimeService.js';
+import { indexttsSupervisor, neteaseSupervisor, runtimeSupervisors } from './services/runtime.js';
 import { sovitsProxyRouter, sovitsServiceRouter } from './routes/sovits.js';
 import { preloadService } from './services/preload.js';
 import { sovitsSupervisor } from './services/sovits.js';
@@ -31,8 +33,11 @@ app.use(
 // 网易模块代理同理（NDJSON 流式转写 + multipart 音频上传），必须一起挂在这里。
 // IndexTTS 代理也一样（multipart 音频上传）。
 // GPT-SoVITS 服务的启停要在代理**之前**注册，否则会被代理的通配规则吃掉。
+// 网易 / IndexTTS 的启停接口同理，也挂在各自代理之前。
 // 这条路由自己开 express.json()，所以不受「代理必须早于 body-parser」的约束。
 app.use('/api/sovits/service', sovitsServiceRouter);
+app.use('/api/netease/service', createRuntimeServiceRouter(neteaseSupervisor, '网易 Confucius4-TTS'));
+app.use('/api/indextts/service', createRuntimeServiceRouter(indexttsSupervisor, 'IndexTTS'));
 app.use('/api/sovits', sovitsProxyRouter);
 app.use('/api/netease', neteaseProxyRouter);
 app.use('/api/indextts', indexttsProxyRouter);
@@ -126,6 +131,14 @@ const server = app.listen(config.port, config.host, () => {
     .then(() => sovitsSupervisor.announceReady())
     .catch((error: Error) => logger.error('启动 GPT-SoVITS 本地服务异常', { message: error.message }));
 
+  // 网易 / IndexTTS 同理：设置里开着（或网易默认开）就后台拉起；
+  // 已被外部终端起了的会直接复用，不会重复占端口。
+  for (const supervisor of runtimeSupervisors) {
+    void supervisor
+      .ensureStarted()
+      .catch((error: Error) => logger.error('运行时服务启动异常', { message: error.message }));
+  }
+
   // 按用户偏好预加载一个模型（'ask' 表示每次启动由界面问他，这里不动）。
   // 同样不 await —— 加载要数十秒，界面必须先看得到。
   const preference = preloadService.preference().model;
@@ -147,11 +160,17 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
     logger.info(`收到 ${signal}，正在关闭服务`);
 
     server.close(() => {
-      void sovitsSupervisor.stop().finally(() => process.exit(0));
+      void Promise.allSettled([
+        sovitsSupervisor.stop(),
+        ...runtimeSupervisors.map((s) => s.shutdown()),
+      ]).finally(() => process.exit(0));
     });
     // 兜底：8 秒内没退干净就强退，但先把子进程带走
     setTimeout(() => {
-      void sovitsSupervisor.stop().finally(() => process.exit(0));
+      void Promise.allSettled([
+        sovitsSupervisor.stop(),
+        ...runtimeSupervisors.map((s) => s.shutdown()),
+      ]).finally(() => process.exit(0));
     }, 8_000).unref();
   });
 }
@@ -165,6 +184,16 @@ process.on('exit', () => {
       process.kill(status.pid);
     } catch {
       // 已退出
+    }
+  }
+  for (const supervisor of runtimeSupervisors) {
+    const runtimeStatus = supervisor.status();
+    if (runtimeStatus.managed && runtimeStatus.pid) {
+      try {
+        process.kill(runtimeStatus.pid);
+      } catch {
+        // 已退出
+      }
     }
   }
 });

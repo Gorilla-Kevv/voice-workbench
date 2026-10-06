@@ -1,12 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   CheckCircle2,
+  ChevronDown,
+  ChevronRight,
   Cpu,
   Eye,
   EyeOff,
   ExternalLink,
   Gauge,
-  HardDrive,
   Loader2,
   Layers,
   RotateCcw,
@@ -30,7 +31,7 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/lib/api';
 import { RequestError } from '@/lib/errors';
-import { localServiceApi, type LocalServiceState } from '@/lib/localService';
+import { localServiceApi, runtimeServiceApi, type LocalServiceState, type RuntimeServiceState } from '@/lib/localService';
 import { preloadApi, type PreloadCatalog, type PreloadPreference } from '@/lib/preload';
 import { DEFAULT_SETTINGS } from '@/lib/constants';
 import { PROVIDERS, getProvider, languageLabel, resolveLanguages } from '@/lib/providers/registry';
@@ -234,6 +235,52 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
     refreshServiceState();
   }, [refreshServiceState]);
 
+  // ------------------------------------------------------------------
+  // 网易 / IndexTTS 的连接开关（网关托管：开 = 拉起，关 = 卸模型 + 收掉自己拉起的进程）
+  // ------------------------------------------------------------------
+
+  const [runtimeStates, setRuntimeStates] = useState<{
+    netease: RuntimeServiceState | null;
+    indextts: RuntimeServiceState | null;
+  }>({ netease: null, indextts: null });
+  const [runtimeToggling, setRuntimeToggling] = useState<'netease' | 'indextts' | null>(null);
+  /** GPT-SoVITS 高级配置（推理权重 / 默认值 / 批量）在行内是否展开 */
+  const [sovitsAdvanced, setSovitsAdvanced] = useState(false);
+
+  const refreshRuntimeStates = useCallback(() => {
+    runtimeServiceApi
+      .state('netease')
+      .then((next) => setRuntimeStates((prev) => ({ ...prev, netease: next })))
+      .catch(() => undefined);
+    runtimeServiceApi
+      .state('indextts')
+      .then((next) => setRuntimeStates((prev) => ({ ...prev, indextts: next })))
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    refreshRuntimeStates();
+    // 服务也可能被外部终端起停，30 秒复查一次，状态不骗人
+    const timer = window.setInterval(refreshRuntimeStates, 30_000);
+    return () => window.clearInterval(timer);
+  }, [refreshRuntimeStates]);
+
+  const toggleRuntimeService = async (id: 'netease' | 'indextts', enabled: boolean) => {
+    setRuntimeToggling(id);
+    try {
+      const result = await runtimeServiceApi.toggle(id, enabled);
+      toast.success(result.enabled ? '已启用服务' : '已关闭服务', { description: result.hint });
+      refreshRuntimeStates();
+      if (id === 'netease') void probeSovits(readBaseUrl());
+    } catch (requestError) {
+      const error = requestError as RequestError;
+      toast.error('切换失败', { description: error.fullMessage ?? error.message });
+    } finally {
+      setRuntimeToggling(null);
+      refreshRuntimeStates();
+    }
+  };
+
   const toggleService = async (enabled: boolean) => {
     setToggling(true);
     setPendingEnable(enabled);
@@ -361,7 +408,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
         </CardContent>
       </Card>
 
-      {/* ============ ② 本地服务：三个 Python 运行时一屏看全 ============ */}
+      {/* ============ ② 本地服务：三个 Python 运行时一屏看全，都有开关 ============ */}
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -369,115 +416,134 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
             本地服务
           </CardTitle>
           <CardDescription>
-            本项目的三个本地模型服务。它们的启停方式不同：网易随 <code className="rounded bg-muted px-1">npm run dev</code> 自动起，
-            GPT-SoVITS 由下面的开关托管，IndexTTS 按需单独启动。
+            本项目的三个本地模型服务，各有一个连接开关。注意区分两层占用：
+            <strong>服务进程</strong>本身约占几百 MB 显存（torch 上下文），<strong>模型常驻</strong>（数 GB）
+            要进页面点「预热」或开机预加载才会发生。不用的服务关掉，进程和显存一起归还。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
           {/* 网易 Confucius4-TTS */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3">
-            <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3">
+            <div className="min-w-0 flex-1 space-y-1">
               <p className="text-sm font-medium">
                 网易 Confucius4-TTS
                 <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9882</span>
               </p>
               <p className="text-xs text-muted-foreground">
-                主服务（免转写克隆 / 14 语种）。随 <code className="rounded bg-muted px-1">npm run dev</code> 自动启动；单独重启：
-                <code className="mx-1 rounded bg-muted px-1">npm run dev:netease</code>
+                主服务（免转写克隆 / 14 语种）。默认随 <code className="rounded bg-muted px-1">npm run dev</code> 启动；
+                这里的开关由网关托管：开 = 拉起进程，关 = 卸掉常驻模型并收掉进程。
               </p>
+              {runtimeStates.netease && !runtimeStates.netease.reachable && runtimeStates.netease.lastError ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">{runtimeStates.netease.lastError}</p>
+              ) : null}
             </div>
-            <Badge
-              variant={health?.netease?.reachable ? 'default' : 'secondary'}
-              className={cn('h-6 text-[11px]', health?.netease?.reachable && 'bg-emerald-600 hover:bg-emerald-600')}
-            >
-              {health?.netease?.reachable ? '运行中' : '未启动'}
-            </Badge>
+            <div className="flex shrink-0 items-center gap-3 pt-1">
+              <Badge
+                variant={runtimeStates.netease?.reachable ? 'default' : 'secondary'}
+                className={cn('h-6 text-[11px]', runtimeStates.netease?.reachable && 'bg-emerald-600 hover:bg-emerald-600')}
+              >
+                {runtimeStates.netease?.reachable ? '运行中' : runtimeStates.netease?.starting ? '启动中…' : '未启动'}
+              </Badge>
+              <Switch
+                aria-label="启用网易模块服务"
+                checked={runtimeStates.netease?.enabled ?? false}
+                disabled={runtimeToggling === 'netease' || runtimeStates.netease == null}
+                onCheckedChange={(checked) => void toggleRuntimeService('netease', checked === true)}
+              />
+            </div>
           </div>
 
           {/* IndexTTS-2.5 */}
-          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3">
-            <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3">
+            <div className="min-w-0 flex-1 space-y-1">
               <p className="text-sm font-medium">
                 IndexTTS-2.5
                 <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9883</span>
               </p>
               <p className="text-xs text-muted-foreground">
-                情感可控（8 维向量 / 语速倍率 / 5 语种）。按需启动：
-                <code className="mx-1 rounded bg-muted px-1">npm run dev:indextts</code>
+                情感可控（8 维向量 / 语速倍率 / 5 语种）。默认<strong>关闭</strong>按需启动；
                 环境体检：<code className="mx-1 rounded bg-muted px-1">npm run indextts:check</code>
               </p>
-            </div>
-            <Badge
-              variant={health?.indextts?.reachable ? 'default' : 'secondary'}
-              className={cn('h-6 text-[11px]', health?.indextts?.reachable && 'bg-emerald-600 hover:bg-emerald-600')}
-            >
-              {health?.indextts?.reachable ? '运行中' : '未启动'}
-            </Badge>
-          </div>
-
-          {/* GPT-SoVITS：唯一由网关托管启停的服务 */}
-          <div className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3">
-            <div className="min-w-0 flex-1 space-y-1">
-              <p className="text-sm font-medium">
-                GPT-SoVITS
-                <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9881</span>
-              </p>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                训练 / 批量合成 / 语音变声 / 歌声转换都跑在这条链路。默认<strong>关闭</strong>，
-                显存留给主服务；打开后由网关托管生命周期，关掉显存立刻归还。
-              </p>
-              <p className="text-xs text-muted-foreground">
-                当前状态：
-                {serviceState
-                  ? serviceState.enabled
-                    ? serviceState.reachable
-                      ? '已启用并在运行'
-                      : '已启用，启动中（首次要 import torch，数十秒）'
-                    : '已停用（默认）'
-                  : '读取中…'}
-              </p>
-              {/* 开启是数十秒的冷启动，只让开关转圈会让人以为卡住 */}
-              {toggling && pendingEnable ? (
-                <div className="space-y-1">
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    启动中，约需数十秒（首次要 import torch）· 已等待 {toggleElapsed} 秒
-                  </p>
-                  <Progress value={Math.min(95, Math.round((toggleElapsed / 45) * 100))} className="h-1.5" />
-                </div>
+              {runtimeStates.indextts && !runtimeStates.indextts.reachable && runtimeStates.indextts.lastError ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">{runtimeStates.indextts.lastError}</p>
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-3 pt-1">
               <Badge
-                variant={sovitsHealth?.ok ? 'default' : 'secondary'}
-                className={cn('h-6 text-[11px]', sovitsHealth?.ok && 'bg-emerald-600 hover:bg-emerald-600')}
+                variant={runtimeStates.indextts?.reachable ? 'default' : 'secondary'}
+                className={cn('h-6 text-[11px]', runtimeStates.indextts?.reachable && 'bg-emerald-600 hover:bg-emerald-600')}
               >
-                {sovitsHealth?.ok ? '已连接' : probing ? '连接中…' : '未连接'}
+                {runtimeStates.indextts?.reachable ? '运行中' : runtimeStates.indextts?.starting ? '启动中…' : '未启动'}
               </Badge>
               <Switch
-                id="sovits-enabled"
-                aria-label="启用 GPT-SoVITS 本地服务"
-                checked={serviceState?.enabled ?? false}
-                disabled={toggling || serviceState == null}
-                onCheckedChange={(checked) => void toggleService(checked === true)}
+                aria-label="启用 IndexTTS 服务"
+                checked={runtimeStates.indextts?.enabled ?? false}
+                disabled={runtimeToggling === 'indextts' || runtimeStates.indextts == null}
+                onCheckedChange={(checked) => void toggleRuntimeService('indextts', checked === true)}
               />
             </div>
           </div>
-        </CardContent>
-      </Card>
 
-      {/* ============ ③ GPT-SoVITS · 推理与训练配置 ============ */}
-      <Card className="lg:col-span-2">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <HardDrive className="size-4 text-violet-600 dark:text-violet-400" />
-            GPT-SoVITS · 推理与训练配置
-          </CardTitle>
-          <CardDescription>
-            这一组设置只作用于 GPT-SoVITS 链路（服务地址、推理权重、合成默认值）。上面开关没打开时，这里改完下次启用生效。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid gap-4 lg:grid-cols-2">
+          {/* GPT-SoVITS：配置项最多的一条，高级设置收进行内展开 */}
+          <div className="rounded-lg border">
+            <div className="flex flex-wrap items-start gap-x-4 gap-y-2 p-3">
+              <div className="min-w-0 flex-1 space-y-1">
+                <p className="text-sm font-medium">
+                  GPT-SoVITS
+                  <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9881</span>
+                </p>
+                <p className="text-xs leading-relaxed text-muted-foreground">
+                  训练 / 批量合成 / 语音变声 / 歌声转换都跑在这条链路。默认<strong>关闭</strong>，
+                  显存留给主服务；关掉后显存立刻归还。
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  当前状态：
+                  {serviceState
+                    ? serviceState.enabled
+                      ? serviceState.reachable
+                        ? '已启用并在运行'
+                        : '已启用，启动中（首次要 import torch，数十秒）'
+                      : '已停用（默认）'
+                    : '读取中…'}
+                </p>
+                {/* 开启是数十秒的冷启动，只让开关转圈会让人以为卡住 */}
+                {toggling && pendingEnable ? (
+                  <div className="space-y-1">
+                    <p className="text-xs text-amber-600 dark:text-amber-400">
+                      启动中，约需数十秒（首次要 import torch）· 已等待 {toggleElapsed} 秒
+                    </p>
+                    <Progress value={Math.min(95, Math.round((toggleElapsed / 45) * 100))} className="h-1.5" />
+                  </div>
+                ) : null}
+              </div>
+              <div className="flex shrink-0 items-center gap-3 pt-1">
+                <Badge
+                  variant={sovitsHealth?.ok ? 'default' : 'secondary'}
+                  className={cn('h-6 text-[11px]', sovitsHealth?.ok && 'bg-emerald-600 hover:bg-emerald-600')}
+                >
+                  {sovitsHealth?.ok ? '已连接' : probing ? '连接中…' : '未连接'}
+                </Badge>
+                <Switch
+                  id="sovits-enabled"
+                  aria-label="启用 GPT-SoVITS 本地服务"
+                  checked={serviceState?.enabled ?? false}
+                  disabled={toggling || serviceState == null}
+                  onCheckedChange={(checked) => void toggleService(checked === true)}
+                />
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSovitsAdvanced((prev) => !prev)}
+              aria-expanded={sovitsAdvanced}
+              className="flex w-full items-center gap-1 border-t px-3 py-2 text-left text-xs text-muted-foreground transition hover:bg-muted/50 hover:text-foreground"
+            >
+              {sovitsAdvanced ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}
+              高级配置（服务地址 · 运行时信息 · 推理权重 · 合成与批量默认值）
+            </button>
+            {sovitsAdvanced ? (
+              <div className="space-y-4 border-t p-3">
+                <div className="grid gap-4 lg:grid-cols-2">
             <div className="space-y-2">
               <Label htmlFor="sovits-url">服务地址</Label>
               <div className="flex gap-2">
@@ -655,11 +721,14 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
                 />
               </div>
             </div>
+              </div>
+              </div>
+            ) : null}
           </div>
         </CardContent>
       </Card>
 
-      {/* ============ ④ 云端合成（MiMo）：页面后端 + 密钥 ============ */}
+      {/* ============ ③ 云端合成（MiMo）：页面后端 + 密钥 ============ */}
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -734,39 +803,52 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
             </div>
           ) : null}
 
-          {/* Provider 自定义字段（如自托管服务地址） */}
-          {provider.fields?.map((field) => (
-            <div key={field.key} className="space-y-2">
-              <Label htmlFor={`field-${field.key}`}>
-                {field.label}
-                {field.required ? <span className="ml-1 text-destructive">*</span> : null}
-              </Label>
-              <Input
-                id={`field-${field.key}`}
-                value={settings.providerFields[provider.id]?.[field.key] ?? ''}
-                onChange={(event) => updateField(field.key, event.target.value)}
-                placeholder={field.placeholder}
-                spellCheck={false}
-                className="font-mono text-sm"
-              />
-              {field.hint ? <p className="text-xs text-muted-foreground">{field.hint}</p> : null}
+          {/* 按所选后端条件渲染配置区：选谁才露谁的设置，不叠三层 */}
+          {provider.id === 'gpt-sovits' ? (
+            <div className="rounded-lg border border-dashed bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
+              这个后端<strong>不需要密钥</strong>。它的服务地址、默认音色、模型版本与批量默认值
+              统一在上方「本地服务 → GPT-SoVITS · 高级配置」里维护 —— 那里把服务打开，云端三页就能直接用它。
             </div>
-          ))}
-
-          {provider.notes?.length ? (
-            <div className="space-y-1 rounded-lg bg-muted/50 p-3">
-              {provider.notes.map((note) => (
-                <p key={note} className="flex gap-1.5 text-xs text-muted-foreground">
-                  <span className="text-violet-500">·</span>
-                  {note}
-                </p>
+          ) : (
+            <>
+              {/* Provider 自定义字段（如自托管服务地址） */}
+              {provider.fields?.map((field) => (
+                <div key={field.key} className="space-y-2">
+                  <Label htmlFor={`field-${field.key}`}>
+                    {field.label}
+                    {field.required ? <span className="ml-1 text-destructive">*</span> : null}
+                  </Label>
+                  <Input
+                    id={`field-${field.key}`}
+                    value={settings.providerFields[provider.id]?.[field.key] ?? ''}
+                    onChange={(event) => updateField(field.key, event.target.value)}
+                    placeholder={field.placeholder}
+                    spellCheck={false}
+                    className="font-mono text-sm"
+                  />
+                  {field.hint ? <p className="text-xs text-muted-foreground">{field.hint}</p> : null}
+                </div>
               ))}
-            </div>
-          ) : null}
 
-          <Separator />
+              {provider.notes?.length ? (
+                <div className="space-y-1 rounded-lg bg-muted/50 p-3">
+                  {provider.notes.map((note) => (
+                    <p key={note} className="flex gap-1.5 text-xs text-muted-foreground">
+                      <span className="text-violet-500">·</span>
+                      {note}
+                    </p>
+                  ))}
+                </div>
+              ) : null}
+            </>
+          )}
 
-          <Alert variant={hasServerKey ? 'default' : 'destructive'}>
+          {/* 密钥与接口地址只在选了 MiMo 云端后出现 */}
+          {provider.id === 'mimo' ? (
+            <>
+              <Separator />
+
+              <Alert variant={hasServerKey ? 'default' : 'destructive'}>
             {hasServerKey ? <ShieldCheck className="size-4" /> : <TriangleAlert className="size-4" />}
             <AlertTitle>{hasServerKey ? '站点已配置公用密钥' : '站点未配置公用密钥'}</AlertTitle>
             <AlertDescription>
@@ -892,6 +974,8 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
               https://token-plan-cn.xiaomimimo.com/v1
             </p>
           </div>
+            </>
+          ) : null}
         </CardContent>
       </Card>
 

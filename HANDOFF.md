@@ -307,10 +307,10 @@
 | 安装依赖 | `npm run install:all` |
 | **一键启动（推荐）** | 双击 `start.bat` |
 | 开发模式 | `npm run dev`（并行起：本地模型服务 + 网关 + 前端） |
-| 网易模块服务 | **已随 `npm run dev` 自动拉起**；单独重启用 `npm run dev:netease`（需先按 `netease/README.md` 建 venv + 下权重） |
+| 网易模块服务 | **已随 `npm run dev` 自动拉起**；单独重启用 `npm run dev:netease`（需先按 `netease/README.md` 建 venv + 下权重）。**阶段 26补3 起设置页有开关**（`GET/POST /api/netease/service`，网关托管；外部终端起的实例杀不掉进程，但会先卸模型归还显存） |
 | GPT-SoVITS 服务 | **默认不启动**（显存留给主服务）；要用训练 / 批量 / 变声 / 翻唱时到**设置页**打开；想随 dev 一起起用 `npm run dev:all` |
 | GPT-SoVITS 启停接口 | `GET/POST /api/sovits/service`（`{"enabled":true}`）；开关存在 `server/.data/sovits-service.json` |
-| IndexTTS 服务 | `npm run dev:indextts`（第三个 Python 运行时：`indextts/upstream/.venv`，py3.11 + torch 2.8 cu128；端口 **9883**）；体检 `npm run indextts:check`；**阶段 26 起全链路已接入**（网关 `/api/indextts/*` 透传 + 前端「IndexTTS · 情感可控」页） |
+| IndexTTS 服务 | `npm run dev:indextts`（第三个 Python 运行时：`indextts/upstream/.venv`，py3.11 + torch 2.8 cu128；端口 **9883**）；体检 `npm run indextts:check`；**阶段 26 起全链路已接入**（网关 `/api/indextts/*` 透传 + 前端「IndexTTS · 情感可控」页）；**设置页开关**（`GET/POST /api/indextts/service`，默认关） |
 | IndexTTS 方案文档 | `docs/INDEX-TTS-INTEGRATION.md`（8 阶段计划；阶段 0/1/2 完成于 25，合成实测 + 透传 + 前端 + 资源管控完成于 26） |
 | 启动预加载 | `GET /api/preload/catalog`（各模型显存代价 + 当前余量）、`POST /api/preload`（执行）、`PUT /api/preload/preference`；偏好存 `server/.data/preload.json` |
 | 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`） |
@@ -358,9 +358,11 @@
   修掉骨架 3 个必挂 bug（坑 26）；`/api/indextts/*` 透传、arbiter/preload/ResourceBudget 三服务化、
   前端「IndexTTS · 情感可控」页（8 维情感向量 / 情感参考音频 / 语速滑杆）全部就位；
   **本机暖态 RTF ≈ 2.2、常驻实测约 5.3 GB** —— 主力归属（vs 网易 2.0~2.5 / 4.9 GB）待用户听感 + 用时拍板
-- **设置页已整体重排（阶段 26补2）**：六卡结构「模型与显存（开机预加载，提级到第一张）→ 本地服务
-  （三运行时平铺 + GPT-SoVITS 开关）→ GPT-SoVITS 推理与训练配置 → 云端合成 MiMo 与密钥 → 合成偏好 →
-  站点信息」；「默认使用小米 MiMo」过时文案已清；预加载选择不再嵌在 GPT-SoVITS 卡里
+- **设置页已整体重排（阶段 26补2 + 26补3）**：五卡结构「模型与显存（开机预加载，提级到第一张）→
+  本地服务（三运行时平铺，**每行都有连接开关**，GPT-SoVITS 高级配置行内展开）→
+  云端合成 MiMo（按所选后端条件渲染：选 MiMo 才出现密钥区，选 GPT-SoVITS 只给指引）→ 合成偏好 → 站点信息」；
+  「默认使用小米 MiMo」过时文案已清；网关新增 `services/runtime.ts` 托管 netease/indextts 进程生命周期
+  （复用外部实例、关不掉时先卸模型并如实提示）
 
 ### 验收标准
 

@@ -16,6 +16,7 @@ import { Router } from 'express';
 
 import { config } from '../config/index.js';
 import { logger } from '../lib/logger.js';
+import { neteaseSupervisor } from '../services/runtime.js';
 
 export const neteaseProxyRouter = Router();
 
@@ -155,6 +156,8 @@ export async function neteaseSummary(): Promise<Record<string, unknown>> {
     reachable: cached.reachable,
     /** opt-in 模块：未启动是常态而不是故障，前端据此显示「未启动（可选模块）」 */
     optional: true,
+    /** 设置页开关状态（网关现已托管其生命周期） */
+    enabled: neteaseSupervisor.isEnabled(),
     lastError: cached.lastError || undefined,
   };
 }

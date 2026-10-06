@@ -89,3 +89,31 @@ export const localServiceApi = {
       timeoutMs: enabled ? 0 : 60_000,
     }),
 };
+
+/**
+ * 网易（:9882）与 IndexTTS（:9883）的启停（`/api/<id>/service`）。
+ * 与 GPT-SoVITS 同一套开关语义：网关托管自己拉起的实例；
+ * 外部终端起的实例关不掉，但会把常驻模型卸掉归还显存，并在 hint 里说清楚。
+ */
+export interface RuntimeServiceState {
+  baseUrl: string;
+  reachable: boolean;
+  managed: boolean;
+  starting: boolean;
+  enabled: boolean;
+  pid: number | null;
+  lastError: string | null;
+}
+
+export const runtimeServiceApi = {
+  state: (id: 'netease' | 'indextts'): Promise<RuntimeServiceState> =>
+    serviceRequest<RuntimeServiceState>(`/api/${id}/service`, { method: 'GET', timeoutMs: 15_000 }),
+
+  toggle: (id: 'netease' | 'indextts', enabled: boolean): Promise<LocalServiceToggleResult> =>
+    serviceRequest<LocalServiceToggleResult>(`/api/${id}/service`, {
+      method: 'POST',
+      body: JSON.stringify({ enabled }),
+      // 开启要等 import torch（数十秒），不设超时；关闭是先卸模型再杀进程，给 90 秒
+      timeoutMs: enabled ? 0 : 90_000,
+    }),
+};
