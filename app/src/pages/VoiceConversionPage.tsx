@@ -65,17 +65,10 @@ export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => voi
     void Promise.resolve().then(refresh);
   }, [refresh]);
 
-  if (loadError) {
-    return (
-      <Card className="border-amber-500/40 bg-amber-500/5">
-        <CardHeader>
-          <CardTitle className="text-amber-700 dark:text-amber-400">本地服务未就绪</CardTitle>
-          <CardDescription>{loadError}</CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
-
+  // 目录拉取失败**不替换整页**：页面结构保持常驻，错误以横幅形式出现在页内（带重试）。
+  // 之前的整页替换在「服务冷启动几十秒」的场景下表现为：先渲染一遍完整页面，
+  // 请求超时后再整个换成一张报错卡 —— 用户以为页面挂了（2026-10 反馈）。
+  // 服务启停状态由 SovitsServiceNotice 常驻提示。
   return (
     <div className="space-y-5">
       <SourceNote
@@ -83,6 +76,17 @@ export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => voi
         location="vendor/rvc"
         upstream="本项目只做流程封装与本地服务调用，不改动上游代码"
       />
+      {loadError ? (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardHeader>
+            <CardTitle className="text-amber-700 dark:text-amber-400">模型目录暂未取到</CardTitle>
+            <CardDescription>{loadError}</CardDescription>
+            <Button size="sm" variant="outline" className="mt-2 h-7 w-fit text-xs" onClick={() => void refresh()}>
+              重试
+            </Button>
+          </CardHeader>
+        </Card>
+      ) : null}
       <ResourceSiteLink label="缺 .pth 音色模型？去 AI Hobbyist 资源库（SVC 开源模型）" className="self-start" />
       <SovitsServiceNotice onGoSettings={onGoSettings} />
       <EngineBadge catalog={catalog} onRefresh={refresh} accent={ACCENT_TEXT} />

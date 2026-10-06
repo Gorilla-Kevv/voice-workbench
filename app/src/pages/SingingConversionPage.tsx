@@ -65,17 +65,8 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
     void refresh();
   }, [refresh]);
 
-  if (loadError) {
-    return (
-      <Card className="border-amber-500/40 bg-amber-500/5">
-        <CardHeader>
-          <CardTitle className="text-amber-700 dark:text-amber-400">本地服务未就绪</CardTitle>
-          <CardDescription>{loadError}</CardDescription>
-        </CardHeader>
-      </Card>
-    );
-  }
-
+  // 目录拉取失败**不替换整页**（与 RVC 页同一修法，2026-10 反馈）：
+  // 页面结构保持常驻，错误以横幅出现在页内，重试入口在引擎状态条的「刷新」。
   return (
     <div className="space-y-5">
       <SourceNote
@@ -83,6 +74,17 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
         location="vendor/ddsp-svc · 整合包 tools/uvr5"
         upstream="翻唱的歌声转换走 DDSP-SVC，第一步的人声 / 伴奏分离走整合包自带的 UVR5 —— 两个上游项目各管一段，本项目只串流程"
       />
+      {loadError ? (
+        <Card className="border-amber-500/40 bg-amber-500/5">
+          <CardHeader>
+            <CardTitle className="text-amber-700 dark:text-amber-400">模型目录暂未取到</CardTitle>
+            <CardDescription>{loadError}</CardDescription>
+            <Button size="sm" variant="outline" className="mt-2 h-7 w-fit text-xs" onClick={() => void refresh()}>
+              重试
+            </Button>
+          </CardHeader>
+        </Card>
+      ) : null}
       <ResourceSiteLink label="缺歌声转换模型或伴奏素材？去 AI Hobbyist 资源库" className="self-start" />
       <SovitsServiceNotice onGoSettings={onGoSettings} />
       <div className="flex items-center gap-2">

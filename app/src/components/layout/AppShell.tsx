@@ -273,13 +273,12 @@ export function AppShell({
       icon: 'shield',
     },
   ];
-  // 探活 / 加载期间整列展示（此时用户需要看到进度）；一旦没有「正在连接」的卡片，
-  // 就只保留需要用户动手的（待补齐 / 未连接 / 待配置）。
-  // 「已就绪」的卡片不再长期占位，但留一个折叠入口 —— 排查问题时用户要能一眼看全。
-  const probing = statusCards.some((card) => card.state === 'checking');
+  // 展开/折叠**只由用户手动控制**（点标题行）：不随探活进度或加载成败自动切换 ——
+  // 之前的「探活期间强制全列、就绪后自动收起」会让页面在用户眼皮底下自己变，体验很差。
+  // 折叠时只剩标题行，「N 项待处理」计数照常显示，信息不丢。
   const pendingCards = statusCards.filter((card) => card.state !== 'ready');
   const [showAllStatuses, setShowAllStatuses] = useState(false);
-  const visibleCards = probing || showAllStatuses ? statusCards : pendingCards;
+  const visibleCards = showAllStatuses ? statusCards : [];
 
   return (
     <div
@@ -347,15 +346,14 @@ export function AppShell({
         </nav>
 
         {/* 两套链路的状态：一条云端、一条本地，各自独立。
-            默认只列需要处理的卡片，折叠入口可以展开看全（排查时用）；
-            探活期间强制全列，保证加载进度不被折叠掉。 */}
+            展开/折叠完全由用户点标题行控制，不随加载进度自动变化。 */}
         <div className="hidden px-4 pb-4 lg:block">
           <div className="space-y-1.5">
             <button
               type="button"
               onClick={() => setShowAllStatuses((prev) => !prev)}
               aria-expanded={showAllStatuses}
-              title={showAllStatuses ? '只看待处理的' : '展开全部状态'}
+              title={showAllStatuses ? '收起状态列表' : '展开全部状态'}
               className="flex w-full items-center gap-1 rounded-md px-1 py-0.5 text-[11px] text-muted-foreground transition hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
             >
               {showAllStatuses ? <ChevronDown className="size-3 shrink-0" /> : <ChevronRight className="size-3 shrink-0" />}

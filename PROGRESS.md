@@ -615,6 +615,9 @@
   - **网关透传**：`server/src/routes/indextts.ts`（与 netease 同构的 node:http + pipe 透明转发 + 5 秒缓存探活，无 supervisor）挂 `/api/indextts`（**在 express.json() 之前**，坑 20）；`/api/health` 汇总加 `indextts` 段；config 加 `indextts.baseUrl/proxyTimeoutMs`（`INDEXTTS_URL` 可覆盖，回环口径不变）。
   - **资源管控三服务化**：arbiter（`ServiceName`/`RELEASE_ENDPOINTS`/`serviceOf`/`baseUrlOf`/focus/releaseAll/心跳的 others 全部从「二服务」扩到「三服务」，回环校验硬边界原样保留）；`/api/resources/focus` 的 ENGINES 加 `indextts-tts`；preload 账本 `MODELS` 加 `indextts-tts`（3072 准入口径 + 注释写明实测常驻 5.3 GB 与门槛待校准）；前端 `arbiter.ts`/`resources.ts`/`ResourceBudget`/`preload.ts` 类型与兜底同步。
   - **前端**：`app/src/pages/IndexttsTtsPage.tsx`（引擎状态卡 + 预热/卸载、参考音频上传/音色库选取双 tab、语种、时长系数滑杆、情感三模式〔跟随/8 维向量/情感参考+alpha〕、useResultStack 结果栏、useFileDrop 拖拽、内联错误卡带 hint）；`app/src/lib/indextts.ts` 客户端 + `app/src/types/indextts.ts` 契约；导航注册四处（NavKey / AppShell 状态文案 + NAV_GROUPS 新组「IndexTTS · 情感可控」+ 状态卡 / App.tsx 探活轮询 + 条件渲染 / PAGE_META）。
+  - **用户走查后的两处 UI 修复（10.06 12:45 补）**：
+    - 侧栏状态区改**纯手动展开/折叠**（`AppShell.tsx`）：去掉「探活期间强制全列、就绪后自动收起」的自动切换，折叠=只剩标题行（含 N 项待处理计数），展开=全部卡片，只由用户点击控制；
+    - RVC / DDSP-SVC 页**目录拉取失败不再整页替换**（`VoiceConversionPage.tsx` / `SingingConversionPage.tsx`）：原 `if (loadError) return <报错卡>` 在冷启动场景表现为「先渲染完整页 → 几十秒后整个换成一张报错卡」；改为完整页常驻 + 页内 amber 横幅（标题「模型目录暂未取到」+ 重试按钮），浏览器实测两页均通过。
 
 - **未完成**
   - 准入门槛 3072 偏低（实测常驻 5.3 GB）：是否上调到 ≈5120 **待用户拍板**——调高会挡住正常桌面状态下的开机，调低靠实测兜底。账本注释已标。
@@ -637,7 +640,7 @@
   - warmup 首跑的 4 分钟网络探测无法配置绕过（上游写死 ModelScope→hf-mirror 顺序），断网环境下可能更久或直接失败——已在 catalog/页面文案注明。
 
 - **下一阶段入口**：用户实测对比网易 vs IndexTTS 后拍板主力（回填 preload 账本与门槛值）；若继续，R2T2 离线转写（HANDOFF 坑 12：Windows 原生可行）是下一个高优先级项。
-- 本次文档更新时间：10.06 12:20
+- 本次文档更新时间：10.06 12:45
 
 ---
 
