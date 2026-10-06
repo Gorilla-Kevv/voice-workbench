@@ -37,6 +37,7 @@ interface ResourceBudgetProps {
   /** 网易引擎是否已加载（决定「释放显存」按钮要不要卸它） */
   neteaseTtsLoaded?: boolean;
   neteaseAsrLoaded?: boolean;
+  indexttsLoaded?: boolean;
   className?: string;
 }
 
@@ -44,6 +45,7 @@ export function ResourceBudget({
   task,
   neteaseTtsLoaded = false,
   neteaseAsrLoaded = false,
+  indexttsLoaded = false,
   className,
 }: ResourceBudgetProps) {
   const [snapshot, setSnapshot] = useState<ResourceSnapshot | null>(null);
@@ -113,7 +115,7 @@ export function ResourceBudget({
   const handleRelease = useCallback(async () => {
     setReleasing(true);
     try {
-      const done = await releaseVram({ neteaseTtsLoaded, neteaseAsrLoaded });
+      const done = await releaseVram({ neteaseTtsLoaded, neteaseAsrLoaded, indexttsLoaded });
       if (done.length > 0) {
         toast.success('已释放显存', { description: done.join(' · ') });
       } else {
@@ -123,7 +125,7 @@ export function ResourceBudget({
     } finally {
       setReleasing(false);
     }
-  }, [neteaseAsrLoaded, neteaseTtsLoaded, refresh]);
+  }, [neteaseAsrLoaded, neteaseTtsLoaded, indexttsLoaded, refresh]);
 
   if (!snapshot && loading) {
     return (

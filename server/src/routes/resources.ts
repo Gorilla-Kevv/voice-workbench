@@ -11,12 +11,12 @@ import { resourceArbiter, type FocusEngine } from '../services/arbiter.js';
  * - `POST /release` —— 「全停」，本系统内不留任何常驻模型；
  * - `GET /focus` —— 当前谁在持有资源、还剩多久。
  *
- * 全部动作只作用于本项目自己的两个服务（见 services/arbiter.ts 的开头），
+ * 全部动作只作用于本项目自己的几个 Python 服务（见 services/arbiter.ts 的开头），
  * 不对外界进程做任何事。
  */
 export const resourcesRouter = Router();
 
-const ENGINES: FocusEngine[] = ['netease-tts', 'netease-asr', 'sovits', 'training', 'rvc', 'svc', 'uvr5', 'asr'];
+const ENGINES: FocusEngine[] = ['netease-tts', 'netease-asr', 'indextts-tts', 'sovits', 'training', 'rvc', 'svc', 'uvr5', 'asr'];
 
 resourcesRouter.post('/focus', async (req, res) => {
   const engine = String(req.body?.engine ?? '') as FocusEngine;

@@ -50,7 +50,7 @@
 
 | 目录 | 职责 |
 | --- | --- |
-| `app/src/pages/` | 13 个页面：通用合成、批量合成、音色设计、声音克隆、音色库、历史、训练、语音变声、歌声转换、语音转文本、网易合成、网易转写、设置 |
+| `app/src/pages/` | 14 个页面：通用合成、批量合成、音色设计、声音克隆、音色库、历史、训练、语音变声、歌声转换、语音转文本、网易合成、网易转写、**IndexTTS 合成**、设置 |
 | `app/src/lib/providers/` | Provider 抽象：`mimo`（云端）、`gpt-sovits`（本地）、`selfhosted`（自定义） |
 | `app/src/lib/netease.ts` | 网易模块客户端（`/api/netease/*`，含 NDJSON 流式转写解析） |
 | `app/src/lib/sovits.ts` | 本地服务客户端（含 NDJSON 流式解析、音频地址映射） |
@@ -64,6 +64,7 @@
 | `trainer/app/` | `training.py`（12 阶段编排）、`batch.py`、`inference.py`、`annotations.py`（清单读写）、`jobs.py`、`queue.py` |
 | `trainer/tools/uvr_cli.py` | UVR5 非交互封装（调官方 `vr.py`/`mdxnet.py`，不改官方代码） |
 | `netease/` | **第二个 Python 运行时**（py≥3.10）：`server.py`、`app/tts_engine.py`（Confucius4-TTS 直连）、`app/r2t2.py` + `app/r2t2_worker.py`（R2T2 子进程 worker，vLLM 需 main 环境）、`app/engine.py`（引擎互斥）。上游 API 漂移只改 `tts_engine.py` / `r2t2_worker.py` 两个薄文件 |
+| `indextts/` | **第三个 Python 运行时**（uv 环境在 `upstream/.venv`，py3.11 + torch 2.8 cu128）：`server.py`、`app/{config,hardware,errors,indextts_engine,api}.py`。上游 `upstream/` 是 `git clone --depth 1` 的官方仓库（不改一行），权重在 `upstream/checkpoints/`（5.11 GB，ModelScope 下载）。端点：`/health`、`/v1/catalog`、`/v1/pipeline|warmup|unload`、`/v1/synth`（multipart：text/lang/file 或 ref_path/duration_factor/emo_vector/emo_file/emo_alpha）。上游 API 漂移只改 `indextts_engine.py` 一个薄文件 |
 
 ### 入口文件
 
@@ -81,11 +82,15 @@
 - 网易服务端点（经网关 `/api/netease/*` 透传）：`/health`、`/v1/netease/catalog`、
   `/v1/netease/engines/{acquire,release}`、`/v1/confucius/{pipeline,warmup,unload,tts}`、`/v1/r2t2/*`
   —— `/health` **永远 200**，「服务活着」与「模型可用」是两件事（后者在 `engines.*.installed` 里）
+- IndexTTS 端点（经网关 `/api/indextts/*` 透传）：`/health`（同 netease 哲学，永远 200）、
+  `/v1/catalog`（语种/滑杆范围/情感维度/**准入门槛**——门槛真源在服务端，坑 19）、
+  `/v1/pipeline`、`/v1/warmup`、`/v1/unload`、`/v1/synth`（multipart，返回 base64 音频）
 
 ### 数据模型
 
 - 前端契约：`app/src/types/sovits.ts`（与后端 `trainer/app/models.py` 一一对应）
 - 网易契约：`app/src/types/netease.ts`（与后端 `netease/app/models.py` 一一对应，**改一边必改另一边**）
+- IndexTTS 契约：`app/src/types/indextts.ts`（与后端 `indextts/app/api.py` 返回一一对应，同上规矩）
 - **结果列表底座**：`app/src/hooks/useResultStack.ts` + `app/src/components/features/ResultStack.tsx`
   —— 所有模块的结果栏都走这两个；别在某个页面再自造单值结果 state（见坑 18）
 - **文件/文件夹拖拽底座**：`app/src/hooks/useFileDrop.ts`
@@ -113,7 +118,7 @@
 | 术语提示：桌面悬浮 / 触屏点击 | Radix Tooltip 在触摸设备体验不可靠（悬浮不存在） |
 | 资源站入口：`ResourceSiteLink` 组件，三处（训练 / 变声 / 翻唱） | https://res.acgnai.top/ 提供角色语音数据集与 TTS·SVC 开源模型，正好补「训练没数据、变声没模型」两头；外部链接一律新窗口 + `noopener noreferrer` |
 | 网易合成默认档位 **balanced**（非官方默认） | 官方默认 `num_beams=3` 会让 T2S 自回归跑三条候选（约 3 倍代价），是本机「慢」的主因之一；`balanced=(1,18)` 明显更快。档位定义在 `netease/app/routers/confucius.py::QUALITY_PRESETS`，要回官方默认选 `quality` |
-| **第二套本地 TTS（IndexTTS-2.5）定位为「补充」** | 0.8B / BF16 / 官方 RTF 0.2065，显存压力比网易小；独有价值是**情感向量 / 拼音注音 / 语速倍率**这类精细可控。但它只有 5 语种，跨语种弱于网易 → 不抢主服务位置。方案见 `docs/INDEX-TTS-INTEGRATION.md`（**未开工**） |
+| **第二套本地 TTS（IndexTTS-2.5）定位为「补充」** | 0.8B / BF16 / 官方 RTF 0.2065（4090 数据），**阶段 26 本机实测：暖态 RTF ≈ 2.2，显存被抢时 5~14；常驻实测约 5.3 GB（远超 2~3 GB 估计）**。独有价值是**情感向量 / 拼音注音 / 语速倍率**这类精细可控。但它只有 5 语种，跨语种弱于网易 → 不抢主服务位置。已全链路接入（服务 + 网关透传 + 前端页 + 资源管控，`docs/INDEX-TTS-INTEGRATION.md` 阶段 0~2 完成） |
 | **主力模型不由我们预设**，交给「启动预加载选择」 | 用户 2026-10 裁决：网易 vs IndexTTS 谁当主力由**使用测试**决定。所以不做硬编码默认，改为开机时让用户选一个模型预加载（显存一次只够一个）。实现见 `server/src/services/preload.ts` + `StartupPreloadDialog`；新增模型只需往 `MODELS` 账本加一项 |
 | 预加载顺序 **先让位 → 再检查 → 最后加载** | 反过来会因为另一套还占着显存导致检查必然失败，还会误导用户以为卡太小。这个顺序写在 `preload.ts` 的注释里 |
 | 网易模块**不进 Provider 抽象**、独立成 `netease/` 运行时 | 上游要求 py≥3.10 + torch≥2.5 + cu≥12.6，与 trainer 的 py3.9/torch2.0 互斥（`MODERN-TTS-FEASIBILITY.md` 已论证）；它是本地引擎不是云端 BYOK，塞进 Provider 抽象反而要特化密钥态 |
@@ -122,7 +127,7 @@
 | ~~网易模块 opt-in~~ **已改为主服务**（2026-10） | 免转写克隆 + 14 语种是日常合成的最优路径；`npm run dev` 现在会拉起它，网关仍**无 supervisor**（只转发不托管生命周期） |
 | `dev:netease` 走 `--skip-if-missing` | 主服务也要照顾「没装权重」的机器：没 `netease/.venv` 或端口已被占用时安静跳过，不再崩掉一个 dev 窗格 |
 | 网易不可用时**明确报错 + 给切换入口**，不自动回落 | 沿用现网哲学：不静默降级。页面给出「改用 GPT-SoVITS 批量合成」按钮，用户自己决定 |
-| **跨运行时资源仲裁**：网关做仲裁器，只作用于自有服务 | trainer 与 netease 的引擎互斥互相看不见（跨进程）。仲裁器（`server/src/services/arbiter.ts`）在开跑前卸载另一端的常驻模型，并带心跳复检。**硬边界**：只向 `SOVITS_URL` / `NETEASE_URL` 两个回环地址发请求（非回环直接拒绝），不扫描进程、不 kill PID —— 用户要求的「绝不触及系统外进程」落在代码里 |
+| **跨运行时资源仲裁**：网关做仲裁器，只作用于自有服务 | trainer / netease / indextts 的引擎互斥互相看不见（跨进程）。仲裁器（`server/src/services/arbiter.ts`）在开跑前卸载**其余所有端**的常驻模型，并带心跳复检。**硬边界**：只向 `SOVITS_URL` / `NETEASE_URL` / `INDEXTTS_URL` 三个回环地址发请求（非回环直接拒绝），不扫描进程、不 kill PID —— 用户要求的「绝不触及系统外进程」落在代码里 |
 | **GPT-SoVITS 默认停用**，生命周期交给网关按需拉起（2026-10） | 8 GB 显存装不下两套常驻模型；报错里让用户「先关掉 GPT-SoVITS」却没有入口可以关，等于给了个做不到的建议。`npm run dev` 不再拉起它，用户在设置里开；代价是 `tsx watch` 重启网关时子进程一起回收（开关是开的会自动再拉起） |
 | TTS 默认 **fp16**，且只转三个大户（T2S / S2A / w2v-bert） | 上游全 fp32 约 7.5 GB，8 GB 卡必 OOM；BigVGAN / CAMPPlus 只占 0.45 GB / 几十 MB，留 fp32 反而避开两处 dtype 冲突（见坑 15） |
 | 上游推理配置**不直接用**，复制成绝对路径副本再交给上游 | `inference_config.yaml` 里 `tokenizer_path` / `w2v_stat` 是相对路径、按 CWD 解析；服务从项目根启动就会找不到 |
@@ -243,8 +248,8 @@
     `app/src/lib/resources.ts` 的顺序是：服务端值 → 兜底常量（注释里标了来源与实测依据）。
     内存例外：三个进程同机，**只有网关看得到全貌**，所以由网关 `/api/health` 的 `host` 提供。
 
-20. **`express.json()` 挂载顺序现在管两条代理**
-    `/api/sovits` 与 `/api/netease` 都挂在 `express.json()` 之前（index.ts 内有注释）。新增代理路由时
+20. **`express.json()` 挂载顺序现在管三条代理**
+    `/api/sovits`、`/api/netease` 与 `/api/indextts` 都挂在 `express.json()` 之前（index.ts 内有注释）。新增代理路由时
     再犯「multipart/NDJSON 被 body-parser 消费」的老错，症状是上传与流式全部 400/空体。
 
 21. **音色库的 `audio_path` 是服务端磁盘路径，不能当 URL 用**
@@ -284,6 +289,17 @@
     `AppShell` 上有一层全局 `preventDefault` 兜底 —— 落在上传区之外的误拖，浏览器默认会
     把整个 SPA 导航走（表单状态全丢）。新增上传点只要展开 `rootProps` 就自动带上过滤与回填。
 
+26. **IndexTTS 的显存画像与「自己拦自己」的准入 bug（阶段 26 实测）**
+    - 0.8B / BF16 **实际常驻约 5.3 GB**（nvidia-smi 加载前后差值），不是官方口径能推出来的 2~3 GB
+      —— w2v-bert、BigVGAN、QwenEmotion、codec 全都算上。准入门槛 `REQUIRED_VRAM_MB=3072` 因此偏低，
+      上调与否待用户拍板（见 PROGRESS 阶段 26 未完成项）。
+    - 准入检查必须**先看模型是否已常驻，已加载就跳过** —— 否则模型加载后空闲显存必然低于门槛，
+      合成会被**自己的常驻显存**拦死（VRAM_INSUFFICIENT，正是坑 24 在网易侧修过的同款问题）。
+    - warmup 首跑约 4 分钟，**大头是上游对辅助模型的 ModelScope → hf-mirror 网络探测超时**，
+      权重其实全在本地（探测失败后回退读本地），真·加载仅约 10 秒。断网机器上会更久。
+    - RTF 对「当时有多少程序在抢显存」极度敏感：暖态 2.2，桌面占满时 5~14。对比网易（稳态 2.0~2.5）
+      时**必须在同一台机、同一种桌面状态下测**，不然结论会错。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -294,8 +310,8 @@
 | 网易模块服务 | **已随 `npm run dev` 自动拉起**；单独重启用 `npm run dev:netease`（需先按 `netease/README.md` 建 venv + 下权重） |
 | GPT-SoVITS 服务 | **默认不启动**（显存留给主服务）；要用训练 / 批量 / 变声 / 翻唱时到**设置页**打开；想随 dev 一起起用 `npm run dev:all` |
 | GPT-SoVITS 启停接口 | `GET/POST /api/sovits/service`（`{"enabled":true}`）；开关存在 `server/.data/sovits-service.json` |
-| IndexTTS 服务 | `npm run dev:indextts`（第三个 Python 运行时：`indextts/upstream/.venv`，py3.11 + torch 2.8 cu128；端口 **9883**）；体检 `npm run indextts:check` |
-| IndexTTS 方案文档 | `docs/INDEX-TTS-INTEGRATION.md`（8 阶段计划 + 资源管控设计，阶段 25 已完成 0/1/2） |
+| IndexTTS 服务 | `npm run dev:indextts`（第三个 Python 运行时：`indextts/upstream/.venv`，py3.11 + torch 2.8 cu128；端口 **9883**）；体检 `npm run indextts:check`；**阶段 26 起全链路已接入**（网关 `/api/indextts/*` 透传 + 前端「IndexTTS · 情感可控」页） |
+| IndexTTS 方案文档 | `docs/INDEX-TTS-INTEGRATION.md`（8 阶段计划；阶段 0/1/2 完成于 25，合成实测 + 透传 + 前端 + 资源管控完成于 26） |
 | 启动预加载 | `GET /api/preload/catalog`（各模型显存代价 + 当前余量）、`POST /api/preload`（执行）、`PUT /api/preload/preference`；偏好存 `server/.data/preload.json` |
 | 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`） |
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]` |
@@ -338,6 +354,10 @@
 - **全站拖拽导入已就位（阶段 24）**：13 处上传点统一走 `app/src/hooks/useFileDrop.ts`，
   支持文件与**文件夹**（entry API 递归）、按 accept 过滤、回填 `input.files`；
   `AppShell` 加了全局 preventDefault 兜底（误拖不再把 SPA 导航走）；新增坑 25
+- **IndexTTS 全链路已接入（阶段 26）**：真实合成实测跑通（中文 + 情感向量 + 经网关 multipart），
+  修掉骨架 3 个必挂 bug（坑 26）；`/api/indextts/*` 透传、arbiter/preload/ResourceBudget 三服务化、
+  前端「IndexTTS · 情感可控」页（8 维情感向量 / 情感参考音频 / 语速滑杆）全部就位；
+  **本机暖态 RTF ≈ 2.2、常驻实测约 5.3 GB** —— 主力归属（vs 网易 2.0~2.5 / 4.9 GB）待用户听感 + 用时拍板
 
 ### 验收标准
 
@@ -353,7 +373,7 @@
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
 | 高 | 端到端实测阶段 6 的新 UI | **走查已做完一半**（阶段 23）：训练页 s2→s1 顺序 / 官方 hint / 完成卡 E-S 解释、设置页权重下拉（**实测出下拉显示空白，已修**，见坑 22）均浏览器验过；仍缺 ① 带 `slice` 阶段的任务来验切分结果面板（现有历史任务无一含切分），② 权重「加载所选权重」联动（本机 `GPT/SoVITS_weights_v2ProPlus/` 为空，没有训练产物可选） |
-| 高 | **用实际合成对比网易 vs（未来）IndexTTS，决定主力** | 用户裁决：主力由使用测试定。目前只有网易可跑（RTF 2.0~2.5），IndexTTS 待接入后再比 |
+| 高 | **用实际合成对比网易 vs IndexTTS，决定主力** | **IndexTTS 已接入**（阶段 26），两套都可跑：网易稳态 RTF 2.0~2.5 / 常驻 4.9 GB；IndexTTS 暖态 RTF ≈ 2.2、显存被抢时 5~14 / 常驻实测 ≈ 5.3 GB。主力由**用户听感 + 使用测试**拍板；定完回填 preload 账本门槛与默认项 |
 | 高 | 网易合成页的 UI 交互人工过一遍 | **已做完**（阶段 23）：上传、音色库选取（**实测必挂，已修**，见坑 21）、语种切换、回退按钮、显存不足报错均验过；**唯一没验到的是「合成成功 → 结果卡播放/下载」**，被显存准入拦死（见下一条），需要先把门槛口径拍板或手动腾显存 |
 | 高 | **显存准入门槛按精度分档** | **已按用户拍板落地**（坑 24）：fp16 → 5120、fp32 → 6144，真源改为 `netease/app/tts_engine.py::required_vram_mb(precision)`。**需重启 9882 才生效**；另外这台机器 Windows 桌面常驻约 5 GB，5120 只是「不再按 fp32 的口径误拦」，真跑仍要用户先腾显存 |
 | 中 | **真机验证拖拽导入的文件夹分支**（阶段 24） | 合成事件造不出 `FileSystemDirectoryEntry`，目录递归这条只能由用户从资源管理器真拖一个语料文件夹进训练页来确认（其余 13 处入口均已浏览器实测：过滤、回填、上传都正常） |
@@ -363,7 +383,7 @@
 | 低 | 首条合成预热（实测 378 s） | 稳态 RTF 2.0~2.5，但冷启动第一条要几分钟。可考虑 warmup 时跑一句空合成把算子预热掉 |
 | 低 | 观察新口径是否过严 | **已有结论，见上面「显存准入门槛是否按精度分档」与坑 24** —— 确实过严，正常用机状态下主服务开不起来 |
 | 低 | 首条合成 378 s 复测 | 怀疑就是显存不足导致的抖动（当时只剩 ~300 MB 却被放行），口径修好后**在显存充足时复测**；若仍慢再考虑 warmup 里跑一句空合成预热 |
-| 中 | **拍板：是否接入 IndexTTS-2.5** | 方案已就绪（`docs/INDEX-TTS-INTEGRATION.md`）：0.8B/BF16/情感可控，资源管控复用现有 ResourceBudget + arbiter + preflight 模式。需确认三点：定位（补充不抢主服务）/ 磁盘 5~8 GB / 商用许可（bilibili 协议非 Apache） |
+| ~~中~~ **已完成（阶段 26）** | ~~拍板：是否接入 IndexTTS-2.5~~ | 已全链路接入（`indextts/` :9883 + 网关透传 + 前端页 + arbiter/preload/ResourceBudget 三服务化）。当时的三个确认点结论：定位＝补充（导航组名「情感可控」不下主辅定论）；磁盘 5.11 GB 已就位；商用——用户裁决「不考虑商用」。**遗留待拍板**：准入门槛 3072 是否按实测常驻 5.3 GB 上调（见坑 26） |
 | 中 | 决策：是否推进三模型整合 | `docs/` 已有 OmniVoice/VoxCPM2/Qwen3-TTS 可行性评估，待拍板；若推进，复用 netease 阶段验证过的「第二个运行时 + 无 supervisor 网关透传」模式 |
 | 低 | 毛玻璃观感浏览器确认 | 阶段 5 遗留，多次预览被跳过 |
 | 低 | BS-RoFormer 补 `.yaml` | 整合包有权重缺配置；补齐后模型列表自动变为可用（无需改代码） |
@@ -373,7 +393,10 @@
 - 先读本文件 + `PROGRESS.md`，再用搜索工具定位具体模块，**不要读全仓库**
 - 改动前先看「已知坑」第 1、5、6 条（bat 编码、Python 3.9 限制、弹窗依赖）；
   动 `netease/` 前必看第 12~17 条（R2T2 平台阻塞、HF 缓存、hf-mirror、fp16、float32 写盘、显存口径）；
+  动 `indextts/` 前必看第 26 条（显存画像、准入自锁 bug、warmup 网络探测、RTF 波动）；
   动任何结果栏前必看第 18 条（统一走 `useResultStack`）；动资源预估前看第 19 条（门槛值在服务
   端）；动任何上传/导入入口前看第 21、25 条（磁盘路径不能当 URL、拖拽统一走 `useFileDrop`）
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志
+
+> 本次文档更新时间：10.06 12:25 [BY Qoder]（阶段 26：IndexTTS 全链路接入）

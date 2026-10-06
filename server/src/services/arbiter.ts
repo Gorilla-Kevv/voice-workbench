@@ -7,10 +7,11 @@ import { logger } from '../lib/logger.js';
  * ============================================================
  * 作用域的硬边界（这是本文件存在的第一前提）
  * ============================================================
- * 本系统 = 本项目自己拉起的两个 Python 服务：
+ * 本系统 = 本项目自己拉起的三个 Python 服务：
  *   - GPT-SoVITS 本地服务（`config.sovits.baseUrl`，默认 127.0.0.1:9881）
  *   - 网易模块服务（`config.netease.baseUrl`，默认 127.0.0.1:9882）
- * 仲裁器**只向这两个地址发请求**，而且发之前会校验目标是回环地址（见 `assertOwnService`）。
+ *   - IndexTTS 服务（`config.indextts.baseUrl`，默认 127.0.0.1:9883）
+ * 仲裁器**只向这几个地址发请求**，而且发之前会校验目标是回环地址（见 `assertOwnService`）。
  * 它不扫描进程、不 taskkill 任何 PID、不认识也不触碰电脑上其它任何程序 ——
  * 浏览器、安卓模拟器、游戏占的显存一概不管（那部分由界面提示用户自己处理）。
  *
@@ -24,23 +25,30 @@ import { logger } from '../lib/logger.js';
  */
 
 /** 本系统内的引擎标识 → 它属于哪个服务 */
-export type FocusEngine = 'netease-tts' | 'netease-asr' | 'sovits' | 'training' | 'rvc' | 'svc' | 'uvr5' | 'asr';
+export type FocusEngine = 'netease-tts' | 'netease-asr' | 'indextts-tts' | 'sovits' | 'training' | 'rvc' | 'svc' | 'uvr5' | 'asr';
 
-type ServiceName = 'sovits' | 'netease';
+type ServiceName = 'sovits' | 'netease' | 'indextts';
+
+const ALL_SERVICES: ServiceName[] = ['sovits', 'netease', 'indextts'];
 
 /** 每个服务的「卸载自己全部模型」入口（POST），按优先级排列 */
 const RELEASE_ENDPOINTS: Record<ServiceName, string[]> = {
   // 引擎注册表的 unload_all：把 SoVITS / RVC / SVC / ASR 等常驻模型全卸掉
   sovits: ['/v1/engines/unload', '/v1/pipeline/unload'],
   netease: ['/v1/confucius/unload', '/v1/r2t2/unload'],
+  indextts: ['/v1/unload'],
 };
 
 function serviceOf(engine: FocusEngine): ServiceName {
-  return engine === 'netease-tts' || engine === 'netease-asr' ? 'netease' : 'sovits';
+  if (engine === 'netease-tts' || engine === 'netease-asr') return 'netease';
+  if (engine === 'indextts-tts') return 'indextts';
+  return 'sovits';
 }
 
 function baseUrlOf(service: ServiceName): string {
-  return service === 'netease' ? config.netease.baseUrl : config.sovits.baseUrl;
+  if (service === 'netease') return config.netease.baseUrl;
+  if (service === 'indextts') return config.indextts.baseUrl;
+  return config.sovits.baseUrl;
 }
 
 /**
@@ -141,7 +149,7 @@ class ResourceArbiter {
    */
   async focus(engine: FocusEngine, holdSeconds = 600): Promise<FocusReport> {
     const service = serviceOf(engine);
-    const others: ServiceName[] = service === 'netease' ? ['sovits'] : ['netease'];
+    const others = ALL_SERVICES.filter((s) => s !== service);
 
     const released: string[] = [];
     const failed: FocusReport['failed'] = [];
@@ -180,12 +188,12 @@ class ResourceArbiter {
     return { engine, service, released, failed, targetReachable };
   }
 
-  /** 全停：两个自有服务的模型都卸掉（不留任何常驻） */
+  /** 全停：所有自有服务的模型都卸掉（不留任何常驻） */
   async releaseAll(): Promise<FocusReport> {
     this.disarm();
     const released: string[] = [];
     const failed: FocusReport['failed'] = [];
-    for (const service of ['sovits', 'netease'] as ServiceName[]) {
+    for (const service of ALL_SERVICES) {
       const result = await releaseService(service);
       released.push(...result.released);
       failed.push(...result.failed);
@@ -216,7 +224,7 @@ class ResourceArbiter {
         this.disarm();
         return;
       }
-      const others: ServiceName[] = service === 'netease' ? ['sovits'] : ['netease'];
+      const others = ALL_SERVICES.filter((s) => s !== service);
       void Promise.all(others.map((other) => releaseService(other))).catch(() => undefined);
     }, HEARTBEAT_MS);
     timer.unref?.();

@@ -18,6 +18,7 @@ import {
   Server,
   ShieldAlert,
   ShieldCheck,
+  SlidersHorizontal,
   Subtitles,
   Sun,
   Waves,
@@ -75,7 +76,7 @@ const SOVITS_STATUS_TEXT: Record<SovitsLinkState, { title: string; hint: string 
  * 与 GPT-SoVITS 的三态文案刻意保持同一句式，用户不需要重新学习一套提示语。
  */
 const MODULE_STATUS_TEXT: Record<
-  'rvc' | 'svc' | 'asr' | 'neteaseTts' | 'neteaseAsr',
+  keyof ModuleStates,
   { label: string; states: Record<ModuleStates['rvc'], { title: string; hint: string }> }
 > = {
   rvc: {
@@ -123,6 +124,15 @@ const MODULE_STATUS_TEXT: Record<
       offline: { title: '网易转写 · 未启动', hint: '主服务未起来：运行 npm run dev:netease（Windows 上 R2T2 还需 WSL2，见 netease/README.md）' },
     },
   },
+  indexttsTts: {
+    label: 'IndexTTS',
+    states: {
+      checking: { title: 'IndexTTS · 正在连接', hint: 'indextts 服务探测中，稍候自动恢复' },
+      ready: { title: 'IndexTTS · 已就绪', hint: 'IndexTTS-2.5 权重就绪，推理全在本机（情感向量 / 语速可控）' },
+      incomplete: { title: 'IndexTTS · 待补齐', hint: 'CUDA 不可用或权重缺失：跑 npm run indextts:check 体检' },
+      offline: { title: 'IndexTTS · 未启动', hint: '按需模块：npm run dev:indextts 启动（环境见 docs/INDEX-TTS-INTEGRATION.md）' },
+    },
+  },
 };
 
 /** 导航按「用哪个模型」分组，避免用户在两条链路之间迷路 */
@@ -134,6 +144,14 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     items: [
       { key: 'netease-tts', label: '零样本合成', icon: Landmark, hint: 'Confucius4-TTS · 免转写克隆 / 14 语种' },
       { key: 'netease-asr', label: '流式转写', icon: Subtitles, hint: 'Confucius4-R2T2 · append-only 真流式（开发中）' },
+    ],
+  },
+  {
+    // IndexTTS 是**补充**定位（5 语种，跨语种弱于网易）；独有价值是情感向量 / 语速这类精细可控。
+    // 主力归属由使用测试决定（用户 2026-10 裁决），所以组名不下「主/辅」的定论，只标能力差异。
+    title: 'IndexTTS · 情感可控',
+    items: [
+      { key: 'indextts-tts', label: '零样本合成', icon: SlidersHorizontal, hint: 'IndexTTS-2.5 · 8 维情感向量 / 语速倍率 / 5 语种' },
     ],
   },
   {
@@ -229,7 +247,7 @@ export function AppShell({
   children,
   header,
   sovitsState = 'offline',
-  moduleStates = { rvc: 'checking', svc: 'checking', asr: 'checking', neteaseTts: 'checking', neteaseAsr: 'checking' },
+  moduleStates = { rvc: 'checking', svc: 'checking', asr: 'checking', neteaseTts: 'checking', neteaseAsr: 'checking', indexttsTts: 'checking' },
 }: AppShellProps) {
   const keyReady = hasServerKey || hasUserKey;
   const sovits = SOVITS_STATUS_TEXT[sovitsState];
@@ -242,7 +260,7 @@ export function AppShell({
       return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;
     }),
     { id: 'sovits', state: sovitsState, title: sovits.title, hint: sovits.hint, icon: 'server' },
-    ...(['rvc', 'svc', 'asr'] as const).map((key) => {
+    ...(['rvc', 'svc', 'asr', 'indexttsTts'] as const).map((key) => {
       const module = MODULE_STATUS_TEXT[key];
       const state = moduleStates[key];
       return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;

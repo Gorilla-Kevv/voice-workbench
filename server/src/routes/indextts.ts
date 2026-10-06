@@ -1,0 +1,157 @@
+/**
+ * IndexTTS 本地服务（indextts/，第三个 Python 运行时，:9883）反向代理（`/api/indextts/*`）。
+ *
+ * 与 `netease.ts` 同一套透明转发思路（node:http + pipe，不解析请求体），
+ * 同样**没有 supervisor**：生命周期归 `npm run dev:indextts`，
+ * 网关只做探活与透明转发，探不到就返回带「如何启动」提示的结构化 503。
+ *
+ * 挂载点必须在 `express.json()` **之前**（multipart 音频上传不能被 body-parser 消费）。
+ */
+
+import http from 'node:http';
+import type { Request, Response } from 'express';
+import { Router } from 'express';
+
+import { config } from '../config/index.js';
+import { logger } from '../lib/logger.js';
+
+export const indexttsProxyRouter = Router();
+
+/** 逐跳首部（RFC 7230）不能透传 */
+const HOP_BY_HOP = new Set([
+  'connection',
+  'keep-alive',
+  'proxy-authenticate',
+  'proxy-authorization',
+  'te',
+  'trailer',
+  'transfer-encoding',
+  'upgrade',
+]);
+
+function filterHeaders(headers: http.IncomingHttpHeaders, host: string): http.OutgoingHttpHeaders {
+  const result: http.OutgoingHttpHeaders = {};
+  for (const [key, value] of Object.entries(headers)) {
+    if (value === undefined) continue;
+    if (HOP_BY_HOP.has(key.toLowerCase())) continue;
+    result[key] = value;
+  }
+  result.host = host;
+  return result;
+}
+
+function unavailable(res: Response, detail: string): void {
+  res.status(503).json({
+    ok: false,
+    error: {
+      code: 'INDEXTTS_UNAVAILABLE',
+      message: `IndexTTS 本地服务不可用：${detail}`,
+      retryable: true,
+      hint: 'IndexTTS 是按需启动的模块。运行 npm run dev:indextts 启动它（环境搭建见 docs/INDEX-TTS-INTEGRATION.md）。',
+      details: {
+        baseUrl: config.indextts.baseUrl,
+      },
+    },
+  });
+}
+
+indexttsProxyRouter.use((req: Request, res: Response) => {
+  forward(req, res);
+});
+
+function forward(req: Request, res: Response): void {
+  let target: URL;
+  try {
+    target = new URL(config.indextts.baseUrl);
+  } catch {
+    unavailable(res, `服务地址不合法：${config.indextts.baseUrl}`);
+    return;
+  }
+
+  // 挂载点已被 Express 剥离，req.url 就是 Python 侧的路径（含查询串）
+  const path = req.url && req.url !== '' ? req.url : '/';
+  const timeoutMs = config.indextts.proxyTimeoutMs;
+
+  const proxyReq = http.request(
+    {
+      protocol: target.protocol,
+      hostname: target.hostname,
+      port: target.port || (target.protocol === 'https:' ? 443 : 80),
+      method: req.method,
+      path,
+      headers: filterHeaders(req.headers, target.host),
+      // 0 交给 http 模块默认（无超时）；>0 才启用
+      ...(timeoutMs > 0 ? { timeout: timeoutMs } : {}),
+    },
+    (proxyRes) => {
+      markReachable();
+      res.writeHead(proxyRes.statusCode ?? 502, filterHeaders(proxyRes.headers, target.host));
+      proxyRes.pipe(res);
+    },
+  );
+
+  proxyReq.on('error', (error: Error) => {
+    markUnreachable(error.message);
+    logger.warn('IndexTTS 代理失败', { path, message: error.message });
+    if (res.headersSent) {
+      res.end();
+      return;
+    }
+    unavailable(res, error.message);
+  });
+
+  res.on('close', () => {
+    if (!res.writableEnded) proxyReq.destroy();
+  });
+
+  req.pipe(proxyReq);
+}
+
+// ---------------------------------------------------------------- 探活缓存
+// 供 `/api/health` 汇总（与 netease.ts 同一模式：5 秒缓存 + TCP 探测兜底）。
+
+let cached = { reachable: false, checkedAt: 0, lastError: '' as string };
+
+function markReachable(): void {
+  cached = { reachable: true, checkedAt: Date.now(), lastError: '' };
+}
+
+function markUnreachable(message: string): void {
+  cached = { reachable: false, checkedAt: Date.now(), lastError: message };
+}
+
+function probeReachable(): Promise<boolean> {
+  return new Promise((resolve) => {
+    const target = new URL(config.indextts.baseUrl);
+    const req = http.request(
+      { hostname: target.hostname, port: target.port || 80, path: '/health', method: 'GET', timeout: 800 },
+      (res) => {
+        res.resume();
+        resolve(Boolean(res.statusCode && res.statusCode < 500));
+      },
+    );
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+    req.on('error', () => resolve(false));
+    req.end();
+  });
+}
+
+/** 供 `/api/health` 汇总展示；带 5 秒缓存，避免 health 轮询打爆探测 */
+export async function indexttsSummary(): Promise<Record<string, unknown>> {
+  const fresh = Date.now() - cached.checkedAt < 5_000;
+  if (!fresh) {
+    const reachable = await probeReachable();
+    if (reachable) markReachable();
+    else markUnreachable(cached.lastError || '探活无响应');
+  }
+  return {
+    baseUrl: config.indextts.baseUrl,
+    reachable: cached.reachable,
+    /** 按需模块：未启动是常态而不是故障 */
+    optional: true,
+    lastError: cached.lastError || undefined,
+  };
+}

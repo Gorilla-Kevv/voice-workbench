@@ -107,6 +107,15 @@ export const config = {
     /** 代理请求超时（毫秒）。合成/转写都是长任务，0 = 不超时 */
     proxyTimeoutMs: num(process.env.NETEASE_PROXY_TIMEOUT_MS, 0),
   },
+  /**
+   * IndexTTS 本地服务（indextts/，第三个 Python 运行时）的接入配置。
+   * 与 netease 同一模式：无 supervisor，生命周期归 `npm run dev:indextts`。
+   */
+  indextts: {
+    baseUrl: (process.env.INDEXTTS_URL?.trim() || 'http://127.0.0.1:9883').replace(/\/+$/, ''),
+    /** 代理请求超时（毫秒）。合成是长任务，0 = 不超时 */
+    proxyTimeoutMs: num(process.env.INDEXTTS_PROXY_TIMEOUT_MS, 0),
+  },
 } as const;
 
 export const isProduction = config.env === 'production';

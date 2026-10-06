@@ -200,6 +200,8 @@ export interface ModuleStates {
   neteaseTts: ModuleState;
   /** 网易模块（Confucius4-R2T2）：同上；「未启动」是常态（opt-in 模块，不随主程序拉起） */
   neteaseAsr: ModuleState;
+  /** IndexTTS-2.5：第三个运行时（indextts/，:9883）；「未启动」是常态（按需启动） */
+  indexttsTts: ModuleState;
 }
 
 /**

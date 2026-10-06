@@ -55,9 +55,22 @@ def create_app(settings: Settings) -> FastAPI:
     def pipeline() -> dict[str, Any]:
         return {'ok': True, **engine.status()}
 
+    @app.get('/v1/catalog')
+    def catalog() -> dict[str, Any]:
+        # 门槛/取值范围的唯一事实源在服务端（前端只留兜底常量，与坑 19 同一哲学）
+        return {
+            'ok': True,
+            'languages': ['ZH', 'EN', 'JA', 'AR', 'ES'],
+            'duration_factor': {'min': 0.5, 'max': 2.0, 'default': 1.0},
+            'emo_dimensions': ['喜', '怒', '哀', '惧', '厌恶', '低落', '惊喜', '平静'],
+            'emo_alpha': {'min': 0.0, 'max': 1.0, 'default': 0.65},
+            'emo_text_control': False,  # 需 use_qwen_emo 额外加载 0.6B 模型，显存吃紧，暂不接
+            'required_vram_mb': IndexTtsPipeline.REQUIRED_VRAM_MB,
+        }
+
     @app.post('/v1/warmup')
     def warmup() -> dict[str, Any]:
-        _guard_vram()
+        _guard_vram(engine)
         return {'ok': True, 'engine': engine.ensure_loaded()}
 
     @app.post('/v1/unload')
@@ -72,14 +85,23 @@ def create_app(settings: Settings) -> FastAPI:
         file: Optional[UploadFile] = File(None),
         ref_path: Optional[str] = Form(None),
         duration_factor: float = Form(1.0),
+        emo_vector: Optional[str] = Form(None),
+        emo_alpha: float = Form(0.65),
+        emo_file: Optional[UploadFile] = File(None),
     ) -> dict[str, Any]:
-        prompt_wav = _resolve_ref(request.app.state.settings, file, ref_path)
-        _guard_vram()
+        settings = request.app.state.settings
+        prompt_wav = _resolve_ref(settings, file, ref_path)
+        emo_values = _parse_emo_vector(emo_vector)
+        emo_audio = _resolve_ref(settings, emo_file, None) if emo_file is not None and emo_file.filename else None
+        _guard_vram(engine)
         result = engine.generate(
             text=text,
             lang=lang,
             prompt_wav=prompt_wav,
             duration_factor=float(duration_factor),
+            emo_vector=emo_values,
+            emo_alpha=float(emo_alpha),
+            emo_audio=emo_audio,
         )
         audio_bytes = Path(result['path']).read_bytes()
         return {
@@ -104,6 +126,21 @@ def _torch_ok() -> bool:
         return False
 
 
+def _parse_emo_vector(raw: Optional[str]) -> Optional[list[float]]:
+    """情感向量以 JSON 数组字符串随 multipart 传入（8 个 0~1 的数）。"""
+    if raw is None or not raw.strip():
+        return None
+    import json  # noqa: PLC0415
+
+    try:
+        parsed = json.loads(raw)
+    except ValueError as error:
+        raise IndexTtsError('BAD_EMO_VECTOR', f'情感向量不是合法 JSON：{error}', '传 8 个 0~1 数字的 JSON 数组。') from error
+    if not isinstance(parsed, list):
+        raise IndexTtsError('BAD_EMO_VECTOR', '情感向量必须是 JSON 数组', '传 8 个 0~1 数字的 JSON 数组。')
+    return [float(v) for v in parsed]
+
+
 def _resolve_ref(settings: Settings, file: Optional[UploadFile], ref_path: Optional[str]) -> Path:
     if file is not None and file.filename:
         out_dir = settings.uploads_dir / 'ref'
@@ -121,9 +158,16 @@ def _resolve_ref(settings: Settings, file: Optional[UploadFile], ref_path: Optio
     raise IndexTtsError('REF_AUDIO_REQUIRED', '缺少参考音频', '上传一段 ≥3 秒的参考音频。')
 
 
-def _guard_vram() -> None:
-    """显存准入：nvidia-smi 口径，门槛 3 GB（IndexTTS-2.5 BF16 的估计值，实测后校准）。"""
-    from .indextts_engine import REQUIRED_VRAM_MB  # noqa: PLC0415
+def _guard_vram(engine: Optional[IndexTtsPipeline] = None) -> None:
+    """显存准入：nvidia-smi 口径，门槛 3 GB（IndexTTS-2.5 BF16 的估计值，实测后校准）。
+
+    模型已常驻时跳过 —— 这时「空闲不足」是本服务自己占的，拦住的恰恰是唯一的出路。
+    """
+    if engine is not None and engine.status()['loaded']:
+        return
+    from .indextts_engine import IndexTtsPipeline  # noqa: PLC0415
+
+    REQUIRED_VRAM_MB = IndexTtsPipeline.REQUIRED_VRAM_MB
 
     info = vram_mb()
     if info is None:

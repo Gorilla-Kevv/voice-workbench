@@ -20,6 +20,9 @@ export * from './asr';
 /** 网易模块（Confucius4-TTS / R2T2）的契约类型 */
 export * from './netease';
 
+// IndexTTS 模块（indextts/，第三个 Python 运行时）
+export * from './indextts';
+
 /** 三种 MiMo 语音模型对应的功能模式 */
 export type TtsMode = 'preset' | 'design' | 'clone';
 
@@ -42,7 +45,9 @@ export type NavKey =
   /** 网易模块（Confucius4-TTS）：零样本克隆合成 */
   | 'netease-tts'
   /** 网易模块（Confucius4-R2T2）：流式 / 离线转写 */
-  | 'netease-asr';
+  | 'netease-asr'
+  /** IndexTTS-2.5：本地零样本合成（情感向量 / 语速可控） */
+  | 'indextts-tts';
 
 /**
  * 本地模型服务的连接状态。

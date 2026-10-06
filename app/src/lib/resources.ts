@@ -13,13 +13,14 @@
  * - **内存**：网关 `/api/health` 的 `host`（Node 的 os.freemem）。
  */
 
+import { indexttsApi } from '@/lib/indextts';
 import { neteaseApi } from '@/lib/netease';
 import { sovitsApi } from '@/lib/sovits';
 import { api } from '@/lib/api';
 import type { HealthInfo } from '@/types';
 
 /** 资源型任务标识 */
-export type ResourceTask = 'netease-tts' | 'netease-asr' | 'sovits' | 'batch' | 'training' | 'rvc' | 'svc' | 'uvr5' | 'asr';
+export type ResourceTask = 'netease-tts' | 'netease-asr' | 'indextts-tts' | 'sovits' | 'batch' | 'training' | 'rvc' | 'svc' | 'uvr5' | 'asr';
 
 /** 前端兜底常量：服务端没给数时用（单位 MB，标注来源，别凭感觉改） */
 const FALLBACK_VRAM_MB: Record<ResourceTask, number> = {
@@ -27,6 +28,9 @@ const FALLBACK_VRAM_MB: Record<ResourceTask, number> = {
   'netease-tts': 4915,
   // vLLM gpu_memory_utilization 默认 0.35 × 8 GB
   'netease-asr': 2865,
+  // 与 indextts/app/indextts_engine.py::REQUIRED_VRAM_MB 一致；
+  // 阶段 26 实测加载后常驻约 5.3 GB（准入是加载前口径，运行中余量极小）
+  'indextts-tts': 3072,
   // 与 trainer ENGINES 表一致
   sovits: 3072,
   batch: 3072,
@@ -41,6 +45,7 @@ const FALLBACK_VRAM_MB: Record<ResourceTask, number> = {
 const FALLBACK_RAM_MB: Record<ResourceTask, number> = {
   'netease-tts': 3072,
   'netease-asr': 4096,
+  'indextts-tts': 3072,
   sovits: 2048,
   batch: 3072,
   training: 6144,
@@ -73,6 +78,8 @@ export interface ResourceSnapshot {
   engine_required_mb: Record<string, number>;
   /** 网易 TTS 的门槛（服务端给的 REQUIRED_VRAM_MB） */
   netease_tts_required_mb: number | null;
+  /** IndexTTS 的门槛（服务端 catalog 的 required_vram_mb） */
+  indextts_required_mb: number | null;
   /** 当前谁在占着本地引擎（null = 空闲） */
   active_engine: string | null;
   /** GPT-SoVITS 本地服务是否被启用（默认关闭；它占着显存时才有「关掉它」这一说） */
@@ -106,6 +113,7 @@ export interface Suggestion {
 const LOWER_TIPS: Record<ResourceTask, string> = {
   'netease-tts': '把长文本拆成多段分批合成，别一次塞整篇；fp16 已是低配，想更省只能换更小模型。',
   'netease-asr': '调低 R2T2 的 gpu_memory_utilization（默认 0.35），或改走 FunASR 轻量通道。',
+  'indextts-tts': '把长文本拆成多段分批合成；bf16 已是低配。它常驻约 5.3 GB，跑之前先把浏览器硬件加速 / 模拟器等占显存的程序关掉。',
   sovits: '切到更小的底模版本，或缩短单次合成文本（长文本会显著抬高显存峰值）。',
   batch: '减小并发条数 / 分段长度；批量任务逐条排队跑比一次铺开省显存。',
   training: '降 batch size、缩短单段音频上限（>15 秒的先切分），或改用更小的底模。',
@@ -118,12 +126,14 @@ const LOWER_TIPS: Record<ResourceTask, string> = {
 const UPGRADE_TIP =
   '8 GB 显存跑 1.3B 级模型本来就压线；要长期流畅，建议 ≥12 GB 显存 + 32 GB 内存（或换更大显存的卡 / 用云端方案）。';
 
-/** 采一次资源快照：三个来源并发，任一失败都降级而不是整体失败 */
+/** 采一次资源快照：各来源并发，任一失败都降级而不是整体失败 */
 export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
-  const [health, engines, netease] = await Promise.all([
+  const [health, engines, netease, indextts, indexttsCatalog] = await Promise.all([
     api.health().catch(() => null),
     sovitsApi.engines().catch(() => null),
     neteaseApi.health().catch(() => null),
+    indexttsApi.health().catch(() => null),
+    indexttsApi.catalog().catch(() => null),
   ]);
 
   const engineRequired: Record<string, number> = {};
@@ -131,12 +141,13 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
     engineRequired[engine.name] = engine.required_mb;
   }
 
-  // 显存余量：netease 是 nvidia-smi 口径（跨进程真实值），优先；否则退回 trainer 的 torch 口径
-  const neteaseVram = netease?.vram ?? null;
-  const vram_free = neteaseVram?.free_mb ?? engines?.free_vram_mb ?? null;
-  const vram_total = neteaseVram?.total_mb ?? null;
-  const source: ResourceSnapshot['vram_source'] = neteaseVram
-    ? neteaseVram.source === 'nvidia-smi'
+  // 显存余量：netease / indextts 都是 nvidia-smi 口径（跨进程真实值，见 HANDOFF 坑 17），
+  // 谁活着用谁的；都不可用才退回 trainer 的 torch 口径（WDDM 下会虚高）
+  const smiVram = indextts?.vram ?? netease?.vram ?? null;
+  const vram_free = smiVram?.free_mb ?? engines?.free_vram_mb ?? null;
+  const vram_total = smiVram?.total_mb ?? null;
+  const source: ResourceSnapshot['vram_source'] = smiVram
+    ? smiVram.source === 'nvidia-smi'
       ? 'nvidia-smi'
       : 'torch'
     : engines?.free_vram_mb != null
@@ -151,6 +162,7 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
     ram_free_mb: (health as HealthInfo | null)?.host?.ram_free_mb ?? null,
     engine_required_mb: engineRequired,
     netease_tts_required_mb: netease?.configuration?.tts_required_vram_mb ?? null,
+    indextts_required_mb: indexttsCatalog?.required_vram_mb ?? null,
     active_engine: engines?.active ?? null,
     sovits_enabled: (health as HealthInfo | null)?.sovits?.enabled === true || engines != null,
     fetched_at: Date.now(),
@@ -160,6 +172,7 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
 /** 某个任务需要多少显存（服务端优先） */
 function vramNeed(task: ResourceTask, snapshot: ResourceSnapshot): number {
   if (task === 'netease-tts') return snapshot.netease_tts_required_mb ?? FALLBACK_VRAM_MB[task];
+  if (task === 'indextts-tts') return snapshot.indextts_required_mb ?? FALLBACK_VRAM_MB[task];
   const engineName = task === 'training' ? 'train' : task;
   return snapshot.engine_required_mb[engineName] ?? FALLBACK_VRAM_MB[task];
 }
@@ -207,12 +220,21 @@ export function estimateTask(task: ResourceTask, snapshot: ResourceSnapshot): Re
   };
 }
 
-/** 释放常驻显存：网易引擎 + 本地引擎注册表，两个都试，失败不影响另一个 */
+/** 释放常驻显存：三个自有服务的模型都试，失败不影响另一个 */
 export async function releaseVram(handlers: {
   neteaseTtsLoaded: boolean;
   neteaseAsrLoaded: boolean;
+  indexttsLoaded?: boolean;
 }): Promise<string[]> {
   const done: string[] = [];
+  if (handlers.indexttsLoaded) {
+    try {
+      await indexttsApi.unload();
+      done.push('IndexTTS 引擎已卸载');
+    } catch {
+      // 卸载失败不该挡住其它路
+    }
+  }
   if (handlers.neteaseTtsLoaded) {
     try {
       await neteaseApi.ttsUnload();
@@ -241,6 +263,7 @@ export async function releaseVram(handlers: {
 export const RESOURCE_TASK_LABEL: Record<ResourceTask, string> = {
   'netease-tts': '网易零样本合成',
   'netease-asr': '网易流式转写',
+  'indextts-tts': 'IndexTTS 零样本合成',
   sovits: 'GPT-SoVITS 推理',
   batch: '批量合成',
   training: '模型训练',

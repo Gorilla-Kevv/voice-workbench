@@ -16,7 +16,7 @@ import { sovitsSupervisor } from './sovits.js';
  * 8 GB 卡装不下两套常驻模型，所以预加载的第一件事是**把另一套让出去**。
  */
 
-export type PreloadModel = 'netease-tts' | 'sovits' | 'none';
+export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'sovits' | 'none';
 
 /**
  * 每个模型的显存账本。
@@ -24,7 +24,10 @@ export type PreloadModel = 'netease-tts' | 'sovits' | 'none';
  * `vram_mb` 的来源写清楚，方便实测后校准，不要凭感觉填：
  * - netease-tts 6144 ← `netease/app/tts_engine.py::REQUIRED_VRAM_MB`（fp16 实测常驻 + 峰值 4.9 GB）
  * - sovits 3072 ← trainer 引擎注册表里 `sovits` 的 required_mb
- * - IndexTTS 尚未接入，接入后在这里加一项（方案见 docs/INDEX-TTS-INTEGRATION.md）
+ * - indextts-tts 3072 ← `indextts/app/indextts_engine.py::REQUIRED_VRAM_MB`
+ *   （阶段 26 实测：加载后 nvidia-smi 空闲从 5548 → 281 MB，**实际常驻约 5.3 GB**，
+ *   3072 是加载前的准入口径，偏低 —— 与 netease 不同它没有更大的门槛值可引，
+ *   门槛本身待用户在合成实测中确认是否要上调）
  */
 const MODELS: Record<Exclude<PreloadModel, 'none'>, {
   label: string;
@@ -47,6 +50,26 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
     },
     release: async () => {
       await fetch(`${config.netease.baseUrl}/v1/confucius/unload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(30_000),
+      }).catch(() => undefined);
+    },
+  },
+  'indextts-tts': {
+    label: 'IndexTTS-2.5',
+    vram_mb: 3072,
+    warmup: async () => {
+      await fetch(`${config.indextts.baseUrl}/v1/warmup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(0), // 首装要跑一遍辅助模型探测（实测约 4 分钟），不设超时
+      });
+    },
+    release: async () => {
+      await fetch(`${config.indextts.baseUrl}/v1/unload`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
@@ -92,7 +115,7 @@ interface Preference {
 function readPreference(): Preference {
   try {
     const parsed = JSON.parse(fs.readFileSync(FLAG_FILE, 'utf8')) as Partial<Preference>;
-    if (parsed.model && ['netease-tts', 'sovits', 'none', 'ask'].includes(parsed.model)) {
+    if (parsed.model && ['netease-tts', 'indextts-tts', 'sovits', 'none', 'ask'].includes(parsed.model)) {
       return { model: parsed.model as Preference['model'], updatedAt: parsed.updatedAt ?? 0 };
     }
   } catch {
@@ -195,7 +218,7 @@ class PreloadService {
     try {
       await meta.warmup();
       // 顺带把仲裁焦点给它，避免之后被别的请求拉起另一套
-      await resourceArbiter.focus(model === 'netease-tts' ? 'netease-tts' : 'sovits', 3600);
+      await resourceArbiter.focus(model, 3600);
       this.last = {
         model,
         ok: true,

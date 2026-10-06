@@ -14,10 +14,12 @@ import { FALLBACK_PRESET_VOICES, MODE_META } from '@/lib/constants';
 import type { RequestError } from '@/lib/errors';
 import { getProvider } from '@/lib/providers/registry';
 import { neteaseApi } from '@/lib/netease';
+import { indexttsApi } from '@/lib/indextts';
 import { sovitsApi } from '@/lib/sovits';
 import { AsrPage } from '@/pages/AsrPage';
 import { BatchPage } from '@/pages/BatchPage';
 import { HistoryPage } from '@/pages/HistoryPage';
+import { IndexttsTtsPage } from '@/pages/IndexttsTtsPage';
 import { NeteaseAsrPage } from '@/pages/NeteaseAsrPage';
 import { NeteaseTtsPage } from '@/pages/NeteaseTtsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
@@ -94,11 +96,15 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: '网易 · 流式转写',
     description: 'Confucius4-R2T2 · append-only 真流式识别（开发中：Windows 上依赖 vLLM，暂不可用）',
   },
+  'indextts-tts': {
+    title: 'IndexTTS · 零样本合成',
+    description: 'IndexTTS-2.5 · 3 秒参考音频克隆，8 维情感向量与语速倍率精细可控（5 语种）',
+  },
   settings: { title: '设置', description: '配置两套模型的服务地址、密钥与合成偏好' },
 };
 
 /** 不依赖云端密钥的页面（走本地服务或纯客户端） */
-const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc', 'asr', 'netease-tts', 'netease-asr'];
+const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc', 'asr', 'netease-tts', 'netease-asr', 'indextts-tts'];
 
 /**
  * 导航键 → MiMo 模型模式。
@@ -171,6 +177,8 @@ function App() {
     // 网易模块是独立服务（opt-in），有自己的一轮探活
     neteaseTts: 'checking',
     neteaseAsr: 'checking',
+    // IndexTTS 同样是独立服务（按需启动），探活单独一轮
+    indexttsTts: 'checking',
   });
 
   const history = useHistory(settings.historyLimit);
@@ -229,7 +237,7 @@ function App() {
     const probe = async () => {
       let healthy = false;
       // netease 两态由独立的探活循环维护，这里只占位（false 路径同样要给全字段）
-      let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline', asr: 'offline', neteaseTts: 'offline', neteaseAsr: 'offline' };
+      let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline', asr: 'offline', neteaseTts: 'offline', neteaseAsr: 'offline', indexttsTts: 'offline' };
       try {
         const result = await sovitsApi.health();
         if (cancelled) return;
@@ -247,17 +255,19 @@ function App() {
             // 保留网易模块自己的探活结果，不要被这轮覆盖
             neteaseTts: 'checking',
             neteaseAsr: 'checking',
+            indexttsTts: 'checking',
           };
         }
       } catch {
         // 连不上就是「还没起来」，与「起来了但没就绪」在这里无需区分
       }
       if (cancelled) return;
-      // rvc/svc/asr 用本轮结果整体替换；网易两态归它自己的探活循环管，这里原样保留
+      // rvc/svc/asr 用本轮结果整体替换；网易与 IndexTTS 归它们自己的探活循环管，这里原样保留
       setModuleStates((prev) => ({
         ...nextModules,
         neteaseTts: prev.neteaseTts,
         neteaseAsr: prev.neteaseAsr,
+        indexttsTts: prev.indexttsTts,
       }));
 
       if (healthy) {
@@ -324,6 +334,41 @@ function App() {
     };
   }, []);
 
+  // IndexTTS 的探活：第三个独立运行时（按需启动，:9883），策略与网易一轮相同。
+  // 「offline」是常态（它不随 dev 自动起），侧栏文案会说明怎么启动。
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const startedAt = Date.now();
+
+    const probe = async () => {
+      let nextState: ModuleState = 'offline';
+      try {
+        const indexttsHealth = await indexttsApi.health();
+        if (cancelled) return;
+        // 服务活着但没 CUDA：环境装错了，「待补齐」指向体检命令
+        nextState = indexttsHealth.cuda ? 'ready' : 'incomplete';
+      } catch {
+        // 服务没启动：保持 offline
+      }
+      if (cancelled) return;
+      setModuleStates((prev) => ({ ...prev, indexttsTts: nextState }));
+
+      if (nextState === 'ready') {
+        timer = window.setTimeout(probe, SOVITS_READY_POLL_MS);
+        return;
+      }
+      const wait = Date.now() - startedAt < SOVITS_FAST_WINDOW_MS ? SOVITS_FAST_RETRY_MS : SOVITS_SLOW_RETRY_MS;
+      timer = window.setTimeout(probe, wait);
+    };
+
+    void probe();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, []);
+
   // 合成失败时给出全局提示，避免用户切到后台时错过错误。
   //
   // 依赖必须写**具体的 error** 而不是整个 controller：controller 每次渲染都是
@@ -363,7 +408,9 @@ function App() {
                 ? 'Confucius4-TTS · netease 本地'
                 : active === 'netease-asr'
                   ? 'Confucius4-R2T2 · netease 本地'
-                  : '客户端配置';
+                  : active === 'indextts-tts'
+                    ? 'IndexTTS-2.5 · indextts 本地'
+                    : '客户端配置';
     return { ...meta, model };
   }, [active, settings.providerId]);
 
@@ -444,6 +491,7 @@ function App() {
           <NeteaseTtsPage onFallback={() => setActive('batch')} onGoSettings={goSettings} />
         ) : null}
         {active === 'netease-asr' ? <NeteaseAsrPage onFallback={() => setActive('asr')} /> : null}
+        {active === 'indextts-tts' ? <IndexttsTtsPage onGoSettings={goSettings} /> : null}
 
         {active === 'settings' ? (
           <SettingsPage

@@ -3,8 +3,8 @@
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
 ## 进度看板
-- 当前正在开发任务：阶段 25 IndexTTS 本地服务骨架（服务已跑通，**真实合成未实测**）
-- 下一阶段任务：阶段 26 IndexTTS 真实合成实测 + 网关透传 + 前端页面 + 资源管控接入
+- 当前正在开发任务：阶段 26 IndexTTS 全链路接入（真实合成实测 + 网关透传 + 前端页面 + 资源管控）—— **已完成，待用户听感 A/B 决定主力**
+- 下一阶段任务：用户实测对比网易 vs IndexTTS（决定主力后回填 preload 账本与门槛值）；R2T2 离线转写接入（Windows 原生可行，见 HANDOFF 坑 12）
 - 可提前进行的任务：阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理
 - 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）
 
@@ -593,6 +593,51 @@
 
 - **下一阶段入口**：① 按上面建议校准准入门槛（或用户手动腾显存）后补测「合成成功 → 结果卡播放/下载」；
   ② 跑一条开切分的短任务验证阶段 6 的切分结果面板；③ 档位选择器仍等用户重新开工
+
+---
+
+## 阶段 26 — IndexTTS 全链路接入：真实合成实测 + 网关透传 + 前端页面 + 资源管控 [计划时间：10.06 11:00 BY Qoder][完成时间：10.06 12:20 BY Qoder]
+- 分支：feature/vc-svc
+
+- **起因**：接续阶段 25（骨架已跑通 /health 但真实合成未实测）。按看板既定任务做阶段 26。
+
+- **已完成**
+  - **26a 真实合成实测**（跑通 6 条：中文 ×5、情感向量 ×1、经网关 multipart ×1）：
+    - 输出 22050 Hz WAV，RMS 0.02~0.03 / 峰值 0.18~0.34，音频有效；
+    - **稳态 RTF 2.2**（暖态 6.9s 音频 / 15.5s），冷启动首条 6.0；显存被桌面挤压时恶化到 5.4~14.4（波动大）；
+    - **实测模型常驻约 5.3 GB**（加载前 free 5548 → 加载后 281），远超阶段 25 估计的 2~3 GB；
+    - warmup 首跑约 4 分钟，**大头是上游对辅助模型（bigvgan/campplus）的 ModelScope/hf-mirror 网络探测超时**，权重其实全在本地 —— 真·加载仅约 10 秒。
+  - **修掉 3 个骨架必挂 bug**（都在 `indextts/app/`）：
+    - `IndexTTS2(...)` 传了上游不存在的 `use_cuda=` 参数（上游是 `device`）→ 首次加载即 TypeError；
+    - `_guard_vram` 从模块导入 `REQUIRED_VRAM_MB`（实为类属性）→ 导入即 ImportError；
+    - 模型常驻后合成被自己的显存准入拦死（free=451 < 3072 报 VRAM_INSUFFICIENT）→ guard 改为**已加载即跳过**。
+  - **情感与语速接入**：`generate()` 与 `/v1/synth` 新增 `emo_vector`（8 维 JSON：喜/怒/哀/惧/厌恶/低落/惊喜/平静）、`emo_file`（情感参考音频）、`emo_alpha`、`duration_factor`（0.5~2.0，骨架已有）；新增 `GET /v1/catalog`（语种/滑杆范围/情感维度/准入门槛，服务端唯一事实源，与坑 19 同一哲学；文本描述控情感需额外 0.6B 模型，`emo_text_control:false` 如实报不接）。
+  - **网关透传**：`server/src/routes/indextts.ts`（与 netease 同构的 node:http + pipe 透明转发 + 5 秒缓存探活，无 supervisor）挂 `/api/indextts`（**在 express.json() 之前**，坑 20）；`/api/health` 汇总加 `indextts` 段；config 加 `indextts.baseUrl/proxyTimeoutMs`（`INDEXTTS_URL` 可覆盖，回环口径不变）。
+  - **资源管控三服务化**：arbiter（`ServiceName`/`RELEASE_ENDPOINTS`/`serviceOf`/`baseUrlOf`/focus/releaseAll/心跳的 others 全部从「二服务」扩到「三服务」，回环校验硬边界原样保留）；`/api/resources/focus` 的 ENGINES 加 `indextts-tts`；preload 账本 `MODELS` 加 `indextts-tts`（3072 准入口径 + 注释写明实测常驻 5.3 GB 与门槛待校准）；前端 `arbiter.ts`/`resources.ts`/`ResourceBudget`/`preload.ts` 类型与兜底同步。
+  - **前端**：`app/src/pages/IndexttsTtsPage.tsx`（引擎状态卡 + 预热/卸载、参考音频上传/音色库选取双 tab、语种、时长系数滑杆、情感三模式〔跟随/8 维向量/情感参考+alpha〕、useResultStack 结果栏、useFileDrop 拖拽、内联错误卡带 hint）；`app/src/lib/indextts.ts` 客户端 + `app/src/types/indextts.ts` 契约；导航注册四处（NavKey / AppShell 状态文案 + NAV_GROUPS 新组「IndexTTS · 情感可控」+ 状态卡 / App.tsx 探活轮询 + 条件渲染 / PAGE_META）。
+
+- **未完成**
+  - 准入门槛 3072 偏低（实测常驻 5.3 GB）：是否上调到 ≈5120 **待用户拍板**——调高会挡住正常桌面状态下的开机，调低靠实测兜底。账本注释已标。
+  - 主力对比（网易 vs IndexTTS）需用户亲自听感 + 用时判断；本轮只交付了客观数据（见 26a）。
+  - 合成页的英文/日文语种、情感参考音频分支只过了 API，未逐一 UI 点；音色库取参考音频分支复用了网易页同一套代码路径（阶段 23 已实测过）。
+
+- **改动文件**
+  - Python：`indextts/app/indextts_engine.py`、`indextts/app/api.py`
+  - 网关：`server/src/routes/indextts.ts`（新）、`server/src/{index.ts,config/index.ts,routes/index.ts,routes/resources.ts,services/arbiter.ts,services/preload.ts}`
+  - 前端：`app/src/pages/IndexttsTtsPage.tsx`（新）、`app/src/lib/{indextts.ts（新）,resources.ts,arbiter.ts,preload.ts}`、`app/src/types/{indextts.ts（新）,index.ts,sovits.ts}`、`app/src/{App.tsx,components/layout/AppShell.tsx,components/features/ResourceBudget.tsx}`
+
+- **测试结果**：`npm run typecheck`（app+server）✓；`eslint` 全部改动文件 ✓；`npm run build` ✓；
+  经网关 multipart 合成 200（`/api/indextts/v1/synth`）✓；`/api/health` 的 `indextts.reachable=true` ✓；
+  预加载弹窗正确显示 IndexTTS-2.5 账本项与「当前显存不够」判定 ✓；
+  浏览器走查：导航新组渲染、切页成功、情感 Select 三选项、8 维滑杆 + alpha、合成按钮在未选参考音频时正确禁用、控制台无新报错（只有原有的 sovits 503 探活噪音，服务默认停用属预期）。
+
+- **风险**
+  - RTF 对桌面显存占用极度敏感（2.2 → 14.4），8 GB 卡上「够不够跑」取决于当时有多少程序在抢显存；文档与 hint 文案都按实测口径写了。
+  - 上游 `infer()` 的情感向量与 emo_audio 同时给时行为由上游决定（我们只透传，不猜语义）。
+  - warmup 首跑的 4 分钟网络探测无法配置绕过（上游写死 ModelScope→hf-mirror 顺序），断网环境下可能更久或直接失败——已在 catalog/页面文案注明。
+
+- **下一阶段入口**：用户实测对比网易 vs IndexTTS 后拍板主力（回填 preload 账本与门槛值）；若继续，R2T2 离线转写（HANDOFF 坑 12：Windows 原生可行）是下一个高优先级项。
+- 本次文档更新时间：10.06 12:20
 
 ---
 

@@ -86,7 +86,6 @@ class IndexTtsPipeline:
                     use_bf16=cfg.use_bf16 and self._device == 'cuda',
                     use_cuda_kernel=cfg.use_cuda_kernel,
                     use_deepspeed=False,
-                    use_cuda=self._device == 'cuda',
                 )
             except IndexTtsError:
                 raise
@@ -107,11 +106,20 @@ class IndexTtsPipeline:
         lang: str,
         prompt_wav: Path,
         duration_factor: float = 1.0,
+        emo_vector: Optional[list[float]] = None,
+        emo_alpha: float = 0.65,
+        emo_audio: Optional[Path] = None,
     ) -> dict[str, Any]:
         if not text.strip():
             raise IndexTtsError('EMPTY_TEXT', '合成文本为空', '请输入要合成的文本。')
         if not prompt_wav.exists():
             raise IndexTtsError('REF_AUDIO_MISSING', f'参考音频不存在：{prompt_wav}', '上传一段 ≥3 秒的参考音频。')
+        if emo_vector is not None:
+            if len(emo_vector) != 8 or any(not isinstance(v, (int, float)) for v in emo_vector):
+                raise IndexTtsError('BAD_EMO_VECTOR', '情感向量必须是 8 个数字（喜/怒/哀/惧/厌恶/低落/惊喜/平静）', '按目录里的维度顺序传 8 个 0~1 的浮点数。')
+            emo_vector = [max(0.0, min(1.0, float(v))) for v in emo_vector]
+        if emo_audio is not None and not emo_audio.exists():
+            raise IndexTtsError('REF_AUDIO_MISSING', f'情感参考音频不存在：{emo_audio}', '改用情感向量，或上传有效的情绪参考音频。')
 
         self.ensure_loaded()
         started = time.monotonic()
@@ -129,6 +137,9 @@ class IndexTtsPipeline:
                     lang=lang,
                     output_path=str(out_path),
                     duration_factor=max(0.5, min(2.0, duration_factor)),
+                    emo_alpha=emo_alpha,
+                    emo_vector=emo_vector,
+                    emo_audio_prompt=str(emo_audio) if emo_audio else None,
                     verbose=False,
                 )
                 audio, sample_rate = sf.read(str(out_path), dtype='float32', always_2d=True)
