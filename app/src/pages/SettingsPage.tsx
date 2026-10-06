@@ -7,7 +7,6 @@ import {
   ExternalLink,
   Gauge,
   HardDrive,
-  KeyRound,
   Loader2,
   Layers,
   RotateCcw,
@@ -33,7 +32,7 @@ import { api } from '@/lib/api';
 import { RequestError } from '@/lib/errors';
 import { localServiceApi, type LocalServiceState } from '@/lib/localService';
 import { preloadApi, type PreloadCatalog, type PreloadPreference } from '@/lib/preload';
-import { DEFAULT_SETTINGS, MODE_META } from '@/lib/constants';
+import { DEFAULT_SETTINGS } from '@/lib/constants';
 import { PROVIDERS, getProvider, languageLabel, resolveLanguages } from '@/lib/providers/registry';
 import { SELFHOSTED_PRESETS } from '@/lib/providers/selfhosted';
 import {
@@ -128,7 +127,6 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
   };
 
   const provider = getProvider(settings.providerId);
-  const providerLanguages = resolveLanguages(provider, settings.providerFields[provider.id]);
 
   /** 更新当前 Provider 的自定义字段 */
   const updateField = (key: string, value: string) => {
@@ -274,15 +272,403 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
+      {/* ============ ① 模型与显存：开机先装谁 ============ */}
+      <Card className="lg:col-span-2">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Cpu className="size-4 text-violet-600 dark:text-violet-400" />
+            模型与显存
+          </CardTitle>
+          <CardDescription>
+            本机 8 GB 显存一次只够常驻一个模型。选一个，开机就把它先装进显存，其余的会自动让位；
+            之后在对应页面直接用它，不需要再手动加载。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+            <span>
+              当前空闲显存：
+              <span className="font-medium text-foreground tabular-nums">
+                {preloadCatalog?.vram.free_mb != null ? `${(preloadCatalog.vram.free_mb / 1024).toFixed(1)} GB` : '未知'}
+              </span>
+              {preloadCatalog?.vram.total_mb != null ? ` / 共 ${(preloadCatalog.vram.total_mb / 1024).toFixed(1)} GB` : ''}
+            </span>
+            {preloadCatalog?.vram.source ? <span>读数来源：{preloadCatalog.vram.source}</span> : null}
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-3">
+            {(preloadCatalog?.models ?? []).map((item) => {
+              const selected = preloadPreference === item.id;
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  disabled={preloadSaving}
+                  onClick={() => void applyPreloadPreference(item.id)}
+                  className={cn(
+                    'flex flex-col gap-1 rounded-xl border p-3 text-left transition',
+                    selected
+                      ? 'border-violet-500 bg-violet-500/5 shadow-sm ring-1 ring-violet-500/30'
+                      : 'hover:border-violet-300 hover:bg-muted/60',
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{item.label}</span>
+                    {selected ? <Badge className="ml-auto h-5 text-[10px]">开机加载</Badge> : null}
+                  </div>
+                  <p className="text-xs text-muted-foreground tabular-nums">
+                    显存代价约 {(item.vram_mb / 1024).toFixed(1)} GB
+                    {item.fits === false ? ' · 当前空闲不够，开机会让位后再试' : ''}
+                  </p>
+                </button>
+              );
+            })}
+            <button
+              type="button"
+              disabled={preloadSaving}
+              onClick={() => void applyPreloadPreference('ask')}
+              className={cn(
+                'flex flex-col gap-1 rounded-xl border p-3 text-left transition',
+                preloadPreference === 'ask'
+                  ? 'border-violet-500 bg-violet-500/5 shadow-sm ring-1 ring-violet-500/30'
+                  : 'hover:border-violet-300 hover:bg-muted/60',
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">每次问我</span>
+                {preloadPreference === 'ask' ? <Badge className="ml-auto h-5 text-[10px]">当前</Badge> : null}
+              </div>
+              <p className="text-xs text-muted-foreground">开机弹窗选一个（刚装好环境、还在比较时用）</p>
+            </button>
+            <button
+              type="button"
+              disabled={preloadSaving}
+              onClick={() => void applyPreloadPreference('none')}
+              className={cn(
+                'flex flex-col gap-1 rounded-xl border p-3 text-left transition',
+                preloadPreference === 'none'
+                  ? 'border-violet-500 bg-violet-500/5 shadow-sm ring-1 ring-violet-500/30'
+                  : 'hover:border-violet-300 hover:bg-muted/60',
+              )}
+            >
+              <div className="flex items-center gap-2">
+                <span className="text-sm font-medium">不预加载</span>
+                {preloadPreference === 'none' ? <Badge className="ml-auto h-5 text-[10px]">当前</Badge> : null}
+              </div>
+              <p className="text-xs text-muted-foreground">开机什么都不装，进页面点「预热」再加载</p>
+            </button>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ============ ② 本地服务：三个 Python 运行时一屏看全 ============ */}
+      <Card className="lg:col-span-2">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Server className="size-4 text-violet-600 dark:text-violet-400" />
+            本地服务
+          </CardTitle>
+          <CardDescription>
+            本项目的三个本地模型服务。它们的启停方式不同：网易随 <code className="rounded bg-muted px-1">npm run dev</code> 自动起，
+            GPT-SoVITS 由下面的开关托管，IndexTTS 按需单独启动。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          {/* 网易 Confucius4-TTS */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                网易 Confucius4-TTS
+                <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9882</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                主服务（免转写克隆 / 14 语种）。随 <code className="rounded bg-muted px-1">npm run dev</code> 自动启动；单独重启：
+                <code className="mx-1 rounded bg-muted px-1">npm run dev:netease</code>
+              </p>
+            </div>
+            <Badge
+              variant={health?.netease?.reachable ? 'default' : 'secondary'}
+              className={cn('h-6 text-[11px]', health?.netease?.reachable && 'bg-emerald-600 hover:bg-emerald-600')}
+            >
+              {health?.netease?.reachable ? '运行中' : '未启动'}
+            </Badge>
+          </div>
+
+          {/* IndexTTS-2.5 */}
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border p-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">
+                IndexTTS-2.5
+                <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9883</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                情感可控（8 维向量 / 语速倍率 / 5 语种）。按需启动：
+                <code className="mx-1 rounded bg-muted px-1">npm run dev:indextts</code>
+                环境体检：<code className="mx-1 rounded bg-muted px-1">npm run indextts:check</code>
+              </p>
+            </div>
+            <Badge
+              variant={health?.indextts?.reachable ? 'default' : 'secondary'}
+              className={cn('h-6 text-[11px]', health?.indextts?.reachable && 'bg-emerald-600 hover:bg-emerald-600')}
+            >
+              {health?.indextts?.reachable ? '运行中' : '未启动'}
+            </Badge>
+          </div>
+
+          {/* GPT-SoVITS：唯一由网关托管启停的服务 */}
+          <div className="flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3">
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-medium">
+                GPT-SoVITS
+                <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9881</span>
+              </p>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                训练 / 批量合成 / 语音变声 / 歌声转换都跑在这条链路。默认<strong>关闭</strong>，
+                显存留给主服务；打开后由网关托管生命周期，关掉显存立刻归还。
+              </p>
+              <p className="text-xs text-muted-foreground">
+                当前状态：
+                {serviceState
+                  ? serviceState.enabled
+                    ? serviceState.reachable
+                      ? '已启用并在运行'
+                      : '已启用，启动中（首次要 import torch，数十秒）'
+                    : '已停用（默认）'
+                  : '读取中…'}
+              </p>
+              {/* 开启是数十秒的冷启动，只让开关转圈会让人以为卡住 */}
+              {toggling && pendingEnable ? (
+                <div className="space-y-1">
+                  <p className="text-xs text-amber-600 dark:text-amber-400">
+                    启动中，约需数十秒（首次要 import torch）· 已等待 {toggleElapsed} 秒
+                  </p>
+                  <Progress value={Math.min(95, Math.round((toggleElapsed / 45) * 100))} className="h-1.5" />
+                </div>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-3 pt-1">
+              <Badge
+                variant={sovitsHealth?.ok ? 'default' : 'secondary'}
+                className={cn('h-6 text-[11px]', sovitsHealth?.ok && 'bg-emerald-600 hover:bg-emerald-600')}
+              >
+                {sovitsHealth?.ok ? '已连接' : probing ? '连接中…' : '未连接'}
+              </Badge>
+              <Switch
+                id="sovits-enabled"
+                aria-label="启用 GPT-SoVITS 本地服务"
+                checked={serviceState?.enabled ?? false}
+                disabled={toggling || serviceState == null}
+                onCheckedChange={(checked) => void toggleService(checked === true)}
+              />
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ============ ③ GPT-SoVITS · 推理与训练配置 ============ */}
+      <Card className="lg:col-span-2">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <HardDrive className="size-4 text-violet-600 dark:text-violet-400" />
+            GPT-SoVITS · 推理与训练配置
+          </CardTitle>
+          <CardDescription>
+            这一组设置只作用于 GPT-SoVITS 链路（服务地址、推理权重、合成默认值）。上面开关没打开时，这里改完下次启用生效。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 lg:grid-cols-2">
+            <div className="space-y-2">
+              <Label htmlFor="sovits-url">服务地址</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="sovits-url"
+                  value={sovitsUrl}
+                  onChange={(event) => setSovitsUrl(event.target.value)}
+                  placeholder={DEFAULT_SOVITS_BASE}
+                  spellCheck={false}
+                  className="font-mono text-sm"
+                />
+                <Button size="sm" variant="outline" onClick={saveSovitsUrl} disabled={probing}>
+                  {probing ? <Loader2 className="size-3.5 animate-spin" /> : '保存'}
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => void probeSovits(sovitsUrl)} disabled={probing}>
+                  <RotateCcw className="size-3.5" />
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                默认 <span className="font-mono">{DEFAULT_SOVITS_BASE}</span> 表示经本项目网关转发；
+                若直接连 Python 服务，填 <span className="font-mono">{DIRECT_SOVITS_BASE}</span>
+              </p>
+              {probeError ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">{probeError}</p>
+              ) : null}
+            </div>
+
+            <div className="space-y-2 rounded-lg bg-muted/50 p-3 text-xs">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">运行设备</span>
+                <span className="font-medium">
+                  {sovitsHealth?.runtime.device_label ?? (probing ? '读取中…' : '未连接')}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Python / torch</span>
+                <span className="font-mono">
+                  {sovitsHealth
+                    ? `${sovitsHealth.runtime.python_version} / ${sovitsHealth.runtime.torch_version ?? '未安装'}`
+                    : '-'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">模型状态</span>
+                <span className="font-medium">
+                  {sovitsHealth?.pipeline.loaded
+                    ? `已加载 · ${sovitsHealth.pipeline.version}`
+                    : sovitsHealth
+                      ? '未加载（首次合成时自动加载）'
+                      : '-'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">音色库</span>
+                <span className="tabular-nums">
+                  {sovitsHealth ? `${sovitsHealth.voices.total} 个（可用 ${sovitsHealth.voices.usable}）` : '-'}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">已发现安装</span>
+                <span className="max-w-[60%] truncate font-mono" title={sovitsHealth?.environment.home ?? ''}>
+                  {sovitsHealth?.environment.home ?? '-'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {sovitsHealth && sovitsHealth.blockers.length > 0 ? (
+            <Alert variant="destructive">
+              <TriangleAlert className="size-4" />
+              <AlertTitle>本地服务尚未就绪</AlertTitle>
+              <AlertDescription>
+                <ul className="mt-1 space-y-0.5">
+                  {sovitsHealth.blockers.map((item) => (
+                    <li key={item}>· {item}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
+          {weights ? (
+            <WeightsPanel
+              weights={weights}
+              baseUrl={normalizeBaseUrl(sovitsUrl)}
+              onChanged={() => void probeSovits(sovitsUrl)}
+            />
+          ) : null}
+
+          <Separator />
+
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="space-y-2">
+              <Label>默认模型版本</Label>
+              <Select
+                value={sovitsFields.version ?? 'v2ProPlus'}
+                onValueChange={(value) => updateSovitsField('version', value)}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {['v2ProPlus', 'v2Pro', 'v2', 'v1', 'v3', 'v4'].map((option) => (
+                    <SelectItem key={option} value={option}>
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">v2 系列支持流式；v3/v4 音质更好但不支持流式</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="sovits-default-voice">
+                  <TermTip term="默认音色 ID" />
+                </Label>
+              <Input
+                id="sovits-default-voice"
+                value={sovitsFields.voice ?? ''}
+                onChange={(event) => updateSovitsField('voice', event.target.value)}
+                placeholder="在「音色库」中复制音色 id"
+                spellCheck={false}
+                className="font-mono text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                留空时合成页需要手动选择音色
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="sovits-prompt-lang">
+                  <TermTip term="参考音频语种" />
+                </Label>
+              <Input
+                id="sovits-prompt-lang"
+                value={sovitsFields.prompt_lang ?? ''}
+                onChange={(event) => updateSovitsField('prompt_lang', event.target.value)}
+                placeholder="zh"
+                spellCheck={false}
+                className="font-mono text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground">zh / en / ja / ko / yue</p>
+            </div>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-3">
+            <p className="text-xs font-medium text-muted-foreground">批量合成默认值</p>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label htmlFor="batch-template">
+                  <TermTip term="文件名模板" />
+                </Label>
+                <Input
+                  id="batch-template"
+                  value={settings.batchFilenameTemplate}
+                  onChange={(event) => update('batchFilenameTemplate', event.target.value)}
+                  placeholder="{index:03d}-{key}"
+                  spellCheck={false}
+                  className="font-mono text-sm"
+                />
+              </div>
+              <div className="flex items-center justify-between rounded-lg border p-3">
+                <div>
+                  <Label htmlFor="batch-zip-default" className="cursor-pointer text-sm">
+                    默认打包为 ZIP
+                  </Label>
+                  <p className="text-[11px] text-muted-foreground">同时附带 JSON 与 CSV 清单</p>
+                </div>
+                <Switch
+                  id="batch-zip-default"
+                  checked={settings.batchMakeZip}
+                  onCheckedChange={(checked) => update('batchMakeZip', checked)}
+                />
+              </div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* ============ ④ 云端合成（MiMo）：页面后端 + 密钥 ============ */}
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Layers className="size-4 text-violet-600 dark:text-violet-400" />
-            语音模型与语言
+            云端合成 · MiMo 与接口密钥
           </CardTitle>
           <CardDescription>
-            默认使用小米 MiMo（云端、免部署）。需要日语/韩语、专属音色微调或数据不出本机时，
-            切换到 GPT-SoVITS（本地）
+            侧栏「MiMo 云端」组（通用合成 / 音色设计 / 声音克隆）三个页面的后端与密钥。
+            本地模型（网易 / IndexTTS / GPT-SoVITS）不经过这里，也不依赖密钥。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -378,328 +764,15 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
             </div>
           ) : null}
 
-          <p className="text-xs text-muted-foreground">
-            当前模型：<span className="font-medium">{provider.name}</span>
-            {providerLanguages.length > 0
-              ? ` · 支持 ${providerLanguages.map(languageLabel).join('、')}`
-              : ' · 语言范围取决于你的服务配置'}
-          </p>
-        </CardContent>
-      </Card>
-
-      {/* ---------------- GPT-SoVITS 本地服务 ---------------- */}
-      <Card className="lg:col-span-2">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <HardDrive className="size-4 text-violet-600 dark:text-violet-400" />
-            GPT-SoVITS 本地服务
-            <Badge
-              variant={sovitsHealth?.ok ? 'default' : 'secondary'}
-              className={cn(
-                'ml-1 h-5 text-[10px]',
-                sovitsHealth?.ok && 'bg-emerald-600 hover:bg-emerald-600',
-              )}
-            >
-              {sovitsHealth?.ok ? '已连接' : probing ? '连接中…' : '未连接'}
-            </Badge>
-          </CardTitle>
-          <CardDescription>
-            推理与训练全部在本机执行，音频与语料不会离开这台机器。服务由项目内置的 Python 进程提供。
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* 启停开关：默认关闭，显存留给网易主服务 —— 8 GB 卡装不下两套常驻模型 */}
-          <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
-            <div className="min-w-0 space-y-1">
-              <Label htmlFor="sovits-enabled" className="text-sm font-medium">
-                启用 GPT-SoVITS 本地服务
-              </Label>
-              <p className="text-xs leading-relaxed text-muted-foreground">
-                默认<strong>关闭</strong>：本机 8 GB 显存要留给网易主服务（常驻约 4.9 GB）。
-                只有你要用<strong>模型训练 / 批量合成 / 语音变声 / 歌声转换</strong>时才打开 ——
-                这些能力都跑在 GPT-SoVITS 这条链路上。关掉后显存立刻归还。
-              </p>
-              <p className="text-xs text-muted-foreground">
-                当前状态：
-                {serviceState
-                  ? serviceState.enabled
-                    ? serviceState.reachable
-                      ? '已启用并在运行'
-                      : '已启用，启动中（首次要 import torch，数十秒）'
-                    : '已停用（默认）'
-                  : '读取中…'}
-              </p>
-              {/* 开启是数十秒的冷启动，只让开关转圈会让人以为卡住 */}
-              {toggling && pendingEnable ? (
-                <div className="space-y-1">
-                  <p className="text-xs text-amber-600 dark:text-amber-400">
-                    启动中，约需数十秒（首次要 import torch）· 已等待 {toggleElapsed} 秒
-                  </p>
-                  <Progress value={Math.min(95, Math.round((toggleElapsed / 45) * 100))} className="h-1.5" />
-                </div>
-              ) : null}
-            </div>
-            <Switch
-              id="sovits-enabled"
-              checked={serviceState?.enabled ?? false}
-              disabled={toggling || serviceState == null}
-              onCheckedChange={(checked) => void toggleService(checked === true)}
-              className="shrink-0"
-            />
-          </div>
-
-          {/* 启动预加载：谁当主力由使用测试决定，这里只管「开机先装谁」 */}
-          <div className="space-y-2 rounded-lg border p-3">
-            <Label className="text-sm font-medium">启动时预加载的模型</Label>
-            <p className="text-xs leading-relaxed text-muted-foreground">
-              显存一次只够常驻一个模型。选了谁，开机就把这块显存给它，另一套会被让出；
-              想每次开机自己选就选「每次问我」。
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {preloadCatalog?.models.map((item) => (
-                <Button
-                  key={item.id}
-                  size="sm"
-                  variant={preloadPreference === item.id ? 'default' : 'outline'}
-                  className="h-7 text-xs"
-                  onClick={() => void applyPreloadPreference(item.id)}
-                  disabled={preloadSaving}
-                >
-                  {item.label}（{(item.vram_mb / 1024).toFixed(1)} GB）
-                </Button>
-              ))}
-              <Button
-                size="sm"
-                variant={preloadPreference === 'ask' ? 'default' : 'outline'}
-                className="h-7 text-xs"
-                onClick={() => void applyPreloadPreference('ask')}
-                disabled={preloadSaving}
-              >
-                每次问我
-              </Button>
-              <Button
-                size="sm"
-                variant={preloadPreference === 'none' ? 'default' : 'outline'}
-                className="h-7 text-xs"
-                onClick={() => void applyPreloadPreference('none')}
-                disabled={preloadSaving}
-              >
-                不预加载
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            <div className="space-y-2">
-              <Label htmlFor="sovits-url">服务地址</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="sovits-url"
-                  value={sovitsUrl}
-                  onChange={(event) => setSovitsUrl(event.target.value)}
-                  placeholder={DEFAULT_SOVITS_BASE}
-                  spellCheck={false}
-                  className="font-mono text-sm"
-                />
-                <Button size="sm" variant="outline" onClick={saveSovitsUrl} disabled={probing}>
-                  {probing ? <Loader2 className="size-3.5 animate-spin" /> : '保存'}
-                </Button>
-                <Button size="sm" variant="ghost" onClick={() => void probeSovits(sovitsUrl)} disabled={probing}>
-                  <RotateCcw className="size-3.5" />
-                </Button>
-              </div>
-              <p className="text-xs text-muted-foreground">
-                默认 <span className="font-mono">{DEFAULT_SOVITS_BASE}</span> 表示经本项目网关转发；
-                若直接连 Python 服务，填 <span className="font-mono">{DIRECT_SOVITS_BASE}</span>
-              </p>
-              {probeError ? (
-                <p className="text-xs text-amber-600 dark:text-amber-400">{probeError}</p>
-              ) : null}
-            </div>
-
-            <div className="space-y-2 rounded-lg bg-muted/50 p-3 text-xs">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">运行设备</span>
-                <span className="font-medium">
-                  {sovitsHealth?.runtime.device_label ?? (probing ? '读取中…' : '未连接')}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Python / torch</span>
-                <span className="font-mono">
-                  {sovitsHealth
-                    ? `${sovitsHealth.runtime.python_version} / ${sovitsHealth.runtime.torch_version ?? '未安装'}`
-                    : '-'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">模型状态</span>
-                <span className="font-medium">
-                  {sovitsHealth?.pipeline.loaded
-                    ? `已加载 · ${sovitsHealth.pipeline.version}`
-                    : sovitsHealth
-                      ? '未加载（首次合成时自动加载）'
-                      : '-'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">音色库</span>
-                <span className="tabular-nums">
-                  {sovitsHealth ? `${sovitsHealth.voices.total} 个（可用 ${sovitsHealth.voices.usable}）` : '-'}
-                </span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">已发现安装</span>
-                <span className="max-w-[60%] truncate font-mono" title={sovitsHealth?.environment.home ?? ''}>
-                  {sovitsHealth?.environment.home ?? '-'}
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {sovitsHealth && sovitsHealth.blockers.length > 0 ? (
-            <Alert variant="destructive">
-              <TriangleAlert className="size-4" />
-              <AlertTitle>本地服务尚未就绪</AlertTitle>
-              <AlertDescription>
-                <ul className="mt-1 space-y-0.5">
-                  {sovitsHealth.blockers.map((item) => (
-                    <li key={item}>· {item}</li>
-                  ))}
-                </ul>
-              </AlertDescription>
-            </Alert>
-          ) : null}
-
-          {weights ? (
-            <WeightsPanel
-              weights={weights}
-              baseUrl={normalizeBaseUrl(sovitsUrl)}
-              onChanged={() => void probeSovits(sovitsUrl)}
-            />
-          ) : null}
-
           <Separator />
 
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {[
-              {
-                key: 'version',
-                label: '默认模型版本',
-                placeholder: 'v2ProPlus',
-                hint: 'v2 系列支持流式；v3/v4 音质更好但不支持流式',
-                options: ['v2ProPlus', 'v2Pro', 'v2', 'v1', 'v3', 'v4'],
-              },
-            ].map((field) => (
-              <div key={field.key} className="space-y-2">
-                <Label>{field.label}</Label>
-                <Select
-                  value={sovitsFields[field.key] ?? 'v2ProPlus'}
-                  onValueChange={(value) => updateSovitsField(field.key, value)}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {field.options.map((option) => (
-                      <SelectItem key={option} value={option}>
-                        {option}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className="text-[11px] text-muted-foreground">{field.hint}</p>
-              </div>
-            ))}
-
-            <div className="space-y-2">
-              <Label htmlFor="sovits-default-voice">
-                  <TermTip term="默认音色 ID" />
-                </Label>
-              <Input
-                id="sovits-default-voice"
-                value={sovitsFields.voice ?? ''}
-                onChange={(event) => updateSovitsField('voice', event.target.value)}
-                placeholder="在「音色库」中复制音色 id"
-                spellCheck={false}
-                className="font-mono text-sm"
-              />
-              <p className="text-[11px] text-muted-foreground">
-                留空时合成页需要手动选择音色
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="sovits-prompt-lang">
-                  <TermTip term="参考音频语种" />
-                </Label>
-              <Input
-                id="sovits-prompt-lang"
-                value={sovitsFields.prompt_lang ?? ''}
-                onChange={(event) => updateSovitsField('prompt_lang', event.target.value)}
-                placeholder="zh"
-                spellCheck={false}
-                className="font-mono text-sm"
-              />
-              <p className="text-[11px] text-muted-foreground">zh / en / ja / ko / yue</p>
-            </div>
-          </div>
-
-          <Separator />
-
-          <div className="space-y-3">
-            <p className="text-xs font-medium text-muted-foreground">批量合成默认值</p>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <Label htmlFor="batch-template">
-                  <TermTip term="文件名模板" />
-                </Label>
-                <Input
-                  id="batch-template"
-                  value={settings.batchFilenameTemplate}
-                  onChange={(event) => update('batchFilenameTemplate', event.target.value)}
-                  placeholder="{index:03d}-{key}"
-                  spellCheck={false}
-                  className="font-mono text-sm"
-                />
-              </div>
-              <div className="flex items-center justify-between rounded-lg border p-3">
-                <div>
-                  <Label htmlFor="batch-zip-default" className="cursor-pointer text-sm">
-                    默认打包为 ZIP
-                  </Label>
-                  <p className="text-[11px] text-muted-foreground">同时附带 JSON 与 CSV 清单</p>
-                </div>
-                <Switch
-                  id="batch-zip-default"
-                  checked={settings.batchMakeZip}
-                  onCheckedChange={(checked) => update('batchMakeZip', checked)}
-                />
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="lg:col-span-2">
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2 text-base">
-            <KeyRound className="size-4 text-violet-600 dark:text-violet-400" />
-            API 密钥配置
-          </CardTitle>
-          <CardDescription>
-            密钥仅保存在你的浏览器本地（localStorage），不会上传到任何服务器，也不使用 cookie。
-            填写后点击「保存」，校验通过即配置成功
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
           <Alert variant={hasServerKey ? 'default' : 'destructive'}>
             {hasServerKey ? <ShieldCheck className="size-4" /> : <TriangleAlert className="size-4" />}
             <AlertTitle>{hasServerKey ? '站点已配置公用密钥' : '站点未配置公用密钥'}</AlertTitle>
             <AlertDescription>
               {hasServerKey
                 ? '不填写下方密钥时，将使用站点管理员配置的公用密钥（受站点限流保护）。填写自己的密钥可获得更高额度与独立配额。'
-                : '当前必须由你自行提供 MiMo API Key 才能使用合成功能，请前往 MiMo 开放平台控制台创建。'}
+                : '当前必须由你自行提供 MiMo API Key 才能使用云端合成功能，请前往 MiMo 开放平台控制台创建。'}
             </AlertDescription>
           </Alert>
 
@@ -963,26 +1036,27 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
 
           <div className="space-y-2">
             <p className="text-xs font-medium text-muted-foreground">已接入模型</p>
-            {Object.entries(MODE_META).map(([mode, meta]) => (
-              <div key={mode} className="flex items-start gap-2 rounded-lg border p-2.5">
-                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-[10px] font-semibold text-violet-600">
-                  TTS
+            {[
+              { name: '网易 Confucius4-TTS', kind: '本地 · 主服务', note: '免转写零样本克隆 · 14 语种（netease/ :9882）' },
+              { name: 'IndexTTS-2.5', kind: '本地 · 情感可控', note: '8 维情感向量 / 语速倍率 · 5 语种（indextts/ :9883）' },
+              { name: 'GPT-SoVITS v2ProPlus', kind: '本地 · 训练链路', note: '推理 / 微调训练 / 批量合成 / 音色库（:9881，默认停用）' },
+              { name: 'RVC · DDSP-SVC · ASR', kind: '本地 · 语音工具', note: '变声 / 歌声翻唱 / 语音转文本（与 GPT-SoVITS 同一服务）' },
+              { name: 'MiMo', kind: '云端 API', note: '通用合成 / 音色设计 / 声音克隆，需要 API Key' },
+            ].map((item) => (
+              <div key={item.name} className="flex items-start gap-2 rounded-lg border p-2.5">
+                <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-md bg-violet-500/10 text-[9px] font-semibold text-violet-600">
+                  {item.kind.includes('云端') ? 'API' : 'GPU'}
                 </span>
                 <div className="min-w-0">
-                  <p className="font-mono text-xs">{meta.model}</p>
-                  <p className="text-[11px] text-muted-foreground">{meta.description}</p>
+                  <p className="text-xs font-medium">{item.name} <span className="font-normal text-muted-foreground">· {item.kind}</span></p>
+                  <p className="text-[11px] text-muted-foreground">{item.note}</p>
                 </div>
-                {meta.streaming ? (
-                  <Badge variant="secondary" className="ml-auto h-5 shrink-0 text-[10px] font-normal">
-                    支持流式
-                  </Badge>
-                ) : null}
               </div>
             ))}
           </div>
 
           <p className="text-[11px] leading-relaxed text-muted-foreground">
-            默认值来自官方文档
+            云端 MiMo 的参数默认值来自官方文档
             <a
               href="https://mimo.mi.com/docs/zh-CN/quick-start/usage-guide/audio/speech-synthesis-v2.5"
               target="_blank"
@@ -991,7 +1065,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange }: S
             >
               语音合成 v2.5 使用指南
             </a>
-            。语音合成当前限时免费，具体以 MiMo 平台计费说明为准。
+            （限时免费，以平台计费说明为准）；本地模型的门槛与能力以各服务接口实测返回为准。
           </p>
 
           <Button

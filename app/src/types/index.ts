@@ -199,6 +199,15 @@ export interface GatewaySovitsStatus {
   lastError: string | null;
 }
 
+/** 网关对「无 supervisor」服务（netease / indextts）的探活汇总 */
+export interface GatewayServiceStatus {
+  baseUrl: string;
+  reachable: boolean;
+  /** 按需启动的模块：未启动是常态而不是故障 */
+  optional?: boolean;
+  lastError?: string;
+}
+
 /** 站点健康信息 */
 export interface HealthInfo {
   status: string;
@@ -222,6 +231,10 @@ export interface HealthInfo {
     /** 用户是否启用了它（默认关闭：显存留给网易主服务） */
     enabled?: boolean;
   };
+  /** 网易模块服务（:9882）探活汇总 */
+  netease?: GatewayServiceStatus;
+  /** IndexTTS 服务（:9883）探活汇总 */
+  indextts?: GatewayServiceStatus;
   providers?: {
     mimo: { available: boolean; requiresKey: boolean };
     'gpt-sovits': { available: boolean };
