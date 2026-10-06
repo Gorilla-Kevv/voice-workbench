@@ -1,5 +1,6 @@
 import { Router } from 'express';
 
+import { gpuProcesses } from '../lib/gpuProcesses.js';
 import { logger } from '../lib/logger.js';
 import { resourceArbiter, type FocusEngine } from '../services/arbiter.js';
 
@@ -67,4 +68,10 @@ resourcesRouter.post('/release', async (_req, res) => {
 
 resourcesRouter.get('/focus', (_req, res) => {
   res.json({ ok: true, ...resourceArbiter.status() });
+});
+
+/** 当前挂在 GPU 上的进程（按名字聚合）。WDDM 拿不到每进程显存数，只报谁在、几个实例。 */
+resourcesRouter.get('/gpu-processes', async (_req, res) => {
+  const processes = await gpuProcesses();
+  res.json({ ok: true, processes });
 });

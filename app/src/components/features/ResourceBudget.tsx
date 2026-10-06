@@ -10,8 +10,10 @@ import { arbiterApi } from '@/lib/arbiter';
 import {
   RESOURCE_TASK_LABEL,
   estimateTask,
+  fetchGpuProcesses,
   fetchResourceSnapshot,
   releaseVram,
+  type GpuProcessGroup,
   type ResourceSnapshot,
   type ResourceTask,
 } from '@/lib/resources';
@@ -80,6 +82,23 @@ export function ResourceBudget({
     () => (snapshot ? estimateTask(task, snapshot) : null),
     [snapshot, task],
   );
+
+  // 不够 / 勉强时才去问「谁在占 GPU」——够用的场景不打扰这条读数
+  const [gpuProcs, setGpuProcs] = useState<GpuProcessGroup[]>([]);
+  const needProcs = estimate?.verdict === 'insufficient' || estimate?.verdict === 'tight';
+  useEffect(() => {
+    if (!needProcs) {
+      setGpuProcs([]);
+      return;
+    }
+    let cancelled = false;
+    void fetchGpuProcesses().then((list) => {
+      if (!cancelled) setGpuProcs(list);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [needProcs, snapshot?.fetched_at]);
 
   const handleFocus = useCallback(async () => {
     setFocusing(true);
@@ -250,6 +269,15 @@ export function ResourceBudget({
               点上面的按钮卸掉网易 / 本地常驻引擎；显存还被别的程序占着的话，
               关掉浏览器硬件加速、安卓模拟器或游戏。
             </li>
+            {/* 「关掉占显存的程序」要能说清是谁 —— 直接把 GPU 上的进程列出来 */}
+            {gpuProcs.length > 0 ? (
+              <li>
+                <span className="font-medium text-foreground">当前挂在 GPU 上的进程（{gpuProcs.reduce((n, p) => n + p.count, 0)} 个）：</span>
+                {gpuProcs.slice(0, 10).map((p) => `${p.name}${p.count > 1 ? `×${p.count}` : ''}`).join('、')}
+                {gpuProcs.length > 10 ? ` 等 ${gpuProcs.length} 类` : ''}
+                <span className="opacity-70">（Windows 下拿不到每进程显存数，不认识的先别乱关；本项目自己的 python 服务进程在列属正常）</span>
+              </li>
+            ) : null}
           </ul>
         </div>
       ) : null}

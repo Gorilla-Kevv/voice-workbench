@@ -220,6 +220,23 @@ export function estimateTask(task: ResourceTask, snapshot: ResourceSnapshot): Re
   };
 }
 
+/** 挂在 GPU 上的进程（网关按名字聚合；WDDM 拿不到每进程显存数，所以只有谁在 + 实例数） */
+export interface GpuProcessGroup {
+  name: string;
+  count: number;
+}
+
+export async function fetchGpuProcesses(): Promise<GpuProcessGroup[]> {
+  try {
+    const response = await fetch('/api/resources/gpu-processes', { signal: AbortSignal.timeout(8_000) });
+    if (!response.ok) return [];
+    const payload = (await response.json()) as { ok: boolean; processes?: GpuProcessGroup[] };
+    return payload.processes ?? [];
+  } catch {
+    return [];
+  }
+}
+
 /** 释放常驻显存：三个自有服务的模型都试，失败不影响另一个 */
 export async function releaseVram(handlers: {
   neteaseTtsLoaded: boolean;
