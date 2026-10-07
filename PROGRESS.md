@@ -3,159 +3,21 @@
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
 ## 进度看板
-- 当前正在开发任务：无进行中阶段——阶段 26 / 26补2 / 26补3 已完成，**等用户实测对比网易 vs IndexTTS（听感 + 用时）拍板主力**
+- 当前正在开发任务：无进行中阶段——阶段 26 及补 2~6 已完成，**等用户实测对比网易 vs IndexTTS（听感 + 用时）拍板主力**
 - 下一阶段任务：主力拍板后回填 preload 账本与门槛值；R2T2 离线转写接入（Windows 原生可行，见 HANDOFF 坑 12）
 - 可提前进行的任务：阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理
 - 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）
 
-## 阶段 26补4 — 显存不足时报错列出「谁在占 GPU」 [计划时间：10.06 14:20 BY Qoder][完成时间：10.06 14:35 BY Qoder]
-- 分支：feature/vc-svc
-- **起因**：网易预热失败实为显存准入拦截（需 5120 MB、仅剩 3919 MB），但旧报错只说「关掉占显存的程序」，用户无从下手。
-- **已完成**：网关 `server/src/lib/gpuProcesses.ts`（nvidia-smi 进程表按名聚合、过滤无权限占位、10s 缓存）+
-  `GET /api/resources/gpu-processes`；ResourceBudget 在 insufficient/tight 时列出进程清单（WDDM 拿不到每进程显存数，
-  只报谁在与实例数）。实测本机 40+ GPU 进程（qemu 模拟器 / Epic / Trae / 网易云 / MyDockFinder 等）。
-- **改动文件**：`server/src/lib/gpuProcesses.ts`（新）、`server/src/routes/resources.ts`、
-  `app/src/lib/resources.ts`、`app/src/components/features/ResourceBudget.tsx`（提交 `b55744c`）
-- **测试**：typecheck / eslint / build ✓；端点与页面渲染实测 ✓
-- **风险**：无
-- **下一阶段入口**：用户关程序腾显存后重试预热
-- 本次文档更新时间：10.06 14:35
-
----
-
-## 阶段 26补6 — IndexTTS 页引擎状态卡补「启动服务」快捷入口 [计划时间：10.06 15:20 BY Qoder][完成时间：10.06 15:35 BY Qoder]
-- 分支：feature/vc-svc
-
-- **起因**：用户要求 IndexTTS 引擎状态像 GPT-SoVITS 一样给快速开启入口——服务没起时不必离开本页去设置页/终端。
-
-- **已完成**：`IndexttsTtsPage` 引擎状态卡在连不上服务时显示「启动服务」按钮，
-  走 `runtimeServiceApi.toggle('indextts', true)`（与设置页开关同一后端，网关托管拉起）；
-  启动中按钮转圈带文案，成功后自动重拉 catalog/pipeline 恢复卡片，失败给带 hint 的结构化错误。
-
-- **改动文件**：`app/src/pages/IndexttsTtsPage.tsx`
-
-- **测试结果**：typecheck / eslint / build ✓；浏览器实测：服务关闭态进本页 → 点「启动服务」→
-  网关 spawn（managed=true）→ toast「服务已启动」→ 卡片恢复「未加载 + 预热」；测试后已关闭服务归还原状。
-
-- **风险**：无
-
-- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
-- 本次文档更新时间：10.06 15:35
-
----
-
-## 阶段 26补5 — 侧栏状态卡一键直达设置对应区块 [计划时间：10.06 14:40 BY Qoder][完成时间：10.06 15:00 BY Qoder]
-- 分支：feature/vc-svc
-
-- **起因**：用户要求左侧状态栏每张卡点击直达设置页对应位置，就地换模型 / 开关服务。
-
-- **已完成**
-  - `AppShell.tsx`：状态卡 div → button（hover 反馈 + title 提示），新增 `onOpenSettingsSection` prop；
-    卡 id → 设置锚点映射 `SETTINGS_SECTION_OF`（网易两卡→网易行、IndexTTS→其行、
-    sovits/rvc/svc/asr 四卡→GPT-SoVITS 行、MiMo→云端卡）。
-  - `App.tsx`：`settingsSection` state + `goSettingsSection`（切页 + 传锚点）。
-  - `SettingsPage.tsx`：`focusSection`/`onFocusHandled` props；挂载/变化后 120ms 滚动到
-    `settings-<section>` 锚点（block:center）并加 2.6 秒紫色 ring 高亮；五个锚点 id 落位：
-    preload / service-netease / service-indextts / service-sovits / cloud。
-  - **顺带修文案**：预加载卡「当前空闲不够，开机会让位后再试」→「当前空闲不够，开机可能加载失败（可先关程序再试）」（原句不通）。
-  - **验证了网关托管启停全链路**（26补3 的 supervisor 首次实测）：UI 点 IndexTTS 开关开 →
-    网关 spawn（managed=true, pid 就位, /health 200）→ 再点关 → 进程回收、free 回到 5346 MB、
-    状态卡变「未启动」。
-
-- **未完成**：无（本阶段范围内）
-
-- **改动文件**：`app/src/components/layout/AppShell.tsx`、`app/src/App.tsx`、`app/src/pages/SettingsPage.tsx`
-
-- **测试结果**：typecheck / eslint / build 全过；浏览器实测：点「IndexTTS · 未启动」卡 →
-  切到设置页、锚点滚进视口、高亮 ring 生效、行内开关可点；开关开→关全链路见上。
-
-- **风险**：锚点消费走一次性 state（onFocusHandled 清空），重复点同一张卡会重新触发滚动（预期行为）。
-
-- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
-- 本次文档更新时间：10.06 15:00
-
----
-
-## 阶段 26补3 — 三服务连接开关 + 设置页去嵌套 [计划时间：10.06 13:40 BY Qoder][完成时间：10.06 14:05 BY Qoder]
-- 分支：feature/vc-svc
-
-- **起因**：用户三点反馈——① 本地服务三行都该有开关（两个服务同时在跑会各占显存，影响单独跑模型）；
-  ② 「GPT-SoVITS · 推理与训练配置」不该独立成卡，应并入 GPT-SoVITS 服务行内展开；
-  ③ 云端卡里又嵌了一套 GPT-SoVITS 配置，且 API Key 应只在选中 MiMo 时才出现。
-
-- **已完成**
-  - **网关新增运行时服务托管**（`server/src/services/runtime.ts`）：通用 `RuntimeSupervisor`，
-    网易(:9882) 与 IndexTTS(:9883) 各一实例。行为契约与 SovitsSupervisor 一致：
-    探活可达就复用外部实例（不重复占端口）；enabled 落盘 `server/.data/<id>-service.json`
-    （网易默认开=主服务随 dev，IndexTTS 默认关）；关闭 = **先卸常驻模型归还显存 → 再杀自己拉起的进程树**；
-    外部终端起的实例杀不掉，但模型照卸，hint 如实说明「请在对应终端 Ctrl+C」。
-    网关启动时按 enabled 后台拉起；SIGINT/exit 钩子收掉自己托管的子进程（tsx watch 重启不留孤儿）。
-  - **启停接口**：`GET/POST /api/netease/service`、`/api/indextts/service`（`routes/runtimeService.ts` 工厂，
-    挂在各自透明代理**之前**，与 sovitsServiceRouter 同规矩）；`/api/health` 的 netease/indextts 段补 `enabled`。
-  - **设置页卡片②**：三行服务全部带 Switch + 状态徽章（运行中/启动中/未启动）+ 错误行；
-    卡描述明确两层占用：「服务进程 ≈ 几百 MB torch 上下文；模型常驻数 GB，要预热/预加载才发生」。
-  - **GPT-SoVITS 高级配置行内展开**：原独立卡整块并入服务行下方（「高级配置」按钮 + ChevronDown），
-    默认收起；服务地址/运行时信息/weights/默认值/批量都在展开区里。
-  - **云端卡条件渲染**：选 MiMo 才出现公用密钥 Alert + API Key + 接口地址；
-    选 GPT-SoVITS 显示指引卡（「不需要密钥，配置统一在本地服务 → 高级配置」，消除双份配置的嵌套）；
-    选自托管显示其 fields/presets。
-  - 前端 `localService.ts` 加 `runtimeServiceApi`（state/toggle），30 秒轮询复查状态（服务可能被外部起停）。
-
-- **未完成**：无（本阶段范围内）
-
-- **改动文件**：新增 `server/src/services/runtime.ts`、`server/src/routes/runtimeService.ts`；
-  改 `server/src/index.ts`、`server/src/routes/{netease,indextts}.ts`、
-  `app/src/lib/localService.ts`、`app/src/pages/SettingsPage.tsx`、`app/src/types/index.ts`
-
-- **测试结果**：typecheck（app+server）/ eslint / build 全过；接口实测——
-  `GET /api/netease/service` = reachable+enabled+managed=false（复用 dev 起的实例）✓；
-  `POST /api/indextts/service {enabled:false}` → 模型卸掉（pipeline loaded=false）+ hint 说明外部实例 ✓；
-  浏览器走查：三行开关渲染、高级配置展开/收起、选 GPT-SoVITS 时密钥区隐藏 + 指引出现、
-  切回 MiMo 密钥区恢复；控制台无新报错。
-
-- **风险**：网关热重载（tsx watch）会连带回收**自己托管**的 netease/indextts 子进程并自动再拉起（enabled 时）——
-  与 sovits 同一已知代价；外部终端起的实例不受此影响。
-
-- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
-- 本次文档更新时间：10.06 14:05
-
----
-
-## 阶段 26补2 — 设置页整体重排（模型选择提级 + 服务平铺 + 去嵌套）[计划时间：10.06 13:00 BY Qoder][完成时间：10.06 13:20 BY Qoder]
-- 分支：feature/vc-svc
-
-- **起因**：用户反馈设置页混乱——「语音模型与语言」还写着「默认使用小米 MiMo」（现状是网易/IndexTTS 本地模型）；
-  「启动时预加载模型」嵌在 GPT-SoVITS 服务卡里，层级错位；要求重排为「用户选哪个模型就直接加载哪个」。
-
-- **已完成**
-  - **新①「模型与显存」**（页面第一张卡）：开机预加载从 GPT-SoVITS 卡里提出来独立成卡，
-    选项做成卡片网格（网易 6.0GB / IndexTTS 3.0GB / GPT-SoVITS 3.0GB / 每次问我 / 不预加载），
-    每张显示显存代价与「当前空闲不够」判定；顶部显示当前空闲显存与读数来源（nvidia-smi）。
-  - **新②「本地服务」**：三个 Python 运行时平铺一屏——网易(:9882) / IndexTTS(:9883) / GPT-SoVITS(:9881)
-    各一行，状态徽章 + 启停方式说明；GPT-SoVITS 行的开关（网关唯一托管的）与冷启动进度条保留。
-  - **新③「GPT-SoVITS · 推理与训练配置」**：服务地址 / 运行时信息 / blockers / 推理权重面板 /
-    默认版本 + 音色 + 语种 / 批量合成默认值，全部归到这一张卡（标题明确「只作用于 GPT-SoVITS 链路」）。
-  - **新④「云端合成 · MiMo 与接口密钥」**：原「语音模型与语言」的 Provider 选择（云端三页的后端，
-    不能删——SynthesisPage/VoiceClone/VoiceDesign 依赖 providerId）与 API 密钥卡合并，
-    删掉过时文案「默认使用小米 MiMo」，说明改为「侧栏 MiMo 云端组的后端与密钥，本地模型不经过这里」。
-  - ⑤合成偏好、⑥站点与模型信息保持；⑥的「已接入模型」从只列 MiMo MODE_META 改为五条链路清单。
-  - 类型：`HealthInfo` 补 `netease` / `indextts` 字段（网关早已返回，前端类型没声明）+ `GatewayServiceStatus`。
-
-- **未完成**：无（本阶段范围内）
-
-- **改动文件**：`app/src/pages/SettingsPage.tsx`（重排）、`app/src/types/index.ts`
-
-- **测试结果**：typecheck / eslint / build 全过；浏览器实测——第一卡显存判定正确（空闲 3.9GB：网易标
-  「当前空闲不够」，3.0GB 两项不标），三服务徽章正确（网易/IndexTTS 运行中、GPT-SoVITS 未连接），
-  六张卡齐全、旧文案「默认使用小米 MiMo」「语音模型与语言」无残留，控制台无新报错。
-
-- **风险**：Provider 选择卡挪进云端卡后，`providerId='gpt-sovits'` 的老选项仍在（云端三页兼容），
-  未做删除——若后续确认无人用可清理。
-
-- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
-- 本次文档更新时间：10.06 13:20
+## 编号说明（2026-10-06 合规整理时补记）
+- 历史上出现过**两组同号阶段**：「阶段 23」= 浏览器走查 与 文档修正、「阶段 24」= 全站拖拽导入 与 启动预加载。
+  编号已被 HANDOFF（坑 22~25）与提交信息交叉引用，**不改号**，仅按完成时间相邻排序：
+  走查(≤10-06 00:37) → 文档修正(10-06 00:37) → 拖拽(≤10-06 00:37) → 启动预加载(10-06 01:19)。
+- 另有一次未单独立目的「阶段 26补」（侧栏手动折叠 + RVC/SVC 页去整页报错，提交 b1ee653），
+  内容已并入「阶段 26」条目的补记段，不重复列。
+- 早期条目（阶段 1~20）的署名与完成时间多为本次整理时按 git 提交时间**补记**；无法证实的标「未记录」，不臆造。
 
 ## 阶段 1 — 本地化改造与架构搭建
+- 分支：main（feature/vc-svc 于 09-25 00:51 才创建）
 
 - **已完成**
   - 移出全部线上部署产物（Dockerfile、cloudbaserc.json、deploy 脚本、部署文档）
@@ -176,9 +38,8 @@
 
 - **下一阶段入口**：排查「页面白屏」与启动体验问题
 
----
-
 ## 阶段 2 — 启动体验与日志
+- 分支：main（feature/vc-svc 于 09-25 00:51 才创建）
 
 - **已完成**
   - `start.bat` 一键启动（自动装依赖 + 环境体检 + 打开浏览器）
@@ -198,9 +59,8 @@
 
 - **下一阶段入口**：批量合成结果在切换页面后丢失
 
----
-
 ## 阶段 3 — 状态管理与数据修复
+- 分支：main（feature/vc-svc 于 09-25 00:51 才创建）
 
 - **已完成**
   - 批量合成与训练页会话保留（模块级 + sessionStorage，跨页面、跨刷新）
@@ -220,9 +80,8 @@
 
 - **下一阶段入口**：对照官方推荐流程审查达标情况
 
----
-
 ## 阶段 4 — 官方流程对齐
+- 分支：feature/vc-svc
 
 - **已完成**
   - UVR5 人声分离（推翻原判断：官方 `vr.py`/`mdxnet.py` 可直接调用）
@@ -245,9 +104,8 @@
 
 - **下一阶段入口**：术语提示与流程指引
 
----
-
 ## 阶段 5 — 术语与引导体系
+- 分支：feature/vc-svc
 
 - **已完成**
   - 术语表 `glossary.ts`：71 → **100 条**，每条「它是什么」+「它影响什么」+ 可选示例
@@ -267,9 +125,8 @@
 
 - **下一阶段入口**：见 `HANDOFF.md` 的「下一步」清单（训练顺序、权重下拉、切分结果展示）
 
----
-
 ## 阶段 6 — 官方建议对齐收尾（HANDOFF 下一步清单清零）
+- 分支：feature/vc-svc
 
 - **已完成**
   - **训练顺序改为「先 SoVITS 后 GPT」**（官方 WebUI 中 SoVITS=1Ba、GPT=1Bb）
@@ -321,9 +178,8 @@
 - **下一阶段入口**：跑一轮真实训练做端到端验收（新顺序 + 切分面板 + 权重面板联动）；
   或按 `docs/` 里三模型整合可行性评估推进决策
 
----
-
 ## 阶段 7 — 网易模块接入（Confucius4-TTS + Confucius4-R2T2，双模型共存）
+- 分支：feature/vc-svc
 
 - **已完成**
   - **决策与对比文档** `docs/NETEASE-INTEGRATION.md`：
@@ -374,9 +230,8 @@
 - **下一阶段入口**：按 `netease/README.md` 装环境 + 下载权重做端到端实测（HANDOFF「下一步」高优先级项）；
   或推进 `docs/MODERN-TTS-FEASIBILITY.md` 的三模型决策（复用本阶段验证的运行时模式）
 
----
-
 ## 阶段 8 — 网易模块装环境 + 端到端实测（TTS 跑通 / ASR 卡在平台）
+- 分支：feature/vc-svc
 
 - **已完成**
   - **环境**：py3.12 venv（`netease/.venv`）+ torch **2.7.0+cu126**（按上游 pin；PyPI 上的 torch 是 CPU 版，
@@ -431,9 +286,30 @@
   后果不是崩，是**推理期被挤占**：同一条合成在显存充裕时 RTF 2.0~2.5，挤占时掉到 4.88。
   要不要改用 nvidia-smi 采样做准入，待定（改之前先确认 Windows WDDM 下哪个口径更接近真实可用量）
 
----
+## 阶段 9 — 侧栏状态卡精简（缩小 + 加载完自动隐藏） [完成时间：10.01 00:16 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
 
-## 阶段 10 — 各模块结果栏改「多条结果列表」（不再互相覆盖）
+- **已完成**
+  - `AppShell` 里 7 张状态卡改成统一数据驱动（`StatusCard[]`），MiMo 云端卡与各引擎卡共用同一个 `LinkCard`
+  - **缩小一档**：卡片 `p-2.5 text-xs` → `px-2 py-1.5 text-[11px]`，图标 3.5 → 3，间距 `gap-2/space-y-2` → `1.5`，
+    容器 `pb-5` → `pb-4`
+  - **自动隐藏**：探活 / 加载期间整列可见；一旦没有 `checking` 的卡片，只保留需要用户动手的
+    （待补齐 / 未配置 / 未连接），**全部就绪则整块不渲染**
+  - 当前实际效果：从常驻 7 张降到 2 张（MiMo 待配置 + 网易转写 待补齐）
+
+- **未完成**：无（本次是纯 UI 改动）
+
+- **改动文件**：`app/src/components/layout/AppShell.tsx`
+
+- **测试结果**：`npm run typecheck` 通过；eslint（该文件）通过；HMR 预览已刷新
+
+- **风险**：砍掉「已就绪」卡片后，用户想确认某引擎是否在跑要进对应页面看；
+  这是刻意的取舍（状态卡的原意是「告诉你该做什么」，不是常驻仪表盘）
+
+- **下一阶段入口**：人工确认缩小后的观感（是否还想更小 / 是否要保留一个手动展开入口）
+
+## 阶段 10 — 各模块结果栏改「多条结果列表」（不再互相覆盖） [完成时间：10.01 00:42 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
 
 - **起因**：每个页面只用单值 state 存结果，合成/转写下一条就把上一条冲掉
   （`useSynthesis` 里还会顺手 `revokeObjectURL`，连旧音频地址一起回收）。
@@ -487,9 +363,8 @@
 - **下一阶段入口**：浏览器逐个模块人工点一遍结果栏（合成两次看旧的是否还在、展开/删除/清空是否顺手）；
   决定 `check_vram()` 是否改成 nvidia-smi 口径
 
----
-
-## 阶段 11 — R2T2 落地路径勘察（只勘察 + 做准备，未安装任何东西）
+## 阶段 11 — R2T2 落地路径勘察（只勘察 + 做准备，未安装任何东西） [完成时间：10.01 23:24 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
 
 - **已完成**
   - **勘察结论（本机实测）**：WSL2 平台**已就绪**（`wsl --version` = 2.7.14.0，内核 6.18.33，只是没装发行版）；
@@ -519,9 +394,8 @@
 - **下一阶段入口**：用户拍板后按 `netease/README.md` 的 WSL 方案执行（装发行版 → venv → vllm →
   两个环境变量 → 用 `resources/test.wav` 校流式）；若否决，R2T2 保持「平台不支持」，ASR 页如实显示
 
----
-
-## 阶段 12 — 修掉网易侧的显存准入假象（坑 17）
+## 阶段 12 — 修掉网易侧的显存准入假象（坑 17） [完成时间：10.02 00:16 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
 
 - **起因**：用户拍板「R2T2 先搁置，继续完善现有项目」。挑了清单里不需要 GPU 就能验证的一项：
   坑 17 的显存口径问题（当时只登记了现象，没定论）。
@@ -555,9 +429,8 @@
 
 - **下一阶段入口**：拍板 trainer 侧是否同步改口径；显存腾出来后复测首条合成耗时
 
----
-
-## 阶段 13 — 网易改为主服务，GPT-SoVITS 降为辅助
+## 阶段 13 — 网易改为主服务，GPT-SoVITS 降为辅助 [完成时间：10.02 02:07 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
 
 - **起因**：用户拍板「网易为主服务，GPT 为辅助」。范围是三件事 + 一条回退策略
   （导航与状态卡排主位 / 合成页默认引擎改网易 / `npm run dev` 自动拉起网易 / **不可用时明确报错不静默降级**）。
@@ -596,69 +469,378 @@
     文案已尽量说清原因与下一步动作
   - 网关仍无 supervisor：netease 挂了不会自动重启，只会在侧栏状态卡变「未启动」
 
----
+## 阶段 14 — 资源占用预估与预警 [完成时间：10.02 02:19 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
 
-## 阶段 24 — 全站文件/文件夹拖拽导入
-
-- **起因**：用户要求「所有需要文件/文件夹导入的都要支持拖动导入」。
-  盘点后全站 13 处 `<input type=file>`，只有 MiMo 声音克隆的 `SamplePicker` 支持拖文件，
-  且**没有一处能接住文件夹**（语料目录这种最自然的动作只能点开面板多选）。
+- **起因**：用户要求「运行前自动评估显存与内存；不足时给明确警告 + 降配置/释放/升硬件建议；
+  重资源任务提前给出预估占用量」。
 
 - **已完成**
-  - **共用底座 `app/src/hooks/useFileDrop.ts`**
-    - 返回 `{ dragging, rootProps }`，`rootProps` 直接展开到任意容器（div / label / CardContent）
-    - **文件夹递归**：走 `webkitGetAsEntry` + `createReader().readEntries` 分批读到底
-      （`dataTransfer.files` 对目录只给一个 0 字节壳）；老浏览器没有 entry API 时退回 `files`
-    - **按 `accept` 过滤**：拖进来不符类型的文件直接忽略，不会污染表单
-    - **回填 `input.files`**（导出 `applyFilesToInput`）：原生控件靠它显示文件名，
-      不回填就一直写着「未选择任何文件」，看着像没成功
-    - `dragleave` 用深度计数器（`depth`）而不是直接置 false —— 否则拖过子元素时高亮会闪
-    - 回调引用走 `useEffect` 保最新（React 19 禁止渲染期写 ref，eslint `react-hooks/refs` 会拦）
-  - **13 处全部接入**（拖拽高亮 + 「可拖文件/文件夹进来」文案提示）：
-    `SamplePicker`（升级为支持文件夹）、`NeteaseTtsPage` 参考音频、`NeteaseAsrPage` 音频、
-    `AsrPage` 单条转写 + 数据集批量上传、`BatchPage` txt/csv 清单（整块文本区可接）、
-    `TrainingPage` **语料目录（整个文件夹拖进来 → 递归取音频 → 自动填 `source_audio_dir`）**、
-    `VoiceLibraryPage` 新建 + 替换参考音频、`VoiceConversionPage` 源音频 + 音色模型库
-    （`.pth` 主体 / `.index` 可先拖后补，给了对应提示）、`SingingConversionPage` 歌曲 + 只做分离
-  - **`AppShell` 全局兜底**：落在上传区之外的误拖不再把 SPA 导航走
-    （浏览器默认会打开拖入的文件，当前表单状态全丢）；上传区自己 preventDefault 过就跳过
-  - **顺带补的静默失败**：RVC `upload()` 只有 try/finally 没有 catch，导入失败时界面毫无反应
-    （按钮路径同样受影响，拖拽会让误操作更常见）→ 补 `toast.error` 带 `hint`
-  - **顺带修的泄漏**：`NeteaseAsrPage` 试听用 `URL.createObjectURL(file)` 写在 JSX 里，
-    每次渲染泄漏一个 Blob 地址 → 改 `useMemo` + 换文件/卸载时 revoke（与阶段 23 同一条坑 18）
+  - **数据来源（三条，各自权威，不重复维护常量）**
+    - 显存门槛：trainer `/v1/engines` 的 `required_mb`（sovits 3072 / rvc 2560 / svc 3072 /
+      uvr5 4096 / asr 2048 / train 6144）+ netease `/health` 的 `tts_required_vram_mb`
+    - 当前余量：netease 的 **nvidia-smi 口径**（跨进程真实值，坑 17 修完才可信）
+      → 退回 trainer 的 `free_vram_mb`（torch 口径）
+    - 内存：网关 `/api/health` 新增 `host { ram_total_mb, ram_free_mb, ram_used_mb }`
+      （Node `os.freemem`，三个进程同机，只有网关看得到全貌）
+  - **前端**：新增 `app/src/lib/resources.ts`（成本表 + 快照采集 + 判定 + `releaseVram()`）
+    与 `app/src/components/features/ResourceBudget.tsx`
+    - 展示：显存「需要 X · 空闲 Y / 共 Z」+ 内存「约 X · 空闲 Y」+ 「重新评估」
+    - 判定：`ok` / `tight`（余量 <1 GB）/ `insufficient`（差多少直接给 GB）/ `unknown`（不编乐观结论）
+    - 建议：可点的「释放常驻显存」+ 按任务给的「降低配置」具体参数 + 「升级硬件」文案
+  - **接入页面**：网易合成（主服务）、模型训练、语音变声、歌声转换（分离 4 GB）、批量合成
+  - `sovitsApi` 新增 `engines()` / `unloadEngines()`；类型补 `SovitsEnginesStatus`、
+    `HealthInfo.host`、`NeteaseHealth.vram.source/torch_free_mb`
 
 - **未完成**
-  - **文件夹拖拽没做真机验证**：Playwright/合成事件造不出 `FileSystemDirectoryEntry`，
-    只能验到「多文件拖入 + accept 过滤 + 回填 + 上传成功」这一层。递归分支需要用户
-    从资源管理器真实拖一次
-  - 拖进来的目录若混有非音频文件是**静默跳过**（与训练页官方口径一致），没有给「跳过了 N 个」的汇总
+  - 内存阈值是粗估（按任务给量级），没有实测 RSS 校准
+  - 「降低配置」目前是文案建议，未做成一键改参数（改参数要动各页的表单，风险更大）
 
-- **改动文件**：新增 `app/src/hooks/useFileDrop.ts`；
-  改 `app/src/components/layout/AppShell.tsx`、`app/src/components/features/SamplePicker.tsx`、
-  `app/src/pages/{NeteaseTtsPage,NeteaseAsrPage,AsrPage,BatchPage,TrainingPage,VoiceLibraryPage,VoiceConversionPage,SingingConversionPage}.tsx`
+- **改动文件**：新增 `app/src/lib/resources.ts`、`app/src/components/features/ResourceBudget.tsx`；
+  改 `server/src/routes/index.ts`、`app/src/lib/sovits.ts`、`app/src/types/{index.ts,sovits.ts,netease.ts}`、
+  `app/src/pages/{NeteaseTtsPage,TrainingPage,VoiceConversionPage,SingingConversionPage,BatchPage}.tsx`
 
-- **测试结果**：`npm run typecheck` / 改动文件 eslint / `npm run build` 全通过；
-  浏览器合成 DragEvent 逐项实测：网易合成页（高亮 + 文件名 + `input.files=1` + 开始合成解禁）、
-  网易转写页（同上 + 试听条出现）、训练页语料（3 个文件拖入 → 2 个音频被收、`notes.txt` 按 accept 过滤掉，
-  **`POST /v1/train/upload` 返回 200 且目录字段自动填入** `trainer/.data/uploads/74c67028fe`）、
-  批量页（拖入 3 行 .txt → 文本框出现 3 条 · 23 字）、音色库导入（文件名显示 + 回填）、
-  变声/翻唱（文件进 input 且试听条出现）、RVC 音色模型库（只拖 `.index` → 给「再拖入同名 .pth 就会一起导入」提示；
-  拖 `.pth` → 走完整上传链路）
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
+  三个数据源实测取值正确：`host { total:32544, free:5616 }`、
+  engines 门槛齐全、netease `vram { free:563, torch_free:7099, source:'nvidia-smi' }`
+  → 页面据此判定 `insufficient`（当前正处在「显存被别的程序占满」的状态，报警符合事实）
 
 - **风险**
-  - 真实 OS 拖拽（尤其文件夹）与合成事件不完全等价，递归分支未真机验证
-  - `applyFilesToInput` 依赖 `new DataTransfer()`（Chromium / Firefox / Safari 14+ 可用）；
-    失败时只影响原生控件的文件名显示，功能本身已生效（已 try/catch）
-  - 上传区大小按各页容器而定，训练页那条是「输入框 + 按钮」那一行，落点需要看提示文案
-  - 测试过程中产生过两处残留（`trainer/.data/uploads/74c67028fe`、`.data/vc/models/fake-weight.*`），
-    已按规矩送进**回收站**（未硬删除），模型目录复核后只剩原有 3 个 .pth
+  - 内存数是「约」，可能与实际 RSS 差较多，文案已写「约」
+  - 快照在组件挂载时拉一次，长时间停留不会自动刷新（有「重新评估」按钮）；
+    若后续要做实时守护，应提到 App 层做轮询而不是每个卡片各拉一次
+  - 释放显存的动作会卸掉**正在常驻**的引擎（含网易 TTS），用户可能不期望 ——
+    按钮文案已写明「释放常驻显存」，且只在预估不通过时出现
 
-- **下一阶段入口**：请用户从资源管理器真拖一个语料文件夹进训练页，确认递归取文件；
-  若要更贴心，可在拖目录后汇总「收了 N 个、跳过 M 个非音频」
+- **下一阶段入口**：确认各页预估卡的位置与文案；考虑把快照提到 App 层统一轮询；
+  内存阈值若有条件可实测校准一次
 
----
+- **下一阶段入口**（阶段 13 遗留）：浏览器确认落地页与导航顺序；若嫌主服务不可用时太硬，
+  可考虑在落地页加一条「服务没起来时先看 GPT-SoVITS」的说明（仍不是自动回落）
 
-## 阶段 23 — 浏览器走查网易合成页 + 阶段 6 新 UI（修掉 6 处实测出来的缺陷）
+## 阶段 15 — 三个外接板块的入口与来源标注 [完成时间：10.02 02:31 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
+
+- **起因**：变声 / 翻唱 / 转写三个入口挤在「AI 变声 / 语音与文本」两组里，
+  用户分不清点进去用的是什么模型，也不知道这些能力来自哪个项目。
+
+- **已完成**
+  - **导航拆成三个模块**（组名直接写模型名，不再依赖 hover 提示）：
+    - `RVC 变声` → 语音变声
+    - `DDSP-SVC 歌声` → 歌声翻唱
+    - `ASR 语音转文本` → 转写与数据集
+    - 顺带把网易组名改成「网易 Confucius4 · 主服务」，模型族也进可见区域
+  - **新增 `components/features/SourceNote.tsx`**：统一的「能力来源」条，
+    写清上游项目名、本地位置、本项目做了什么
+  - **三个页面各加一条**
+    - 语音变声：RVC（Retrieval-based Voice Conversion），`vendor/rvc`
+    - 歌声转换：DDSP-SVC（歌声转换）+ UVR5（音源分离），`vendor/ddsp-svc · 整合包 tools/uvr5`
+    - 语音转文本：FunASR / faster-whisper（常驻）+ 整合包官方 ASR 脚本（脚本通道），
+      `整合包 tools/asr`
+
+- **未完成**：无（本次是纯标注改动）
+
+- **改动文件**：新增 `app/src/components/features/SourceNote.tsx`；
+  改 `app/src/components/layout/AppShell.tsx`、`app/src/pages/{VoiceConversionPage,SingingConversionPage,AsrPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint / `npm run build` 全通过
+
+- **风险**：侧栏分组变多（6 组），导航变长；`lg` 断点下侧栏可滚动，小屏仍是横向滚动条 ——
+  若嫌长，可考虑把三组再收成一个「外接模型」分组，但那会退回「看不出用的是哪个模型」的老问题
+
+- **下一阶段入口**：人工确认侧栏长度与分组名是否顺眼
+
+## 阶段 16 — 操作指引系统重做（分步 + 圆形完成标识 + 跨页职责 + 复习） [完成时间：10.03 00:41 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
+
+- **起因**：旧指引只有「一句目标 + tips」，看不出先后与落点；用户要求
+  ① 复用右侧弹窗 ② 写清每步怎么操作 ③ 复杂流程标注每页职责（上一页/本页/下一页）
+  ④ 分步引导 + 圆形状态标识（未完成/已完成）实时更新 ⑤ 支持「重新开始」复习。
+
+- **已完成**
+  - **`lib/guides.ts`（新）**：结构化指引数据。每步强制写 `how`（具体怎么点/填/判断）、
+    `page`（在哪做）、`prev`/`next`（上一页留下什么、下一页去哪）、可选 `autoKey`。
+    三份指引：`netease-first`（主服务首跑）、`gpt-sovits-training`（跨 4 页训练链）、
+    `first-run`（新手总览 5 步）
+  - **`hooks/useGuideProgress.ts`（新）**：进度按指引独立记账，localStorage 持久化，
+    模块级 listeners 保证跨页面同步；`markGuideEvent(key)` 供页面上报信号自动打勾；
+    `reset()` 用于复习
+  - **`components/features/FlowGuide.tsx` 重写**：沿用「贴边展开」交互（桌面悬浮 / 触屏点击），
+    内容换成 —— 顶部进度条 + `x/N` +「重新开始」；每步一个圆形标识
+    （未完成 = 空心虚线圈，已完成 = 实心圈 + 勾，与任务清单同一套视觉语言）；
+    步骤里写清「怎么操作」与「上一步 / 下一步」；非本页的步骤给「去这一页」按钮直接跳转；
+    底部可切换其它指引
+  - **挂载位置改到外壳层**：`AppShell` 渲染 `<FlowGuide page={active} onNavigate={onNavigate} />`，
+    因为跨页跳转只有外壳拿得到导航能力；移除 TrainingPage / SynthesisPage 里的两处重复引用
+  - **自动打勾接了真实信号**：网易页选好参考音频 → `netease:ref-ready`；
+    第一条合成成功 → `netease:first-synth`。观测不到的步骤仍可手动点圆圈切换
+
+- **未完成**
+  - 只有网易那条指引做了自动打勾，训练链 / 新手总览目前靠手动点
+  - 没有「首次访问自动弹出」的强引导（当前是贴边自取，不打断操作）
+
+- **改动文件**：新增 `app/src/lib/guides.ts`、`app/src/hooks/useGuideProgress.ts`；
+  重写 `app/src/components/features/FlowGuide.tsx`；
+  改 `app/src/components/layout/AppShell.tsx`、`app/src/pages/{NeteaseTtsPage,TrainingPage,SynthesisPage}.tsx`
+  （旧 `lib/flowGuide.ts` 保留未删：术语/其它地方可能仍引用，待确认后再清理）
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过
+
+- **风险**
+  - 指引内容是我按项目现状写的，参数名或按钮文案若后续改动会过期 —— 数据集中在
+    `lib/guides.ts`，改起来是一处
+  - 自动打勾依赖 `autoKey` 与页面上报点对齐，重构页面时容易漏改（已注释标出上报位置）
+  - 右侧贴边条与「资源预估卡」可能在同一水平位置重叠（贴边条 z-40 且固定，内容区右侧有留白）
+
+- **下一阶段入口**：人工走一遍三份指引，看步骤描述与实际界面是否对得上；
+  决定是否给训练链接自动打勾；确认旧 `flowGuide.ts` 可否整体删除
+
+## 阶段 17 — GPT-SoVITS 改为默认停用 + 可一键关闭（释放显存） [完成时间：10.03 02:58 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
+
+- **起因**：显存不足的报错写「先关闭 GPT-SoVITS 本地服务」，但界面里没有任何入口能关。
+  用户进一步指定策略：**以后默认关闭 GPT-SoVITS 释放显存，网易为主力**，
+  只有想用 GPT-SoVITS（训练 / 批量 / 变声 / 翻唱）时才去设置里手动开。
+
+- **已完成**
+  - **网关接管生命周期**：`config.sovits.autostart` 默认改为 `true`（旧值 false），
+    这样「按需拉起」才有执行者；`npm run dev` **不再拉起** sovits，另开 `npm run dev:all` 保留旧行为
+  - **持久开关**：`server/.data/sovits-service.json`（跨 `tsx watch` 重启保留，默认 false = 停用）
+  - **新端点** `GET/POST /api/sovits/service`：开启 → `ensureStarted()` 拉起；
+    关闭 → 先 `POST /v1/engines/unload` 卸常驻引擎，再 `taskkill /t /f` 杀进程树
+    - 挂在代理**之前**（否则被代理的通配规则吃掉），并且这条路由自己开 `express.json()`
+  - **如实区分两种关停**：我们拉起的 → 「已关闭，显存已归还」；
+    外部实例（`npm run dev:sovits` / `start.bat`）→ **杀不掉**，提示用户去关那个终端，
+    并说明只卸掉了引擎。不说「已关闭」骗人
+  - **前端**：`lib/localService.ts`（启停客户端）；设置页加启用开关（默认关，写清什么时候该开）；
+    资源预警卡在显存不足且 GPT-SoVITS 开着时，多给一个「关闭 GPT-SoVITS 服务」按钮
+  - **顺带修掉一个陈旧状态问题**：`/api/health` 的 `sovits.reachable` 只在探活时更新，
+    服务关掉后侧栏仍显示「已连接」。加了 30 秒周期探活；`/api/sovits/service` 的 GET 改为现探
+
+- **未完成**
+  - 依赖 GPT-SoVITS 的页面（训练 / 批量 / 变声 / 翻唱）在服务停用时，
+    目前是通用的 503 提示，没有「去设置开启」的直达按钮
+
+- **改动文件**：`server/src/{index.ts,config/index.ts,services/sovits.ts,routes/sovits.ts}`、
+  `app/src/lib/{localService.ts,resources.ts}`、`app/src/components/features/ResourceBudget.tsx`、
+  `app/src/pages/SettingsPage.tsx`、`app/src/types/index.ts`、`package.json`、`HANDOFF.md`
+
+- **测试结果**：`npm run typecheck` / eslint / `npm run build` 全通过；
+  实测（`npm run dev` 用新脚本重启后）：**默认 9881 不起** → POST 启用 → `reachable=true`（网关拉起）
+  → POST 关闭 → **9881 停**、空闲显存 1236 → 1458 MB，提示文案为「已关闭…显存已归还」
+
+- **风险**
+  - 网关托管的副作用：`tsx watch` 改后端代码重启网关时会回收 GPT-SoVITS 子进程
+    （开关是开的会自动再拉起，但正在跑的训练任务会中断）
+  - 关停走的是 `taskkill /t /f`，若用户有未保存状态会直接丢 —— 训练任务请先在任务页取消
+  - 外部实例杀不掉这条路径，文案已说明，但界面上「已停用」与侧栏「已连接」可能同时出现（属实）
+
+- **下一阶段入口**：给训练 / 批量 / 变声 / 翻唱页加「服务已停用，去设置开启」的直达提示
+
+## 阶段 18 — 资源仲裁：单模型独占，自动停掉本系统内竞争模型 [完成时间：10.04 12:34 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
+
+- **起因**：用户要求「一个模型运行时，自动停止系统内与之竞争资源的其它模型并释放显存；
+  严格限制在本系统内，绝不触及系统外的进程」。
+  这正是 HANDOFF 里挂了很久的「跨运行时显存仲裁」项（阶段 7 未完成清单第一条）。
+
+- **边界定义（先于实现）**
+  - **本系统** = 本项目自己拉起的两个 Python 服务：GPT-SoVITS（:9881）与网易（:9882），
+    网关（:8787）是 Node 进程不占 GPU；
+  - 仲裁器**只向这两个地址发请求**，且发请求前校验目标是回环地址
+    （`SOVITS_URL` 若被配成非回环，会在启动阶段直接拒绝）；
+  - 不扫描进程、不 kill 任何 PID、不触碰电脑上其它任何程序 ——
+    浏览器 / 模拟器 / 游戏占的显存由资源预估卡提示用户自己处理。
+
+- **已完成**
+  - **`server/src/services/arbiter.ts`（新）**
+    - `focus(engine)`：把资源集中给单一引擎 —— 卸载**另一端**服务上的全部模型
+      （sovits 端：`/v1/engines/unload` + `/v1/pipeline/unload`；
+      netease 端：`/v1/confucius/unload` + `/v1/r2t2/unload`），
+      并在 netease 内部保证 TTS / ASR 二选一；
+    - **心跳复检**：focus 持有期内（默认 10 分钟，可传 `holdSeconds`）每 15 秒
+      重新卸载另一端，防止它被别的请求重新拉起；定时器 `unref` 不阻塞退出；
+    - `releaseAll()`：全停，本系统内不留任何常驻模型；
+    - 卸载失败不抛出（分类：服务没起=正常跳过；真失败=记入 `failed` 返回给界面）
+  - **`server/src/routes/resources.ts`（新）**：`POST /api/resources/focus`、
+    `POST /api/resources/release`、`GET /api/resources/focus`
+  - **前端 `lib/arbiter.ts`（新）**：`focusBeforeRun(engine)` —— **仲裁失败不阻断任务**
+    （它是优化，真正的准入由各服务自己的显存检查负责）
+  - **接入开跑点**（7 处）：网易预热、训练、批量、变声、翻唱、分离、ASR 转写
+  - **资源预估卡**：显存不足时新增「只跑这一个模型」按钮（= `focus(task)`）
+
+- **未完成**
+  - 页面上的「自动打勾」没有延伸到仲裁（仲裁结果只在 toast 里体现）；
+  - 网易引擎内部互斥依赖它的 `engine_lock`（acquire 时抢占），仲裁器只是提前触发，未做深校验
+
+- **改动文件**：新增 `server/src/services/arbiter.ts`、`server/src/routes/resources.ts`、
+  `app/src/lib/arbiter.ts`；改 `server/src/routes/index.ts`、
+  `app/src/components/features/ResourceBudget.tsx`、
+  `app/src/pages/{NeteaseTtsPage,TrainingPage,BatchPage,VoiceConversionPage,SingingConversionPage,AsrPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过。接口实测：
+  - 非法引擎 → 400 `BAD_ENGINE`；
+  - `focus netease-tts` → 卸载 netease 内部 r2t2，sovits 端未运行则跳过；
+  - `focus sovits` → 卸载 netease 端 confucius + r2t2（两处）；
+  - `release` → 全停后 `GET focus` 回 `{engine:null, remainSec:0}`；
+  - `GET /focus` 正确显示持有者与剩余秒数
+
+- **风险**
+  - 心跳复检是「轮询卸载」，极端情况下两次心跳之间另一端可能短暂加载 ——
+    但它会立刻被下一次心跳卸掉，不会与焦点引擎长期共存
+  - focus 的 TTL（默认 10 分钟）过期后仲裁失效，长任务（训练数小时）需要传更大的 `holdSeconds`
+    —— 目前训练页用的是默认值，**后续应把 TTL 与任务时长挂钩**
+  - 只防「本系统内」的竞争：用户机器上其它程序的显存占用不在管辖范围（这是需求边界，不是缺陷）
+
+- **下一阶段入口**：训练页把 `holdSeconds` 与预计训练时长挂钩；`focus` 结果在页面上做轻提示
+
+## 阶段 19 — 资源站入口 + 仲裁持有期与任务时长挂钩 [完成时间：10.05 00:33 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
+
+- **起因**：用户要求内嵌 https://res.acgnai.top/ 的跳转链接（该站提供角色语音数据集与
+  TTS / SVC 开源模型，站点名「AI Hobbyist 资源库」）；同时继续阶段 18 的下一步
+  （训练页仲裁持有期与任务时长挂钩）。
+
+- **已完成**
+  - **新增 `components/features/ResourceSiteLink.tsx`**：统一的资源站入口
+    （新窗口打开 + `rel="noopener noreferrer"` 防反向 tabnabbing），
+    放在三处「缺素材 / 缺模型」的地方：
+    - 训练页：缺训练数据集
+    - 语音变声页：缺 .pth 音色模型
+    - 歌声转换页：缺歌声转换模型 / 伴奏素材
+  - **仲裁持有期与任务时长挂钩**（阶段 18 遗留）：
+    - 训练：`focusBeforeRun('training', 6 * 3600)`（训练动辄数小时，默认 10 分钟根本不够）
+    - 批量：`focusBeforeRun('sovits', 3600)`（几十条可能跑很久）
+    - 其余短任务维持默认 600 秒
+  - `focusBeforeRun` 增加 `holdSeconds` 参数，注释写明「长任务必须给大值」的原因
+
+- **未完成**：无（链接是静态的；若站点改版无需同步）
+
+- **改动文件**：新增 `app/src/components/features/ResourceSiteLink.tsx`；
+  改 `app/src/lib/arbiter.ts`、`app/src/pages/{TrainingPage,VoiceConversionPage,SingingConversionPage,BatchPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
+  站点内容已抓取确认（「AI Hobbyist 资源库」：数据集 / TTS / SVS / SVC / GSV 部署工具），
+  链接文案与站点定位一致
+
+- **风险**：外部站点可用性不受本系统控制；链接全部新窗口打开，不劫持当前页
+
+- **下一阶段入口**：训练页仲裁持有期目前是固定 6 小时，更准确的做法是按语料时长估算；
+  仲裁结果可在页面上做轻提示（当前只进 toast）
+
+## 阶段 20 — 依赖 GPT-SoVITS 的页面补「服务已停用」直达提示 [完成时间：10.05 00:43 BY 未记录·git 提交时间补记]
+- 分支：feature/vc-svc
+
+- **起因**：阶段 17 把 GPT-SoVITS 改成默认停用后，训练 / 批量 / 变声 / 翻唱 / 音色库
+  这五个页面会直接失败，而通用报错只说「本地服务不可用」——
+  用户既不知道有这个开关，也不知道该去哪开。
+
+- **已完成**
+  - **新增 `components/features/SovitsServiceNotice.tsx`**
+    - 只在「已停用且未运行」时渲染（读不到状态或已启用→不显示，**宁可漏提示也不误报**）
+    - 两个动作：**「直接开启」**（`localServiceApi.toggle(true)`，不用离开本页）+
+      **「去设置页」**（可选 `onGoSettings` 回调，App 传入 `setActive('settings')`）
+    - 文案说明为什么默认关闭（显存留给网易主服务）与首次开启要等 torch 导入
+  - **接入五个依赖页**：训练 / 批量 / 语音变声 / 歌声转换 / 音色库，
+    App 统一传 `goSettings`
+
+- **未完成**：`直接开启` 的等待过程没有进度反馈（只有按钮转圈），
+  首次要 import torch 数十秒，用户可能以为卡住 —— 后续可加「启动中，约需数十秒」的进度条
+
+- **改动文件**：新增 `app/src/components/features/SovitsServiceNotice.tsx`；
+  改 `app/src/App.tsx`、`app/src/pages/{TrainingPage,BatchPage,VoiceConversionPage,SingingConversionPage,VoiceLibraryPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
+  `/api/sovits/service` 当前返回 `{enabled:false, reachable:false}` → 提示条件成立，五页会显示
+
+- **风险**：提示依赖 `/api/sovits/service` 的实时探活；网关不可达时组件拿不到状态而**不显示**
+  （fail-safe：此时页面本来也用不了）
+
+- **下一阶段入口**：给「直接开启」加启动进度反馈；确认五页提示的位置与文案是否碍眼
+
+## 阶段 21 — 冷启动进度反馈 + trainer 侧显存口径同步改为 nvidia-smi [完成时间：10.05 01:09 BY CodeBuddy·git 提交时间补记]
+- 分支：feature/vc-svc
+
+- **起因**：① 上一阶段遗留「直接开启」只有转圈，首次要数十秒会被当成卡死；
+  ② 用户拍板：trainer 侧显存口径也改（坑 17 的第二半）。
+
+- **已完成**
+  - **冷启动进度反馈**
+    - `SovitsServiceNotice`：启动中显示「启动中，约需数十秒（首次要 import torch）· 已等待 N 秒」
+      + 进度条（按实测 45 秒量级推进，只到 95%，不做假精确）+ 每秒走表；
+      同时每 3 秒探真实状态，探到就绪提前收尾，不等 `toggle()` 返回
+    - 设置页开关同样补秒表与进度条（只在**开启**时显示，关闭不用等）
+  - **trainer 显存口径（坑 17 收尾）**
+    - `trainer/app/runtime.py`：新增 `_nvidia_smi_free_mb()`（跨进程真实值）
+      与 3 秒 TTL 缓存（避免 `/health` 轮询频繁起外部进程）；
+      `free_vram_mb()` 改为 nvidia-smi 优先 → 退回 torch
+    - `RuntimeInfo` 新增 `vram_free_mb_torch` 对照字段并进入序列化
+      （两者之差 = 别的进程占了多少）
+    - `/health` 的 `runtime.vram_free_mb` 随之变准
+    - 修正 `trainer/app/queue.py` 里「直接问 torch 最准」的过时注释
+
+- **未完成**：门槛数值（训练 6144 / UVR5 4096 等）仍按旧口径定，未重新校准
+
+- **改动文件**：`trainer/app/{runtime.py,queue.py}`、
+  `app/src/components/features/SovitsServiceNotice.tsx`、`app/src/pages/SettingsPage.tsx`、
+  `HANDOFF.md`、`PROGRESS.md`
+
+- **测试结果**
+  - 冷启动实测 **43.9 秒**（与进度条 45 秒设定吻合）
+  - 口径实测：`/v1/engines` 的 `free_vram_mb` = **2550 MB**，nvidia-smi = **2544 MB**（一致）；
+    `/health` 显示 `vram_free_mb=2550`、`vram_free_mb_torch=7099` → 差 4549 MB 即外部占用
+    （改前 trainer 一律报 7099）
+  - 用整合包 py3.9 解释器导入验证通过（`python.exe -c "from app.runtime import free_vram_mb"`）
+
+- **风险**
+  - 判定变严格：可能出现「看着没跑别的却被拦」—— 这正是修掉的目标（宁可多等也不半途 OOM），
+    但若发现门槛过严需重新校准数值
+  - nvidia-smi 不在 PATH 的机器上会退回 torch，修复不生效（但不会更差）
+  - `/health` 每次最多多一次（有 3 秒缓存）外部进程调用
+
+- **下一阶段入口**：观察新口径下是否有任务被误拦；若有，按真实口径重新校准各引擎门槛
+
+## 阶段 22 — 网易合成速度 / 质量档位（**半成品，UI 选择器未做**） [完成时间：10.05 03:16 BY CodeBuddy·git 提交时间补记]
+- 分支：feature/vc-svc
+
+- **起因**：用户问「官方 demo 为什么快」→ 排查结论（vLLM + 数据中心显卡 + 官方默认
+  `num_beams=3`）之后，用户要求把速度 / 质量做成可调参数。
+
+- **已完成（后端与 API 层，功能可用）**
+  - `netease/app/routers/confucius.py`：新增三档预设
+    `fast (1,10)` / `balanced (1,18)` / `quality (3,25)`（官方默认为 `(3,25)`），
+    `POST /v1/confucius/tts` 接收 `quality` 表单字段，高级用法可直接传
+    `num_beams` / `n_timesteps` 裸参数（优先于档位）
+  - `tts_engine.generate()` 接受可选 `num_beams` / `n_timesteps` 并透传上游
+    （只传显式给出的，其余走官方默认）
+  - `/v1/netease/catalog` 的 `tts` 块暴露 `quality_presets`（含给界面看的说明文案）
+    与 `default_quality`（= balanced）
+  - 前端：类型、`neteaseApi.synthesize` 请求字段、页面状态与请求都已接好，
+    初始值取服务端 `default_quality`
+  - **分析结论（供后续参考）**：官方 demo 快的原因 = 数据中心显卡（带宽 8~13 倍）
+    + vLLM（PagedAttention 等，2~5 倍）+ 他们可承担 beams=3；与 Gradio 无关（那只是 UI 壳）
+
+- **未完成（本次被叫停）**
+  - **界面上没有档位选择器** —— 页面会一直用服务端默认的 `balanced`，
+    功能等价于「默认变快了」，但用户**暂时无法在界面上切档**。
+    补做点：`NeteaseTtsPage` 的「合成内容」卡里加一个 Select，
+    选项来自 `catalog.tts.quality_presets`（note 字段做说明），选中值进 `quality` state
+  - 未实测各档位的实际加速比与音质差异
+
+- **改动文件**：`netease/app/{tts_engine.py,routers/confucius.py,routers/netease.py}`、
+  `app/src/{lib/netease.ts,types/netease.ts,pages/NeteaseTtsPage.tsx}`
+
+- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过
+  （当前状态自洽：API 可用，UI 缺选择器但不报错）
+
+- **风险**：默认档从官方 `quality (3,25)` 改成了 `balanced (1,18)` ——
+  合成会明显变快，但音质稳定性可能有细微差别；要回到官方默认，
+  在界面（补做后）选「质量优先」或请求里传 `quality=quality`
+
+- **下一阶段入口**：补 UI 档位选择器（约 10 行）；实测三档的 RTF 与听感
+
+## 阶段 23 — 浏览器走查网易合成页 + 阶段 6 新 UI（修掉 6 处实测出来的缺陷） [完成时间：10.06 00:37 前 BY CodeBuddy·随提交 32319bd 补记]
+- 分支：feature/vc-svc
 
 - **起因**：HANDOFF「下一步」两条高优先级项 —— 网易合成页的 UI 交互人工过一遍、
   端到端实测阶段 6 的新 UI。接口链路早就验完了，这次专挑「只有人（或浏览器）才能发现」的问题。
@@ -741,83 +923,104 @@
 - **下一阶段入口**：① 按上面建议校准准入门槛（或用户手动腾显存）后补测「合成成功 → 结果卡播放/下载」；
   ② 跑一条开切分的短任务验证阶段 6 的切分结果面板；③ 档位选择器仍等用户重新开工
 
----
-
-## 阶段 26 — IndexTTS 全链路接入：真实合成实测 + 网关透传 + 前端页面 + 资源管控 [计划时间：10.06 11:00 BY Qoder][完成时间：10.06 12:20 BY Qoder]
+## 阶段 23 — 文档修正：R2T2 可用性分层 + IndexTTS 接入方案
 - 分支：feature/vc-svc
 
-- **起因**：接续阶段 25（骨架已跑通 /health 但真实合成未实测）。按看板既定任务做阶段 26。
+- **起因**：用户转述了别人在同一模型上的排查结论，指出我此前「Windows 装不了 vLLM → R2T2 整体不可用」
+  下得过重；并要求**更新文档**，然后给出 **IndexTTS**（https://github.com/index-tts/index-tts）
+  的本地化接入方案，且同样要有显存 / 内存 / 检测等性能管控。
 
-- **已完成**
-  - **26a 真实合成实测**（跑通 6 条：中文 ×5、情感向量 ×1、经网关 multipart ×1）：
-    - 输出 22050 Hz WAV，RMS 0.02~0.03 / 峰值 0.18~0.34，音频有效；
-    - **稳态 RTF 2.2**（暖态 6.9s 音频 / 15.5s），冷启动首条 6.0；显存被桌面挤压时恶化到 5.4~14.4（波动大）；
-    - **实测模型常驻约 5.3 GB**（加载前 free 5548 → 加载后 281），远超阶段 25 估计的 2~3 GB；
-    - warmup 首跑约 4 分钟，**大头是上游对辅助模型（bigvgan/campplus）的 ModelScope/hf-mirror 网络探测超时**，权重其实全在本地 —— 真·加载仅约 10 秒。
-  - **修掉 3 个骨架必挂 bug**（都在 `indextts/app/`）：
-    - `IndexTTS2(...)` 传了上游不存在的 `use_cuda=` 参数（上游是 `device`）→ 首次加载即 TypeError；
-    - `_guard_vram` 从模块导入 `REQUIRED_VRAM_MB`（实为类属性）→ 导入即 ImportError；
-    - 模型常驻后合成被自己的显存准入拦死（free=451 < 3072 报 VRAM_INSUFFICIENT）→ guard 改为**已加载即跳过**。
-  - **情感与语速接入**：`generate()` 与 `/v1/synth` 新增 `emo_vector`（8 维 JSON：喜/怒/哀/惧/厌恶/低落/惊喜/平静）、`emo_file`（情感参考音频）、`emo_alpha`、`duration_factor`（0.5~2.0，骨架已有）；新增 `GET /v1/catalog`（语种/滑杆范围/情感维度/准入门槛，服务端唯一事实源，与坑 19 同一哲学；文本描述控情感需额外 0.6B 模型，`emo_text_control:false` 如实报不接）。
-  - **网关透传**：`server/src/routes/indextts.ts`（与 netease 同构的 node:http + pipe 透明转发 + 5 秒缓存探活，无 supervisor）挂 `/api/indextts`（**在 express.json() 之前**，坑 20）；`/api/health` 汇总加 `indextts` 段；config 加 `indextts.baseUrl/proxyTimeoutMs`（`INDEXTTS_URL` 可覆盖，回环口径不变）。
-  - **资源管控三服务化**：arbiter（`ServiceName`/`RELEASE_ENDPOINTS`/`serviceOf`/`baseUrlOf`/focus/releaseAll/心跳的 others 全部从「二服务」扩到「三服务」，回环校验硬边界原样保留）；`/api/resources/focus` 的 ENGINES 加 `indextts-tts`；preload 账本 `MODELS` 加 `indextts-tts`（3072 准入口径 + 注释写明实测常驻 5.3 GB 与门槛待校准）；前端 `arbiter.ts`/`resources.ts`/`ResourceBudget`/`preload.ts` 类型与兜底同步。
-  - **前端**：`app/src/pages/IndexttsTtsPage.tsx`（引擎状态卡 + 预热/卸载、参考音频上传/音色库选取双 tab、语种、时长系数滑杆、情感三模式〔跟随/8 维向量/情感参考+alpha〕、useResultStack 结果栏、useFileDrop 拖拽、内联错误卡带 hint）；`app/src/lib/indextts.ts` 客户端 + `app/src/types/indextts.ts` 契约；导航注册四处（NavKey / AppShell 状态文案 + NAV_GROUPS 新组「IndexTTS · 情感可控」+ 状态卡 / App.tsx 探活轮询 + 条件渲染 / PAGE_META）。
-  - **用户走查后的两处 UI 修复（10.06 12:45 补）**：
-    - 侧栏状态区改**纯手动展开/折叠**（`AppShell.tsx`）：去掉「探活期间强制全列、就绪后自动收起」的自动切换，折叠=只剩标题行（含 N 项待处理计数），展开=全部卡片，只由用户点击控制；
-    - RVC / DDSP-SVC 页**目录拉取失败不再整页替换**（`VoiceConversionPage.tsx` / `SingingConversionPage.tsx`）：原 `if (loadError) return <报错卡>` 在冷启动场景表现为「先渲染完整页 → 几十秒后整个换成一张报错卡」；改为完整页常驻 + 页内 amber 横幅（标题「模型目录暂未取到」+ 重试按钮），浏览器实测两页均通过。
+- **已完成（纯文档，代码未动）**
+  - **修正坑 12（R2T2 分层结论）**，证据全部取自本地仓库：
+    - `Confucius4-R2T2/pyproject.toml:67-69` 默认 `dependencies=["qwen-asr[vllm]", ...]` → 官方两条路
+      （`INFER_MODE` 仅 `stream_vllm/onetime_vllm`；Docker 用 `qwenllm/qwen3-asr`）确实是 Linux 路线，
+      但 **extra 可拆**
+    - `pyproject.toml:104-106` + `r2t2/r2t2_asr.py:23/189`：`qwen_asr` 是 PyPI 包，
+      `R2T2ASRModel(Qwen3ASRModel)` 是继承 → transformers 后端天然可用
+    - **流式被写死**：`r2t2_asr.py` 有 5 处 `if self.backend != "vllm": raise ValueError(...)`
+      （行 267/352/527/621/802）→ 流式 Windows 原生不可能
+    - 实测验证：`qwen_asr-0.0.6-py3-none-any.whl`（141 KB 纯 Python）在本机可下载 → Windows 可装
+    - 结论：**离线转写 Windows 原生可行（我们没接，是判死刑的损失）；流式需 WSL2/Docker**
+    - 同步记录他人实测的代价：显存槛 ~5.5/6.5 GB、`SEGMENT_LENGTH=240`、`MAX_INFERENCE_BATCH_SIZE=1`、
+      首 token 慢（torch 分配池未预热）
+  - **新增 `docs/INDEX-TTS-INTEGRATION.md`**：IndexTTS-2.5 一手资料（0.8B / 5 语种 / BF16 /
+    官方 RTF 0.2065@4090 / `uv` 必需 / CUDA ≥12.8 / bilibili 许可）+ 与现有三套模型的对比 +
+    部署形态（9883 独立端口、网关无 supervisor、opt-in）+ **资源管控设计**（复用 ResourceBudget
+    成本表、arbiter 增加 `indextts` 引擎项、nvidia-smi 口径、体检脚本）+ 8 阶段计划 + 风险登记
+  - HANDOFF：决策表补「IndexTTS 定位为补充」；下一步清单把原来「装不装 WSL2 跑 R2T2」
+    改成「先接离线（Windows 原生可行），流式再议」
 
-- **未完成**
-  - 准入门槛 3072 偏低（实测常驻 5.3 GB）：是否上调到 ≈5120 **待用户拍板**——调高会挡住正常桌面状态下的开机，调低靠实测兜底。账本注释已标。
-  - 主力对比（网易 vs IndexTTS）需用户亲自听感 + 用时判断；本轮只交付了客观数据（见 26a）。
-  - 合成页的英文/日文语种、情感参考音频分支只过了 API，未逐一 UI 点；音色库取参考音频分支复用了网易页同一套代码路径（阶段 23 已实测过）。
+- **未完成**：代码一律未动（用户此前要求「停下所有任务」，本轮只做文档）
 
-- **改动文件**
-  - Python：`indextts/app/indextts_engine.py`、`indextts/app/api.py`
-  - 网关：`server/src/routes/indextts.ts`（新）、`server/src/{index.ts,config/index.ts,routes/index.ts,routes/resources.ts,services/arbiter.ts,services/preload.ts}`
-  - 前端：`app/src/pages/IndexttsTtsPage.tsx`（新）、`app/src/lib/{indextts.ts（新）,resources.ts,arbiter.ts,preload.ts}`、`app/src/types/{indextts.ts（新）,index.ts,sovits.ts}`、`app/src/{App.tsx,components/layout/AppShell.tsx,components/features/ResourceBudget.tsx}`
+- **改动文件**：`netease/README.md`、`docs/INDEX-TTS-INTEGRATION.md`（新）、`HANDOFF.md`、`PROGRESS.md`
 
-- **测试结果**：`npm run typecheck`（app+server）✓；`eslint` 全部改动文件 ✓；`npm run build` ✓；
-  经网关 multipart 合成 200（`/api/indextts/v1/synth`）✓；`/api/health` 的 `indextts.reachable=true` ✓；
-  预加载弹窗正确显示 IndexTTS-2.5 账本项与「当前显存不够」判定 ✓；
-  浏览器走查：导航新组渲染、切页成功、情感 Select 三选项、8 维滑杆 + alpha、合成按钮在未选参考音频时正确禁用、控制台无新报错（只有原有的 sovits 503 探活噪音，服务默认停用属预期）。
+- **测试结果**：无代码改动，未跑构建；所有引用的行号均在本仓库实际核对过
 
 - **风险**
-  - RTF 对桌面显存占用极度敏感（2.2 → 14.4），8 GB 卡上「够不够跑」取决于当时有多少程序在抢显存；文档与 hint 文案都按实测口径写了。
-  - 上游 `infer()` 的情感向量与 emo_audio 同时给时行为由上游决定（我们只透传，不猜语义）。
-  - warmup 首跑的 4 分钟网络探测无法配置绕过（上游写死 ModelScope→hf-mirror 顺序），断网环境下可能更久或直接失败——已在 catalog/页面文案注明。
+  - IndexTTS 的 RTF 是从官方 4090 数据外推的，本机 4060 Laptop 需实测，方案里明确标注为估计值
+  - 许可为 bilibili 模型使用协议（非 Apache），商用前必须单独确认 —— 已在文档显著位置标注
+  - 若不采纳该方案，文档会成为噪音；建议保留在 `docs/`（与既有可行性评估同层），不进主流程
 
-- **下一阶段入口**：用户实测对比网易 vs IndexTTS 后拍板主力（回填 preload 账本与门槛值）；若继续，R2T2 离线转写（HANDOFF 坑 12：Windows 原生可行）是下一个高优先级项。
-- 本次文档更新时间：10.06 12:45
+- **下一阶段入口**：等用户拍板 IndexTTS（定位 / 磁盘 / 许可）；若拍板，从阶段 0（环境核实）开始
 
----
-
-## 阶段 25 — IndexTTS 本地服务骨架落地 [计划时间：10.5 22:10 BY CodeBuddy][完成时间：10.6 00:20 BY CodeBuddy]
+## 阶段 24 — 全站文件/文件夹拖拽导入 [完成时间：10.06 00:37 前 BY CodeBuddy·随提交 32319bd 补记]
 - 分支：feature/vc-svc
-- 已完成：
-  - 阶段 0/1/2 连续执行（同会话自动续作）：环境核实（CUDA Toolkit 12.8.93 / uv 0.11.16 / 磁盘 664 GB）
-    → `git clone --depth 1` 上游到 `indextts/upstream` → `uv sync`（清华镜像，torch 2.8.0+cu128，
-    Python 3.11.13 由 uv 自动选择；DeepSpeed/WebUI extras 未装，fastapi/uvicorn/python-multipart 后补）
-    → ModelScope 下载 IndexTTS-2.5 权重 **5.11 GB** 到 `indextts/upstream/checkpoints`（含 config.yaml）
-  - 服务骨架：`indextts/server.py` + `indextts/app/{config,hardware,errors,indextts_engine,api}.py`，
-    端点与网易同构（`/health` 永远 200、`/v1/pipeline|warmup|unload|synth`），
-    显存口径 nvidia-smi 优先（与坑 17 修法一致），准入门槛 3072 MB（估计值）
-  - 启动器 `scripts/indextts.mjs`（含 `--skip-if-missing`），`package.json` 加 `dev:indextts` / `indextts:check`
-- 未完成：
-  - **真实合成未实测**（模型未加载跑过一次 infer）；情感向量 / 拼音注音 / 语速倍率未接
-  - 网关透传 `/api/indextts/*`、前端页面、`ResourceBudget` 成本表加 `indextts`、arbiter 引擎项 —— 全部未做
-  - 三套服务（trainer / netease / indextts）的预加载账本只登记了前两套
-- 改动文件：新增 `indextts/{server.py,app/*.py}`、`scripts/indextts.mjs`；
-  改 `package.json`、`.gitignore`（忽略 upstream / .venv / checkpoints / .data）
-- 测试结果：上游 venv 导入验证（indextts/omegaconf/librosa/modelscope 全 ok）；
-  torch 2.8.0+cu128 CUDA=True；`--check` 体检通过（权重 config.yaml 在位）；
-  服务启动后 `/health` = `{ok:true, cuda:true, vram.free=2963, source:nvidia-smi, engine.loaded:false}`
-- 风险：`infer()` 的实际调用签名按官方 README 写，未跑过 —— 首次真实合成可能要对参数；
-  `use_cuda_kernel` 默认关（Windows 编译环境不确定）；RTF 0.2065 是 4090 数据，本机需实测
-- 下一阶段入口：真实合成实测（`/v1/warmup` + `/v1/synth`，用上游 examples 音频）；
-  之后接网关透传与前端
-- 本次文档更新时间：10.6 00:35
 
----
+- **起因**：用户要求「所有需要文件/文件夹导入的都要支持拖动导入」。
+  盘点后全站 13 处 `<input type=file>`，只有 MiMo 声音克隆的 `SamplePicker` 支持拖文件，
+  且**没有一处能接住文件夹**（语料目录这种最自然的动作只能点开面板多选）。
+
+- **已完成**
+  - **共用底座 `app/src/hooks/useFileDrop.ts`**
+    - 返回 `{ dragging, rootProps }`，`rootProps` 直接展开到任意容器（div / label / CardContent）
+    - **文件夹递归**：走 `webkitGetAsEntry` + `createReader().readEntries` 分批读到底
+      （`dataTransfer.files` 对目录只给一个 0 字节壳）；老浏览器没有 entry API 时退回 `files`
+    - **按 `accept` 过滤**：拖进来不符类型的文件直接忽略，不会污染表单
+    - **回填 `input.files`**（导出 `applyFilesToInput`）：原生控件靠它显示文件名，
+      不回填就一直写着「未选择任何文件」，看着像没成功
+    - `dragleave` 用深度计数器（`depth`）而不是直接置 false —— 否则拖过子元素时高亮会闪
+    - 回调引用走 `useEffect` 保最新（React 19 禁止渲染期写 ref，eslint `react-hooks/refs` 会拦）
+  - **13 处全部接入**（拖拽高亮 + 「可拖文件/文件夹进来」文案提示）：
+    `SamplePicker`（升级为支持文件夹）、`NeteaseTtsPage` 参考音频、`NeteaseAsrPage` 音频、
+    `AsrPage` 单条转写 + 数据集批量上传、`BatchPage` txt/csv 清单（整块文本区可接）、
+    `TrainingPage` **语料目录（整个文件夹拖进来 → 递归取音频 → 自动填 `source_audio_dir`）**、
+    `VoiceLibraryPage` 新建 + 替换参考音频、`VoiceConversionPage` 源音频 + 音色模型库
+    （`.pth` 主体 / `.index` 可先拖后补，给了对应提示）、`SingingConversionPage` 歌曲 + 只做分离
+  - **`AppShell` 全局兜底**：落在上传区之外的误拖不再把 SPA 导航走
+    （浏览器默认会打开拖入的文件，当前表单状态全丢）；上传区自己 preventDefault 过就跳过
+  - **顺带补的静默失败**：RVC `upload()` 只有 try/finally 没有 catch，导入失败时界面毫无反应
+    （按钮路径同样受影响，拖拽会让误操作更常见）→ 补 `toast.error` 带 `hint`
+  - **顺带修的泄漏**：`NeteaseAsrPage` 试听用 `URL.createObjectURL(file)` 写在 JSX 里，
+    每次渲染泄漏一个 Blob 地址 → 改 `useMemo` + 换文件/卸载时 revoke（与阶段 23 同一条坑 18）
+
+- **未完成**
+  - **文件夹拖拽没做真机验证**：Playwright/合成事件造不出 `FileSystemDirectoryEntry`，
+    只能验到「多文件拖入 + accept 过滤 + 回填 + 上传成功」这一层。递归分支需要用户
+    从资源管理器真实拖一次
+  - 拖进来的目录若混有非音频文件是**静默跳过**（与训练页官方口径一致），没有给「跳过了 N 个」的汇总
+
+- **改动文件**：新增 `app/src/hooks/useFileDrop.ts`；
+  改 `app/src/components/layout/AppShell.tsx`、`app/src/components/features/SamplePicker.tsx`、
+  `app/src/pages/{NeteaseTtsPage,NeteaseAsrPage,AsrPage,BatchPage,TrainingPage,VoiceLibraryPage,VoiceConversionPage,SingingConversionPage}.tsx`
+
+- **测试结果**：`npm run typecheck` / 改动文件 eslint / `npm run build` 全通过；
+  浏览器合成 DragEvent 逐项实测：网易合成页（高亮 + 文件名 + `input.files=1` + 开始合成解禁）、
+  网易转写页（同上 + 试听条出现）、训练页语料（3 个文件拖入 → 2 个音频被收、`notes.txt` 按 accept 过滤掉，
+  **`POST /v1/train/upload` 返回 200 且目录字段自动填入** `trainer/.data/uploads/74c67028fe`）、
+  批量页（拖入 3 行 .txt → 文本框出现 3 条 · 23 字）、音色库导入（文件名显示 + 回填）、
+  变声/翻唱（文件进 input 且试听条出现）、RVC 音色模型库（只拖 `.index` → 给「再拖入同名 .pth 就会一起导入」提示；
+  拖 `.pth` → 走完整上传链路）
+
+- **风险**
+  - 真实 OS 拖拽（尤其文件夹）与合成事件不完全等价，递归分支未真机验证
+  - `applyFilesToInput` 依赖 `new DataTransfer()`（Chromium / Firefox / Safari 14+ 可用）；
+    失败时只影响原生控件的文件名显示，功能本身已生效（已 try/catch）
+  - 上传区大小按各页容器而定，训练页那条是「输入框 + 按钮」那一行，落点需要看提示文案
+  - 测试过程中产生过两处残留（`trainer/.data/uploads/74c67028fe`、`.data/vc/models/fake-weight.*`），
+    已按规矩送进**回收站**（未硬删除），模型目录复核后只剩原有 3 个 .pth
+
+- **下一阶段入口**：请用户从资源管理器真拖一个语料文件夹进训练页，确认递归取文件；
+  若要更贴心，可在拖目录后汇总「收了 N 个、跳过 M 个非音频」
 
 ## 阶段 24 — 启动预加载选择（双轨策略 + 显存与模型挂钩）[计划时间：10.5 22:10 BY CodeBuddy][完成时间：10.6 00:10 BY CodeBuddy]
 - 分支：feature/vc-svc
@@ -865,445 +1068,213 @@
 
 - **下一阶段入口**：用实际合成对比两套模型（决定主力）；IndexTTS 接入后往账本加一项
 
----
+## 阶段 25 — IndexTTS 本地服务骨架落地 [计划时间：10.5 22:10 BY CodeBuddy][完成时间：10.6 00:20 BY CodeBuddy]
+- 分支：feature/vc-svc
+- 已完成：
+  - 阶段 0/1/2 连续执行（同会话自动续作）：环境核实（CUDA Toolkit 12.8.93 / uv 0.11.16 / 磁盘 664 GB）
+    → `git clone --depth 1` 上游到 `indextts/upstream` → `uv sync`（清华镜像，torch 2.8.0+cu128，
+    Python 3.11.13 由 uv 自动选择；DeepSpeed/WebUI extras 未装，fastapi/uvicorn/python-multipart 后补）
+    → ModelScope 下载 IndexTTS-2.5 权重 **5.11 GB** 到 `indextts/upstream/checkpoints`（含 config.yaml）
+  - 服务骨架：`indextts/server.py` + `indextts/app/{config,hardware,errors,indextts_engine,api}.py`，
+    端点与网易同构（`/health` 永远 200、`/v1/pipeline|warmup|unload|synth`），
+    显存口径 nvidia-smi 优先（与坑 17 修法一致），准入门槛 3072 MB（估计值）
+  - 启动器 `scripts/indextts.mjs`（含 `--skip-if-missing`），`package.json` 加 `dev:indextts` / `indextts:check`
+- 未完成：
+  - **真实合成未实测**（模型未加载跑过一次 infer）；情感向量 / 拼音注音 / 语速倍率未接
+  - 网关透传 `/api/indextts/*`、前端页面、`ResourceBudget` 成本表加 `indextts`、arbiter 引擎项 —— 全部未做
+  - 三套服务（trainer / netease / indextts）的预加载账本只登记了前两套
+- 改动文件：新增 `indextts/{server.py,app/*.py}`、`scripts/indextts.mjs`；
+  改 `package.json`、`.gitignore`（忽略 upstream / .venv / checkpoints / .data）
+- 测试结果：上游 venv 导入验证（indextts/omegaconf/librosa/modelscope 全 ok）；
+  torch 2.8.0+cu128 CUDA=True；`--check` 体检通过（权重 config.yaml 在位）；
+  服务启动后 `/health` = `{ok:true, cuda:true, vram.free=2963, source:nvidia-smi, engine.loaded:false}`
+- 风险：`infer()` 的实际调用签名按官方 README 写，未跑过 —— 首次真实合成可能要对参数；
+  `use_cuda_kernel` 默认关（Windows 编译环境不确定）；RTF 0.2065 是 4090 数据，本机需实测
+- 下一阶段入口：真实合成实测（`/v1/warmup` + `/v1/synth`，用上游 examples 音频）；
+  之后接网关透传与前端
+- 本次文档更新时间：10.6 00:35
 
-## 阶段 23 — 文档修正：R2T2 可用性分层 + IndexTTS 接入方案
+## 阶段 26 — IndexTTS 全链路接入：真实合成实测 + 网关透传 + 前端页面 + 资源管控 [计划时间：10.06 11:00 BY Qoder][完成时间：10.06 12:20 BY Qoder]
+- 分支：feature/vc-svc
 
-- **起因**：用户转述了别人在同一模型上的排查结论，指出我此前「Windows 装不了 vLLM → R2T2 整体不可用」
-  下得过重；并要求**更新文档**，然后给出 **IndexTTS**（https://github.com/index-tts/index-tts）
-  的本地化接入方案，且同样要有显存 / 内存 / 检测等性能管控。
-
-- **已完成（纯文档，代码未动）**
-  - **修正坑 12（R2T2 分层结论）**，证据全部取自本地仓库：
-    - `Confucius4-R2T2/pyproject.toml:67-69` 默认 `dependencies=["qwen-asr[vllm]", ...]` → 官方两条路
-      （`INFER_MODE` 仅 `stream_vllm/onetime_vllm`；Docker 用 `qwenllm/qwen3-asr`）确实是 Linux 路线，
-      但 **extra 可拆**
-    - `pyproject.toml:104-106` + `r2t2/r2t2_asr.py:23/189`：`qwen_asr` 是 PyPI 包，
-      `R2T2ASRModel(Qwen3ASRModel)` 是继承 → transformers 后端天然可用
-    - **流式被写死**：`r2t2_asr.py` 有 5 处 `if self.backend != "vllm": raise ValueError(...)`
-      （行 267/352/527/621/802）→ 流式 Windows 原生不可能
-    - 实测验证：`qwen_asr-0.0.6-py3-none-any.whl`（141 KB 纯 Python）在本机可下载 → Windows 可装
-    - 结论：**离线转写 Windows 原生可行（我们没接，是判死刑的损失）；流式需 WSL2/Docker**
-    - 同步记录他人实测的代价：显存槛 ~5.5/6.5 GB、`SEGMENT_LENGTH=240`、`MAX_INFERENCE_BATCH_SIZE=1`、
-      首 token 慢（torch 分配池未预热）
-  - **新增 `docs/INDEX-TTS-INTEGRATION.md`**：IndexTTS-2.5 一手资料（0.8B / 5 语种 / BF16 /
-    官方 RTF 0.2065@4090 / `uv` 必需 / CUDA ≥12.8 / bilibili 许可）+ 与现有三套模型的对比 +
-    部署形态（9883 独立端口、网关无 supervisor、opt-in）+ **资源管控设计**（复用 ResourceBudget
-    成本表、arbiter 增加 `indextts` 引擎项、nvidia-smi 口径、体检脚本）+ 8 阶段计划 + 风险登记
-  - HANDOFF：决策表补「IndexTTS 定位为补充」；下一步清单把原来「装不装 WSL2 跑 R2T2」
-    改成「先接离线（Windows 原生可行），流式再议」
-
-- **未完成**：代码一律未动（用户此前要求「停下所有任务」，本轮只做文档）
-
-- **改动文件**：`netease/README.md`、`docs/INDEX-TTS-INTEGRATION.md`（新）、`HANDOFF.md`、`PROGRESS.md`
-
-- **测试结果**：无代码改动，未跑构建；所有引用的行号均在本仓库实际核对过
-
-- **风险**
-  - IndexTTS 的 RTF 是从官方 4090 数据外推的，本机 4060 Laptop 需实测，方案里明确标注为估计值
-  - 许可为 bilibili 模型使用协议（非 Apache），商用前必须单独确认 —— 已在文档显著位置标注
-  - 若不采纳该方案，文档会成为噪音；建议保留在 `docs/`（与既有可行性评估同层），不进主流程
-
-- **下一阶段入口**：等用户拍板 IndexTTS（定位 / 磁盘 / 许可）；若拍板，从阶段 0（环境核实）开始
-
----
-
-## 阶段 22 — 网易合成速度 / 质量档位（**半成品，UI 选择器未做**）
-
-- **起因**：用户问「官方 demo 为什么快」→ 排查结论（vLLM + 数据中心显卡 + 官方默认
-  `num_beams=3`）之后，用户要求把速度 / 质量做成可调参数。
-
-- **已完成（后端与 API 层，功能可用）**
-  - `netease/app/routers/confucius.py`：新增三档预设
-    `fast (1,10)` / `balanced (1,18)` / `quality (3,25)`（官方默认为 `(3,25)`），
-    `POST /v1/confucius/tts` 接收 `quality` 表单字段，高级用法可直接传
-    `num_beams` / `n_timesteps` 裸参数（优先于档位）
-  - `tts_engine.generate()` 接受可选 `num_beams` / `n_timesteps` 并透传上游
-    （只传显式给出的，其余走官方默认）
-  - `/v1/netease/catalog` 的 `tts` 块暴露 `quality_presets`（含给界面看的说明文案）
-    与 `default_quality`（= balanced）
-  - 前端：类型、`neteaseApi.synthesize` 请求字段、页面状态与请求都已接好，
-    初始值取服务端 `default_quality`
-  - **分析结论（供后续参考）**：官方 demo 快的原因 = 数据中心显卡（带宽 8~13 倍）
-    + vLLM（PagedAttention 等，2~5 倍）+ 他们可承担 beams=3；与 Gradio 无关（那只是 UI 壳）
-
-- **未完成（本次被叫停）**
-  - **界面上没有档位选择器** —— 页面会一直用服务端默认的 `balanced`，
-    功能等价于「默认变快了」，但用户**暂时无法在界面上切档**。
-    补做点：`NeteaseTtsPage` 的「合成内容」卡里加一个 Select，
-    选项来自 `catalog.tts.quality_presets`（note 字段做说明），选中值进 `quality` state
-  - 未实测各档位的实际加速比与音质差异
-
-- **改动文件**：`netease/app/{tts_engine.py,routers/confucius.py,routers/netease.py}`、
-  `app/src/{lib/netease.ts,types/netease.ts,pages/NeteaseTtsPage.tsx}`
-
-- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过
-  （当前状态自洽：API 可用，UI 缺选择器但不报错）
-
-- **风险**：默认档从官方 `quality (3,25)` 改成了 `balanced (1,18)` ——
-  合成会明显变快，但音质稳定性可能有细微差别；要回到官方默认，
-  在界面（补做后）选「质量优先」或请求里传 `quality=quality`
-
-- **下一阶段入口**：补 UI 档位选择器（约 10 行）；实测三档的 RTF 与听感
-
----
-
-## 阶段 21 — 冷启动进度反馈 + trainer 侧显存口径同步改为 nvidia-smi
-
-- **起因**：① 上一阶段遗留「直接开启」只有转圈，首次要数十秒会被当成卡死；
-  ② 用户拍板：trainer 侧显存口径也改（坑 17 的第二半）。
+- **起因**：接续阶段 25（骨架已跑通 /health 但真实合成未实测）。按看板既定任务做阶段 26。
 
 - **已完成**
-  - **冷启动进度反馈**
-    - `SovitsServiceNotice`：启动中显示「启动中，约需数十秒（首次要 import torch）· 已等待 N 秒」
-      + 进度条（按实测 45 秒量级推进，只到 95%，不做假精确）+ 每秒走表；
-      同时每 3 秒探真实状态，探到就绪提前收尾，不等 `toggle()` 返回
-    - 设置页开关同样补秒表与进度条（只在**开启**时显示，关闭不用等）
-  - **trainer 显存口径（坑 17 收尾）**
-    - `trainer/app/runtime.py`：新增 `_nvidia_smi_free_mb()`（跨进程真实值）
-      与 3 秒 TTL 缓存（避免 `/health` 轮询频繁起外部进程）；
-      `free_vram_mb()` 改为 nvidia-smi 优先 → 退回 torch
-    - `RuntimeInfo` 新增 `vram_free_mb_torch` 对照字段并进入序列化
-      （两者之差 = 别的进程占了多少）
-    - `/health` 的 `runtime.vram_free_mb` 随之变准
-    - 修正 `trainer/app/queue.py` 里「直接问 torch 最准」的过时注释
-
-- **未完成**：门槛数值（训练 6144 / UVR5 4096 等）仍按旧口径定，未重新校准
-
-- **改动文件**：`trainer/app/{runtime.py,queue.py}`、
-  `app/src/components/features/SovitsServiceNotice.tsx`、`app/src/pages/SettingsPage.tsx`、
-  `HANDOFF.md`、`PROGRESS.md`
-
-- **测试结果**
-  - 冷启动实测 **43.9 秒**（与进度条 45 秒设定吻合）
-  - 口径实测：`/v1/engines` 的 `free_vram_mb` = **2550 MB**，nvidia-smi = **2544 MB**（一致）；
-    `/health` 显示 `vram_free_mb=2550`、`vram_free_mb_torch=7099` → 差 4549 MB 即外部占用
-    （改前 trainer 一律报 7099）
-  - 用整合包 py3.9 解释器导入验证通过（`python.exe -c "from app.runtime import free_vram_mb"`）
-
-- **风险**
-  - 判定变严格：可能出现「看着没跑别的却被拦」—— 这正是修掉的目标（宁可多等也不半途 OOM），
-    但若发现门槛过严需重新校准数值
-  - nvidia-smi 不在 PATH 的机器上会退回 torch，修复不生效（但不会更差）
-  - `/health` 每次最多多一次（有 3 秒缓存）外部进程调用
-
-- **下一阶段入口**：观察新口径下是否有任务被误拦；若有，按真实口径重新校准各引擎门槛
-
----
-
-## 阶段 20 — 依赖 GPT-SoVITS 的页面补「服务已停用」直达提示
-
-- **起因**：阶段 17 把 GPT-SoVITS 改成默认停用后，训练 / 批量 / 变声 / 翻唱 / 音色库
-  这五个页面会直接失败，而通用报错只说「本地服务不可用」——
-  用户既不知道有这个开关，也不知道该去哪开。
-
-- **已完成**
-  - **新增 `components/features/SovitsServiceNotice.tsx`**
-    - 只在「已停用且未运行」时渲染（读不到状态或已启用→不显示，**宁可漏提示也不误报**）
-    - 两个动作：**「直接开启」**（`localServiceApi.toggle(true)`，不用离开本页）+
-      **「去设置页」**（可选 `onGoSettings` 回调，App 传入 `setActive('settings')`）
-    - 文案说明为什么默认关闭（显存留给网易主服务）与首次开启要等 torch 导入
-  - **接入五个依赖页**：训练 / 批量 / 语音变声 / 歌声转换 / 音色库，
-    App 统一传 `goSettings`
-
-- **未完成**：`直接开启` 的等待过程没有进度反馈（只有按钮转圈），
-  首次要 import torch 数十秒，用户可能以为卡住 —— 后续可加「启动中，约需数十秒」的进度条
-
-- **改动文件**：新增 `app/src/components/features/SovitsServiceNotice.tsx`；
-  改 `app/src/App.tsx`、`app/src/pages/{TrainingPage,BatchPage,VoiceConversionPage,SingingConversionPage,VoiceLibraryPage}.tsx`
-
-- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
-  `/api/sovits/service` 当前返回 `{enabled:false, reachable:false}` → 提示条件成立，五页会显示
-
-- **风险**：提示依赖 `/api/sovits/service` 的实时探活；网关不可达时组件拿不到状态而**不显示**
-  （fail-safe：此时页面本来也用不了）
-
-- **下一阶段入口**：给「直接开启」加启动进度反馈；确认五页提示的位置与文案是否碍眼
-
----
-
-## 阶段 19 — 资源站入口 + 仲裁持有期与任务时长挂钩
-
-- **起因**：用户要求内嵌 https://res.acgnai.top/ 的跳转链接（该站提供角色语音数据集与
-  TTS / SVC 开源模型，站点名「AI Hobbyist 资源库」）；同时继续阶段 18 的下一步
-  （训练页仲裁持有期与任务时长挂钩）。
-
-- **已完成**
-  - **新增 `components/features/ResourceSiteLink.tsx`**：统一的资源站入口
-    （新窗口打开 + `rel="noopener noreferrer"` 防反向 tabnabbing），
-    放在三处「缺素材 / 缺模型」的地方：
-    - 训练页：缺训练数据集
-    - 语音变声页：缺 .pth 音色模型
-    - 歌声转换页：缺歌声转换模型 / 伴奏素材
-  - **仲裁持有期与任务时长挂钩**（阶段 18 遗留）：
-    - 训练：`focusBeforeRun('training', 6 * 3600)`（训练动辄数小时，默认 10 分钟根本不够）
-    - 批量：`focusBeforeRun('sovits', 3600)`（几十条可能跑很久）
-    - 其余短任务维持默认 600 秒
-  - `focusBeforeRun` 增加 `holdSeconds` 参数，注释写明「长任务必须给大值」的原因
-
-- **未完成**：无（链接是静态的；若站点改版无需同步）
-
-- **改动文件**：新增 `app/src/components/features/ResourceSiteLink.tsx`；
-  改 `app/src/lib/arbiter.ts`、`app/src/pages/{TrainingPage,VoiceConversionPage,SingingConversionPage,BatchPage}.tsx`
-
-- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
-  站点内容已抓取确认（「AI Hobbyist 资源库」：数据集 / TTS / SVS / SVC / GSV 部署工具），
-  链接文案与站点定位一致
-
-- **风险**：外部站点可用性不受本系统控制；链接全部新窗口打开，不劫持当前页
-
-- **下一阶段入口**：训练页仲裁持有期目前是固定 6 小时，更准确的做法是按语料时长估算；
-  仲裁结果可在页面上做轻提示（当前只进 toast）
-
----
-
-## 阶段 18 — 资源仲裁：单模型独占，自动停掉本系统内竞争模型
-
-- **起因**：用户要求「一个模型运行时，自动停止系统内与之竞争资源的其它模型并释放显存；
-  严格限制在本系统内，绝不触及系统外的进程」。
-  这正是 HANDOFF 里挂了很久的「跨运行时显存仲裁」项（阶段 7 未完成清单第一条）。
-
-- **边界定义（先于实现）**
-  - **本系统** = 本项目自己拉起的两个 Python 服务：GPT-SoVITS（:9881）与网易（:9882），
-    网关（:8787）是 Node 进程不占 GPU；
-  - 仲裁器**只向这两个地址发请求**，且发请求前校验目标是回环地址
-    （`SOVITS_URL` 若被配成非回环，会在启动阶段直接拒绝）；
-  - 不扫描进程、不 kill 任何 PID、不触碰电脑上其它任何程序 ——
-    浏览器 / 模拟器 / 游戏占的显存由资源预估卡提示用户自己处理。
-
-- **已完成**
-  - **`server/src/services/arbiter.ts`（新）**
-    - `focus(engine)`：把资源集中给单一引擎 —— 卸载**另一端**服务上的全部模型
-      （sovits 端：`/v1/engines/unload` + `/v1/pipeline/unload`；
-      netease 端：`/v1/confucius/unload` + `/v1/r2t2/unload`），
-      并在 netease 内部保证 TTS / ASR 二选一；
-    - **心跳复检**：focus 持有期内（默认 10 分钟，可传 `holdSeconds`）每 15 秒
-      重新卸载另一端，防止它被别的请求重新拉起；定时器 `unref` 不阻塞退出；
-    - `releaseAll()`：全停，本系统内不留任何常驻模型；
-    - 卸载失败不抛出（分类：服务没起=正常跳过；真失败=记入 `failed` 返回给界面）
-  - **`server/src/routes/resources.ts`（新）**：`POST /api/resources/focus`、
-    `POST /api/resources/release`、`GET /api/resources/focus`
-  - **前端 `lib/arbiter.ts`（新）**：`focusBeforeRun(engine)` —— **仲裁失败不阻断任务**
-    （它是优化，真正的准入由各服务自己的显存检查负责）
-  - **接入开跑点**（7 处）：网易预热、训练、批量、变声、翻唱、分离、ASR 转写
-  - **资源预估卡**：显存不足时新增「只跑这一个模型」按钮（= `focus(task)`）
+  - **26a 真实合成实测**（跑通 6 条：中文 ×5、情感向量 ×1、经网关 multipart ×1）：
+    - 输出 22050 Hz WAV，RMS 0.02~0.03 / 峰值 0.18~0.34，音频有效；
+    - **稳态 RTF 2.2**（暖态 6.9s 音频 / 15.5s），冷启动首条 6.0；显存被桌面挤压时恶化到 5.4~14.4（波动大）；
+    - **实测模型常驻约 5.3 GB**（加载前 free 5548 → 加载后 281），远超阶段 25 估计的 2~3 GB；
+    - warmup 首跑约 4 分钟，**大头是上游对辅助模型（bigvgan/campplus）的 ModelScope/hf-mirror 网络探测超时**，权重其实全在本地 —— 真·加载仅约 10 秒。
+  - **修掉 3 个骨架必挂 bug**（都在 `indextts/app/`）：
+    - `IndexTTS2(...)` 传了上游不存在的 `use_cuda=` 参数（上游是 `device`）→ 首次加载即 TypeError；
+    - `_guard_vram` 从模块导入 `REQUIRED_VRAM_MB`（实为类属性）→ 导入即 ImportError；
+    - 模型常驻后合成被自己的显存准入拦死（free=451 < 3072 报 VRAM_INSUFFICIENT）→ guard 改为**已加载即跳过**。
+  - **情感与语速接入**：`generate()` 与 `/v1/synth` 新增 `emo_vector`（8 维 JSON：喜/怒/哀/惧/厌恶/低落/惊喜/平静）、`emo_file`（情感参考音频）、`emo_alpha`、`duration_factor`（0.5~2.0，骨架已有）；新增 `GET /v1/catalog`（语种/滑杆范围/情感维度/准入门槛，服务端唯一事实源，与坑 19 同一哲学；文本描述控情感需额外 0.6B 模型，`emo_text_control:false` 如实报不接）。
+  - **网关透传**：`server/src/routes/indextts.ts`（与 netease 同构的 node:http + pipe 透明转发 + 5 秒缓存探活，无 supervisor）挂 `/api/indextts`（**在 express.json() 之前**，坑 20）；`/api/health` 汇总加 `indextts` 段；config 加 `indextts.baseUrl/proxyTimeoutMs`（`INDEXTTS_URL` 可覆盖，回环口径不变）。
+  - **资源管控三服务化**：arbiter（`ServiceName`/`RELEASE_ENDPOINTS`/`serviceOf`/`baseUrlOf`/focus/releaseAll/心跳的 others 全部从「二服务」扩到「三服务」，回环校验硬边界原样保留）；`/api/resources/focus` 的 ENGINES 加 `indextts-tts`；preload 账本 `MODELS` 加 `indextts-tts`（3072 准入口径 + 注释写明实测常驻 5.3 GB 与门槛待校准）；前端 `arbiter.ts`/`resources.ts`/`ResourceBudget`/`preload.ts` 类型与兜底同步。
+  - **前端**：`app/src/pages/IndexttsTtsPage.tsx`（引擎状态卡 + 预热/卸载、参考音频上传/音色库选取双 tab、语种、时长系数滑杆、情感三模式〔跟随/8 维向量/情感参考+alpha〕、useResultStack 结果栏、useFileDrop 拖拽、内联错误卡带 hint）；`app/src/lib/indextts.ts` 客户端 + `app/src/types/indextts.ts` 契约；导航注册四处（NavKey / AppShell 状态文案 + NAV_GROUPS 新组「IndexTTS · 情感可控」+ 状态卡 / App.tsx 探活轮询 + 条件渲染 / PAGE_META）。
+  - **用户走查后的两处 UI 修复（10.06 12:45 补）**：
+    - 侧栏状态区改**纯手动展开/折叠**（`AppShell.tsx`）：去掉「探活期间强制全列、就绪后自动收起」的自动切换，折叠=只剩标题行（含 N 项待处理计数），展开=全部卡片，只由用户点击控制；
+    - RVC / DDSP-SVC 页**目录拉取失败不再整页替换**（`VoiceConversionPage.tsx` / `SingingConversionPage.tsx`）：原 `if (loadError) return <报错卡>` 在冷启动场景表现为「先渲染完整页 → 几十秒后整个换成一张报错卡」；改为完整页常驻 + 页内 amber 横幅（标题「模型目录暂未取到」+ 重试按钮），浏览器实测两页均通过。
 
 - **未完成**
-  - 页面上的「自动打勾」没有延伸到仲裁（仲裁结果只在 toast 里体现）；
-  - 网易引擎内部互斥依赖它的 `engine_lock`（acquire 时抢占），仲裁器只是提前触发，未做深校验
+  - 准入门槛 3072 偏低（实测常驻 5.3 GB）：是否上调到 ≈5120 **待用户拍板**——调高会挡住正常桌面状态下的开机，调低靠实测兜底。账本注释已标。
+  - 主力对比（网易 vs IndexTTS）需用户亲自听感 + 用时判断；本轮只交付了客观数据（见 26a）。
+  - 合成页的英文/日文语种、情感参考音频分支只过了 API，未逐一 UI 点；音色库取参考音频分支复用了网易页同一套代码路径（阶段 23 已实测过）。
 
-- **改动文件**：新增 `server/src/services/arbiter.ts`、`server/src/routes/resources.ts`、
-  `app/src/lib/arbiter.ts`；改 `server/src/routes/index.ts`、
-  `app/src/components/features/ResourceBudget.tsx`、
-  `app/src/pages/{NeteaseTtsPage,TrainingPage,BatchPage,VoiceConversionPage,SingingConversionPage,AsrPage}.tsx`
+- **改动文件**
+  - Python：`indextts/app/indextts_engine.py`、`indextts/app/api.py`
+  - 网关：`server/src/routes/indextts.ts`（新）、`server/src/{index.ts,config/index.ts,routes/index.ts,routes/resources.ts,services/arbiter.ts,services/preload.ts}`
+  - 前端：`app/src/pages/IndexttsTtsPage.tsx`（新）、`app/src/lib/{indextts.ts（新）,resources.ts,arbiter.ts,preload.ts}`、`app/src/types/{indextts.ts（新）,index.ts,sovits.ts}`、`app/src/{App.tsx,components/layout/AppShell.tsx,components/features/ResourceBudget.tsx}`
 
-- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过。接口实测：
-  - 非法引擎 → 400 `BAD_ENGINE`；
-  - `focus netease-tts` → 卸载 netease 内部 r2t2，sovits 端未运行则跳过；
-  - `focus sovits` → 卸载 netease 端 confucius + r2t2（两处）；
-  - `release` → 全停后 `GET focus` 回 `{engine:null, remainSec:0}`；
-  - `GET /focus` 正确显示持有者与剩余秒数
-
-- **风险**
-  - 心跳复检是「轮询卸载」，极端情况下两次心跳之间另一端可能短暂加载 ——
-    但它会立刻被下一次心跳卸掉，不会与焦点引擎长期共存
-  - focus 的 TTL（默认 10 分钟）过期后仲裁失效，长任务（训练数小时）需要传更大的 `holdSeconds`
-    —— 目前训练页用的是默认值，**后续应把 TTL 与任务时长挂钩**
-  - 只防「本系统内」的竞争：用户机器上其它程序的显存占用不在管辖范围（这是需求边界，不是缺陷）
-
-- **下一阶段入口**：训练页把 `holdSeconds` 与预计训练时长挂钩；`focus` 结果在页面上做轻提示
-
----
-
-## 阶段 17 — GPT-SoVITS 改为默认停用 + 可一键关闭（释放显存）
-
-- **起因**：显存不足的报错写「先关闭 GPT-SoVITS 本地服务」，但界面里没有任何入口能关。
-  用户进一步指定策略：**以后默认关闭 GPT-SoVITS 释放显存，网易为主力**，
-  只有想用 GPT-SoVITS（训练 / 批量 / 变声 / 翻唱）时才去设置里手动开。
-
-- **已完成**
-  - **网关接管生命周期**：`config.sovits.autostart` 默认改为 `true`（旧值 false），
-    这样「按需拉起」才有执行者；`npm run dev` **不再拉起** sovits，另开 `npm run dev:all` 保留旧行为
-  - **持久开关**：`server/.data/sovits-service.json`（跨 `tsx watch` 重启保留，默认 false = 停用）
-  - **新端点** `GET/POST /api/sovits/service`：开启 → `ensureStarted()` 拉起；
-    关闭 → 先 `POST /v1/engines/unload` 卸常驻引擎，再 `taskkill /t /f` 杀进程树
-    - 挂在代理**之前**（否则被代理的通配规则吃掉），并且这条路由自己开 `express.json()`
-  - **如实区分两种关停**：我们拉起的 → 「已关闭，显存已归还」；
-    外部实例（`npm run dev:sovits` / `start.bat`）→ **杀不掉**，提示用户去关那个终端，
-    并说明只卸掉了引擎。不说「已关闭」骗人
-  - **前端**：`lib/localService.ts`（启停客户端）；设置页加启用开关（默认关，写清什么时候该开）；
-    资源预警卡在显存不足且 GPT-SoVITS 开着时，多给一个「关闭 GPT-SoVITS 服务」按钮
-  - **顺带修掉一个陈旧状态问题**：`/api/health` 的 `sovits.reachable` 只在探活时更新，
-    服务关掉后侧栏仍显示「已连接」。加了 30 秒周期探活；`/api/sovits/service` 的 GET 改为现探
-
-- **未完成**
-  - 依赖 GPT-SoVITS 的页面（训练 / 批量 / 变声 / 翻唱）在服务停用时，
-    目前是通用的 503 提示，没有「去设置开启」的直达按钮
-
-- **改动文件**：`server/src/{index.ts,config/index.ts,services/sovits.ts,routes/sovits.ts}`、
-  `app/src/lib/{localService.ts,resources.ts}`、`app/src/components/features/ResourceBudget.tsx`、
-  `app/src/pages/SettingsPage.tsx`、`app/src/types/index.ts`、`package.json`、`HANDOFF.md`
-
-- **测试结果**：`npm run typecheck` / eslint / `npm run build` 全通过；
-  实测（`npm run dev` 用新脚本重启后）：**默认 9881 不起** → POST 启用 → `reachable=true`（网关拉起）
-  → POST 关闭 → **9881 停**、空闲显存 1236 → 1458 MB，提示文案为「已关闭…显存已归还」
+- **测试结果**：`npm run typecheck`（app+server）✓；`eslint` 全部改动文件 ✓；`npm run build` ✓；
+  经网关 multipart 合成 200（`/api/indextts/v1/synth`）✓；`/api/health` 的 `indextts.reachable=true` ✓；
+  预加载弹窗正确显示 IndexTTS-2.5 账本项与「当前显存不够」判定 ✓；
+  浏览器走查：导航新组渲染、切页成功、情感 Select 三选项、8 维滑杆 + alpha、合成按钮在未选参考音频时正确禁用、控制台无新报错（只有原有的 sovits 503 探活噪音，服务默认停用属预期）。
 
 - **风险**
-  - 网关托管的副作用：`tsx watch` 改后端代码重启网关时会回收 GPT-SoVITS 子进程
-    （开关是开的会自动再拉起，但正在跑的训练任务会中断）
-  - 关停走的是 `taskkill /t /f`，若用户有未保存状态会直接丢 —— 训练任务请先在任务页取消
-  - 外部实例杀不掉这条路径，文案已说明，但界面上「已停用」与侧栏「已连接」可能同时出现（属实）
+  - RTF 对桌面显存占用极度敏感（2.2 → 14.4），8 GB 卡上「够不够跑」取决于当时有多少程序在抢显存；文档与 hint 文案都按实测口径写了。
+  - 上游 `infer()` 的情感向量与 emo_audio 同时给时行为由上游决定（我们只透传，不猜语义）。
+  - warmup 首跑的 4 分钟网络探测无法配置绕过（上游写死 ModelScope→hf-mirror 顺序），断网环境下可能更久或直接失败——已在 catalog/页面文案注明。
 
-- **下一阶段入口**：给训练 / 批量 / 变声 / 翻唱页加「服务已停用，去设置开启」的直达提示
+- **下一阶段入口**：用户实测对比网易 vs IndexTTS 后拍板主力（回填 preload 账本与门槛值）；若继续，R2T2 离线转写（HANDOFF 坑 12：Windows 原生可行）是下一个高优先级项。
+- 本次文档更新时间：10.06 12:45
 
----
+## 阶段 26补2 — 设置页整体重排（模型选择提级 + 服务平铺 + 去嵌套）[计划时间：10.06 13:00 BY Qoder][完成时间：10.06 13:20 BY Qoder]
+- 分支：feature/vc-svc
 
-## 阶段 16 — 操作指引系统重做（分步 + 圆形完成标识 + 跨页职责 + 复习）
-
-- **起因**：旧指引只有「一句目标 + tips」，看不出先后与落点；用户要求
-  ① 复用右侧弹窗 ② 写清每步怎么操作 ③ 复杂流程标注每页职责（上一页/本页/下一页）
-  ④ 分步引导 + 圆形状态标识（未完成/已完成）实时更新 ⑤ 支持「重新开始」复习。
+- **起因**：用户反馈设置页混乱——「语音模型与语言」还写着「默认使用小米 MiMo」（现状是网易/IndexTTS 本地模型）；
+  「启动时预加载模型」嵌在 GPT-SoVITS 服务卡里，层级错位；要求重排为「用户选哪个模型就直接加载哪个」。
 
 - **已完成**
-  - **`lib/guides.ts`（新）**：结构化指引数据。每步强制写 `how`（具体怎么点/填/判断）、
-    `page`（在哪做）、`prev`/`next`（上一页留下什么、下一页去哪）、可选 `autoKey`。
-    三份指引：`netease-first`（主服务首跑）、`gpt-sovits-training`（跨 4 页训练链）、
-    `first-run`（新手总览 5 步）
-  - **`hooks/useGuideProgress.ts`（新）**：进度按指引独立记账，localStorage 持久化，
-    模块级 listeners 保证跨页面同步；`markGuideEvent(key)` 供页面上报信号自动打勾；
-    `reset()` 用于复习
-  - **`components/features/FlowGuide.tsx` 重写**：沿用「贴边展开」交互（桌面悬浮 / 触屏点击），
-    内容换成 —— 顶部进度条 + `x/N` +「重新开始」；每步一个圆形标识
-    （未完成 = 空心虚线圈，已完成 = 实心圈 + 勾，与任务清单同一套视觉语言）；
-    步骤里写清「怎么操作」与「上一步 / 下一步」；非本页的步骤给「去这一页」按钮直接跳转；
-    底部可切换其它指引
-  - **挂载位置改到外壳层**：`AppShell` 渲染 `<FlowGuide page={active} onNavigate={onNavigate} />`，
-    因为跨页跳转只有外壳拿得到导航能力；移除 TrainingPage / SynthesisPage 里的两处重复引用
-  - **自动打勾接了真实信号**：网易页选好参考音频 → `netease:ref-ready`；
-    第一条合成成功 → `netease:first-synth`。观测不到的步骤仍可手动点圆圈切换
+  - **新①「模型与显存」**（页面第一张卡）：开机预加载从 GPT-SoVITS 卡里提出来独立成卡，
+    选项做成卡片网格（网易 6.0GB / IndexTTS 3.0GB / GPT-SoVITS 3.0GB / 每次问我 / 不预加载），
+    每张显示显存代价与「当前空闲不够」判定；顶部显示当前空闲显存与读数来源（nvidia-smi）。
+  - **新②「本地服务」**：三个 Python 运行时平铺一屏——网易(:9882) / IndexTTS(:9883) / GPT-SoVITS(:9881)
+    各一行，状态徽章 + 启停方式说明；GPT-SoVITS 行的开关（网关唯一托管的）与冷启动进度条保留。
+  - **新③「GPT-SoVITS · 推理与训练配置」**：服务地址 / 运行时信息 / blockers / 推理权重面板 /
+    默认版本 + 音色 + 语种 / 批量合成默认值，全部归到这一张卡（标题明确「只作用于 GPT-SoVITS 链路」）。
+  - **新④「云端合成 · MiMo 与接口密钥」**：原「语音模型与语言」的 Provider 选择（云端三页的后端，
+    不能删——SynthesisPage/VoiceClone/VoiceDesign 依赖 providerId）与 API 密钥卡合并，
+    删掉过时文案「默认使用小米 MiMo」，说明改为「侧栏 MiMo 云端组的后端与密钥，本地模型不经过这里」。
+  - ⑤合成偏好、⑥站点与模型信息保持；⑥的「已接入模型」从只列 MiMo MODE_META 改为五条链路清单。
+  - 类型：`HealthInfo` 补 `netease` / `indextts` 字段（网关早已返回，前端类型没声明）+ `GatewayServiceStatus`。
 
-- **未完成**
-  - 只有网易那条指引做了自动打勾，训练链 / 新手总览目前靠手动点
-  - 没有「首次访问自动弹出」的强引导（当前是贴边自取，不打断操作）
+- **未完成**：无（本阶段范围内）
 
-- **改动文件**：新增 `app/src/lib/guides.ts`、`app/src/hooks/useGuideProgress.ts`；
-  重写 `app/src/components/features/FlowGuide.tsx`；
-  改 `app/src/components/layout/AppShell.tsx`、`app/src/pages/{NeteaseTtsPage,TrainingPage,SynthesisPage}.tsx`
-  （旧 `lib/flowGuide.ts` 保留未删：术语/其它地方可能仍引用，待确认后再清理）
+- **改动文件**：`app/src/pages/SettingsPage.tsx`（重排）、`app/src/types/index.ts`
 
-- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过
+- **测试结果**：typecheck / eslint / build 全过；浏览器实测——第一卡显存判定正确（空闲 3.9GB：网易标
+  「当前空闲不够」，3.0GB 两项不标），三服务徽章正确（网易/IndexTTS 运行中、GPT-SoVITS 未连接），
+  六张卡齐全、旧文案「默认使用小米 MiMo」「语音模型与语言」无残留，控制台无新报错。
 
-- **风险**
-  - 指引内容是我按项目现状写的，参数名或按钮文案若后续改动会过期 —— 数据集中在
-    `lib/guides.ts`，改起来是一处
-  - 自动打勾依赖 `autoKey` 与页面上报点对齐，重构页面时容易漏改（已注释标出上报位置）
-  - 右侧贴边条与「资源预估卡」可能在同一水平位置重叠（贴边条 z-40 且固定，内容区右侧有留白）
+- **风险**：Provider 选择卡挪进云端卡后，`providerId='gpt-sovits'` 的老选项仍在（云端三页兼容），
+  未做删除——若后续确认无人用可清理。
 
-- **下一阶段入口**：人工走一遍三份指引，看步骤描述与实际界面是否对得上；
-  决定是否给训练链接自动打勾；确认旧 `flowGuide.ts` 可否整体删除
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.06 13:20
 
----
+## 阶段 26补3 — 三服务连接开关 + 设置页去嵌套 [计划时间：10.06 13:40 BY Qoder][完成时间：10.06 14:05 BY Qoder]
+- 分支：feature/vc-svc
 
-## 阶段 15 — 三个外接板块的入口与来源标注
-
-- **起因**：变声 / 翻唱 / 转写三个入口挤在「AI 变声 / 语音与文本」两组里，
-  用户分不清点进去用的是什么模型，也不知道这些能力来自哪个项目。
+- **起因**：用户三点反馈——① 本地服务三行都该有开关（两个服务同时在跑会各占显存，影响单独跑模型）；
+  ② 「GPT-SoVITS · 推理与训练配置」不该独立成卡，应并入 GPT-SoVITS 服务行内展开；
+  ③ 云端卡里又嵌了一套 GPT-SoVITS 配置，且 API Key 应只在选中 MiMo 时才出现。
 
 - **已完成**
-  - **导航拆成三个模块**（组名直接写模型名，不再依赖 hover 提示）：
-    - `RVC 变声` → 语音变声
-    - `DDSP-SVC 歌声` → 歌声翻唱
-    - `ASR 语音转文本` → 转写与数据集
-    - 顺带把网易组名改成「网易 Confucius4 · 主服务」，模型族也进可见区域
-  - **新增 `components/features/SourceNote.tsx`**：统一的「能力来源」条，
-    写清上游项目名、本地位置、本项目做了什么
-  - **三个页面各加一条**
-    - 语音变声：RVC（Retrieval-based Voice Conversion），`vendor/rvc`
-    - 歌声转换：DDSP-SVC（歌声转换）+ UVR5（音源分离），`vendor/ddsp-svc · 整合包 tools/uvr5`
-    - 语音转文本：FunASR / faster-whisper（常驻）+ 整合包官方 ASR 脚本（脚本通道），
-      `整合包 tools/asr`
+  - **网关新增运行时服务托管**（`server/src/services/runtime.ts`）：通用 `RuntimeSupervisor`，
+    网易(:9882) 与 IndexTTS(:9883) 各一实例。行为契约与 SovitsSupervisor 一致：
+    探活可达就复用外部实例（不重复占端口）；enabled 落盘 `server/.data/<id>-service.json`
+    （网易默认开=主服务随 dev，IndexTTS 默认关）；关闭 = **先卸常驻模型归还显存 → 再杀自己拉起的进程树**；
+    外部终端起的实例杀不掉，但模型照卸，hint 如实说明「请在对应终端 Ctrl+C」。
+    网关启动时按 enabled 后台拉起；SIGINT/exit 钩子收掉自己托管的子进程（tsx watch 重启不留孤儿）。
+  - **启停接口**：`GET/POST /api/netease/service`、`/api/indextts/service`（`routes/runtimeService.ts` 工厂，
+    挂在各自透明代理**之前**，与 sovitsServiceRouter 同规矩）；`/api/health` 的 netease/indextts 段补 `enabled`。
+  - **设置页卡片②**：三行服务全部带 Switch + 状态徽章（运行中/启动中/未启动）+ 错误行；
+    卡描述明确两层占用：「服务进程 ≈ 几百 MB torch 上下文；模型常驻数 GB，要预热/预加载才发生」。
+  - **GPT-SoVITS 高级配置行内展开**：原独立卡整块并入服务行下方（「高级配置」按钮 + ChevronDown），
+    默认收起；服务地址/运行时信息/weights/默认值/批量都在展开区里。
+  - **云端卡条件渲染**：选 MiMo 才出现公用密钥 Alert + API Key + 接口地址；
+    选 GPT-SoVITS 显示指引卡（「不需要密钥，配置统一在本地服务 → 高级配置」，消除双份配置的嵌套）；
+    选自托管显示其 fields/presets。
+  - 前端 `localService.ts` 加 `runtimeServiceApi`（state/toggle），30 秒轮询复查状态（服务可能被外部起停）。
 
-- **未完成**：无（本次是纯标注改动）
+- **未完成**：无（本阶段范围内）
 
-- **改动文件**：新增 `app/src/components/features/SourceNote.tsx`；
-  改 `app/src/components/layout/AppShell.tsx`、`app/src/pages/{VoiceConversionPage,SingingConversionPage,AsrPage}.tsx`
+- **改动文件**：新增 `server/src/services/runtime.ts`、`server/src/routes/runtimeService.ts`；
+  改 `server/src/index.ts`、`server/src/routes/{netease,indextts}.ts`、
+  `app/src/lib/localService.ts`、`app/src/pages/SettingsPage.tsx`、`app/src/types/index.ts`
 
-- **测试结果**：`npm run typecheck` / eslint / `npm run build` 全通过
+- **测试结果**：typecheck（app+server）/ eslint / build 全过；接口实测——
+  `GET /api/netease/service` = reachable+enabled+managed=false（复用 dev 起的实例）✓；
+  `POST /api/indextts/service {enabled:false}` → 模型卸掉（pipeline loaded=false）+ hint 说明外部实例 ✓；
+  浏览器走查：三行开关渲染、高级配置展开/收起、选 GPT-SoVITS 时密钥区隐藏 + 指引出现、
+  切回 MiMo 密钥区恢复；控制台无新报错。
 
-- **风险**：侧栏分组变多（6 组），导航变长；`lg` 断点下侧栏可滚动，小屏仍是横向滚动条 ——
-  若嫌长，可考虑把三组再收成一个「外接模型」分组，但那会退回「看不出用的是哪个模型」的老问题
+- **风险**：网关热重载（tsx watch）会连带回收**自己托管**的 netease/indextts 子进程并自动再拉起（enabled 时）——
+  与 sovits 同一已知代价；外部终端起的实例不受此影响。
 
-- **下一阶段入口**：人工确认侧栏长度与分组名是否顺眼
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.06 14:05
 
----
+## 阶段 26补4 — 显存不足时报错列出「谁在占 GPU」 [计划时间：10.06 14:20 BY Qoder][完成时间：10.06 14:35 BY Qoder]
+- 分支：feature/vc-svc
+- **起因**：网易预热失败实为显存准入拦截（需 5120 MB、仅剩 3919 MB），但旧报错只说「关掉占显存的程序」，用户无从下手。
+- **已完成**：网关 `server/src/lib/gpuProcesses.ts`（nvidia-smi 进程表按名聚合、过滤无权限占位、10s 缓存）+
+  `GET /api/resources/gpu-processes`；ResourceBudget 在 insufficient/tight 时列出进程清单（WDDM 拿不到每进程显存数，
+  只报谁在与实例数）。实测本机 40+ GPU 进程（qemu 模拟器 / Epic / Trae / 网易云 / MyDockFinder 等）。
+- **改动文件**：`server/src/lib/gpuProcesses.ts`（新）、`server/src/routes/resources.ts`、
+  `app/src/lib/resources.ts`、`app/src/components/features/ResourceBudget.tsx`（提交 `b55744c`）
+- **测试**：typecheck / eslint / build ✓；端点与页面渲染实测 ✓
+- **风险**：无
+- **下一阶段入口**：用户关程序腾显存后重试预热
+- 本次文档更新时间：10.06 14:35
 
-## 阶段 14 — 资源占用预估与预警
+## 阶段 26补5 — 侧栏状态卡一键直达设置对应区块 [计划时间：10.06 14:40 BY Qoder][完成时间：10.06 15:00 BY Qoder]
+- 分支：feature/vc-svc
 
-- **起因**：用户要求「运行前自动评估显存与内存；不足时给明确警告 + 降配置/释放/升硬件建议；
-  重资源任务提前给出预估占用量」。
-
-- **已完成**
-  - **数据来源（三条，各自权威，不重复维护常量）**
-    - 显存门槛：trainer `/v1/engines` 的 `required_mb`（sovits 3072 / rvc 2560 / svc 3072 /
-      uvr5 4096 / asr 2048 / train 6144）+ netease `/health` 的 `tts_required_vram_mb`
-    - 当前余量：netease 的 **nvidia-smi 口径**（跨进程真实值，坑 17 修完才可信）
-      → 退回 trainer 的 `free_vram_mb`（torch 口径）
-    - 内存：网关 `/api/health` 新增 `host { ram_total_mb, ram_free_mb, ram_used_mb }`
-      （Node `os.freemem`，三个进程同机，只有网关看得到全貌）
-  - **前端**：新增 `app/src/lib/resources.ts`（成本表 + 快照采集 + 判定 + `releaseVram()`）
-    与 `app/src/components/features/ResourceBudget.tsx`
-    - 展示：显存「需要 X · 空闲 Y / 共 Z」+ 内存「约 X · 空闲 Y」+ 「重新评估」
-    - 判定：`ok` / `tight`（余量 <1 GB）/ `insufficient`（差多少直接给 GB）/ `unknown`（不编乐观结论）
-    - 建议：可点的「释放常驻显存」+ 按任务给的「降低配置」具体参数 + 「升级硬件」文案
-  - **接入页面**：网易合成（主服务）、模型训练、语音变声、歌声转换（分离 4 GB）、批量合成
-  - `sovitsApi` 新增 `engines()` / `unloadEngines()`；类型补 `SovitsEnginesStatus`、
-    `HealthInfo.host`、`NeteaseHealth.vram.source/torch_free_mb`
-
-- **未完成**
-  - 内存阈值是粗估（按任务给量级），没有实测 RSS 校准
-  - 「降低配置」目前是文案建议，未做成一键改参数（改参数要动各页的表单，风险更大）
-
-- **改动文件**：新增 `app/src/lib/resources.ts`、`app/src/components/features/ResourceBudget.tsx`；
-  改 `server/src/routes/index.ts`、`app/src/lib/sovits.ts`、`app/src/types/{index.ts,sovits.ts,netease.ts}`、
-  `app/src/pages/{NeteaseTtsPage,TrainingPage,VoiceConversionPage,SingingConversionPage,BatchPage}.tsx`
-
-- **测试结果**：`npm run typecheck` / eslint（改动文件）/ `npm run build` 全通过；
-  三个数据源实测取值正确：`host { total:32544, free:5616 }`、
-  engines 门槛齐全、netease `vram { free:563, torch_free:7099, source:'nvidia-smi' }`
-  → 页面据此判定 `insufficient`（当前正处在「显存被别的程序占满」的状态，报警符合事实）
-
-- **风险**
-  - 内存数是「约」，可能与实际 RSS 差较多，文案已写「约」
-  - 快照在组件挂载时拉一次，长时间停留不会自动刷新（有「重新评估」按钮）；
-    若后续要做实时守护，应提到 App 层做轮询而不是每个卡片各拉一次
-  - 释放显存的动作会卸掉**正在常驻**的引擎（含网易 TTS），用户可能不期望 ——
-    按钮文案已写明「释放常驻显存」，且只在预估不通过时出现
-
-- **下一阶段入口**：确认各页预估卡的位置与文案；考虑把快照提到 App 层统一轮询；
-  内存阈值若有条件可实测校准一次
-
-- **下一阶段入口**（阶段 13 遗留）：浏览器确认落地页与导航顺序；若嫌主服务不可用时太硬，
-  可考虑在落地页加一条「服务没起来时先看 GPT-SoVITS」的说明（仍不是自动回落）
-
----
-
-## 阶段 9 — 侧栏状态卡精简（缩小 + 加载完自动隐藏）
+- **起因**：用户要求左侧状态栏每张卡点击直达设置页对应位置，就地换模型 / 开关服务。
 
 - **已完成**
-  - `AppShell` 里 7 张状态卡改成统一数据驱动（`StatusCard[]`），MiMo 云端卡与各引擎卡共用同一个 `LinkCard`
-  - **缩小一档**：卡片 `p-2.5 text-xs` → `px-2 py-1.5 text-[11px]`，图标 3.5 → 3，间距 `gap-2/space-y-2` → `1.5`，
-    容器 `pb-5` → `pb-4`
-  - **自动隐藏**：探活 / 加载期间整列可见；一旦没有 `checking` 的卡片，只保留需要用户动手的
-    （待补齐 / 未配置 / 未连接），**全部就绪则整块不渲染**
-  - 当前实际效果：从常驻 7 张降到 2 张（MiMo 待配置 + 网易转写 待补齐）
+  - `AppShell.tsx`：状态卡 div → button（hover 反馈 + title 提示），新增 `onOpenSettingsSection` prop；
+    卡 id → 设置锚点映射 `SETTINGS_SECTION_OF`（网易两卡→网易行、IndexTTS→其行、
+    sovits/rvc/svc/asr 四卡→GPT-SoVITS 行、MiMo→云端卡）。
+  - `App.tsx`：`settingsSection` state + `goSettingsSection`（切页 + 传锚点）。
+  - `SettingsPage.tsx`：`focusSection`/`onFocusHandled` props；挂载/变化后 120ms 滚动到
+    `settings-<section>` 锚点（block:center）并加 2.6 秒紫色 ring 高亮；五个锚点 id 落位：
+    preload / service-netease / service-indextts / service-sovits / cloud。
+  - **顺带修文案**：预加载卡「当前空闲不够，开机会让位后再试」→「当前空闲不够，开机可能加载失败（可先关程序再试）」（原句不通）。
+  - **验证了网关托管启停全链路**（26补3 的 supervisor 首次实测）：UI 点 IndexTTS 开关开 →
+    网关 spawn（managed=true, pid 就位, /health 200）→ 再点关 → 进程回收、free 回到 5346 MB、
+    状态卡变「未启动」。
 
-- **未完成**：无（本次是纯 UI 改动）
+- **未完成**：无（本阶段范围内）
 
-- **改动文件**：`app/src/components/layout/AppShell.tsx`
+- **改动文件**：`app/src/components/layout/AppShell.tsx`、`app/src/App.tsx`、`app/src/pages/SettingsPage.tsx`
 
-- **测试结果**：`npm run typecheck` 通过；eslint（该文件）通过；HMR 预览已刷新
+- **测试结果**：typecheck / eslint / build 全过；浏览器实测：点「IndexTTS · 未启动」卡 →
+  切到设置页、锚点滚进视口、高亮 ring 生效、行内开关可点；开关开→关全链路见上。
 
-- **风险**：砍掉「已就绪」卡片后，用户想确认某引擎是否在跑要进对应页面看；
-  这是刻意的取舍（状态卡的原意是「告诉你该做什么」，不是常驻仪表盘）
+- **风险**：锚点消费走一次性 state（onFocusHandled 清空），重复点同一张卡会重新触发滚动（预期行为）。
 
-- **下一阶段入口**：人工确认缩小后的观感（是否还想更小 / 是否要保留一个手动展开入口）
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.06 15:00
+
+## 阶段 26补6 — IndexTTS 页引擎状态卡补「启动服务」快捷入口 [计划时间：10.06 15:20 BY Qoder][完成时间：10.06 15:35 BY Qoder]
+- 分支：feature/vc-svc
+
+- **起因**：用户要求 IndexTTS 引擎状态像 GPT-SoVITS 一样给快速开启入口——服务没起时不必离开本页去设置页/终端。
+
+- **已完成**：`IndexttsTtsPage` 引擎状态卡在连不上服务时显示「启动服务」按钮，
+  走 `runtimeServiceApi.toggle('indextts', true)`（与设置页开关同一后端，网关托管拉起）；
+  启动中按钮转圈带文案，成功后自动重拉 catalog/pipeline 恢复卡片，失败给带 hint 的结构化错误。
+
+- **改动文件**：`app/src/pages/IndexttsTtsPage.tsx`
+
+- **测试结果**：typecheck / eslint / build ✓；浏览器实测：服务关闭态进本页 → 点「启动服务」→
+  网关 spawn（managed=true）→ toast「服务已启动」→ 卡片恢复「未加载 + 预热」；测试后已关闭服务归还原状。
+
+- **风险**：无
+
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.06 15:35
