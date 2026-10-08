@@ -14,15 +14,14 @@ import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
 import { indexttsApi } from '@/lib/indextts';
 import { runtimeServiceApi } from '@/lib/localService';
-import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
+import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
 import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
-import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import type { IndexttsCatalog, IndexttsEngineStatus, IndexttsSynthResult } from '@/types';
 import type { SovitsVoice } from '@/types';
 
-/** 参考音频来源：本机上传，或复用 GPT-SoVITS 音色库里已有的音色 */
+/** 参考音频来源：本机上传，或复用音色库里已有的音色（音色库由网关托管，跨模型通用） */
 type RefSource = 'upload' | 'voice';
 
 /** 情感控制方式：跟随参考音频（不传参数）/ 8 维向量 / 情感参考音频 */
@@ -51,7 +50,7 @@ const ZERO_VEC = [0, 0, 0, 0, 0, 0, 0, 0];
  * 与网易页的差异化价值是**精细可控**：情感向量（8 维）、情感参考音频、
  * 语速倍率（官方「时长系数」）。语种只有 5 种，跨语种弱于网易 —— 定位是补充，不是替代。
  */
-export function IndexttsTtsPage({ onGoSettings }: { onGoSettings?: () => void } = {}) {
+export function IndexttsTtsPage() {
   const [catalog, setCatalog] = useState<IndexttsCatalog | null>(null);
   const [engine, setEngine] = useState<IndexttsEngineStatus | null>(null);
   const [text, setText] = useState('这是 IndexTTS 的本地零样本合成：三秒参考音频，支持情感向量与语速控制。');
@@ -151,7 +150,7 @@ export function IndexttsTtsPage({ onGoSettings }: { onGoSettings?: () => void } 
   const loadVoices = useCallback(() => {
     setVoicesLoading(true);
     setVoicesFailed(false);
-    sovitsApi
+    voiceApi
       .listVoices()
       .then((response) => setVoices(response.voices.filter((voice) => voice.exists)))
       .catch(() => setVoicesFailed(true))
@@ -251,9 +250,8 @@ export function IndexttsTtsPage({ onGoSettings }: { onGoSettings?: () => void } 
       try {
         let upload: File | null = refSource === 'upload' ? file : null;
         if (refSource === 'voice' && selectedVoice) {
-          // audio_path 是磁盘路径不能当 URL（坑 21），只有试听那条可访问
-          const url = resolveAudioUrl(`/v1/voices/${selectedVoice.id}/audio`);
-          if (!url) throw new RequestError(400, { code: 'REF_AUDIO_MISSING', message: `音色「${selectedVoice.name}」没有可用的参考音频` });
+          // 磁盘路径不能当 URL 用（坑 21），只有网关的试听接口可访问
+          const url = voiceApi.voiceAudioUrl(selectedVoice.id);
           const blob = await fetch(url).then((response) => {
             if (!response.ok) throw new RequestError(response.status, {
               code: 'REF_AUDIO_FETCH_FAILED',
@@ -474,9 +472,8 @@ export function IndexttsTtsPage({ onGoSettings }: { onGoSettings?: () => void } 
                 {voicesFailed ? (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      音色库列表来自 GPT-SoVITS 本地服务，它没在线时这里取不到数据。
+                      音色库由本机网关直接提供（与 GPT-SoVITS 服务无关），加载失败时请确认网关在跑。
                     </p>
-                    <SovitsServiceNotice onGoSettings={onGoSettings} />
                     <Button size="sm" variant="outline" onClick={loadVoices} disabled={voicesLoading}>
                       <RefreshCw className="mr-1.5 size-3.5" />
                       重新加载

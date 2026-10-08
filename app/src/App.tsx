@@ -483,7 +483,7 @@ function App() {
         {active === 'clone' ? (
           <VoiceClonePage settings={settings} controller={cloneController} maxTextLength={maxTextLength} />
         ) : null}
-        {active === 'voices' ? <VoiceLibraryPage onGoSettings={goSettings} /> : null}
+        {active === 'voices' ? <VoiceLibraryPage /> : null}
         {active === 'history' ? (
           <HistoryPage
             records={records}
@@ -499,10 +499,10 @@ function App() {
         {active === 'svc' ? <SingingConversionPage onGoSettings={goSettings} /> : null}
         {active === 'asr' ? <AsrPage /> : null}
         {active === 'netease-tts' ? (
-          <NeteaseTtsPage onFallback={() => setActive('batch')} onGoSettings={goSettings} />
+          <NeteaseTtsPage onFallback={() => setActive('batch')} />
         ) : null}
         {active === 'netease-asr' ? <NeteaseAsrPage onFallback={() => setActive('asr')} /> : null}
-        {active === 'indextts-tts' ? <IndexttsTtsPage onGoSettings={goSettings} /> : null}
+        {active === 'indextts-tts' ? <IndexttsTtsPage /> : null}
 
         {active === 'settings' ? (
           <SettingsPage

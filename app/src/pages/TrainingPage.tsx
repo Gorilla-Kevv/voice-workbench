@@ -31,7 +31,6 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
-import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
 import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { RequestError } from '@/lib/errors';
@@ -849,7 +848,6 @@ export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {
       {/* 训练是最吃显存的一项（门槛 6 GB），开跑前先把账算清楚 */}
       <ResourceBudget task="training" />
       <SovitsServiceNotice onGoSettings={onGoSettings} />
-      <ResourceSiteLink />
 
       <Card>
         <CardHeader className="pb-3">

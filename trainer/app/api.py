@@ -78,7 +78,9 @@ class Context:
         self.store = JobStore(settings.jobs_dir)
         self.scheduler = Scheduler(settings, self.store)
         self.pipeline = Pipeline(settings.data_dir)
-        self.voices = VoiceLibrary(settings.data_dir)
+        # 音色库落在仓库根 voicelib/（共享目录）：网关也读写这一份，
+        # 所以 GPT-SoVITS 服务没起时其它页面照样能选音色。见 sovits/voices.py 的跨进程刷新。
+        self.voices = VoiceLibrary(settings.voices_lib_dir)
         self.engine = SynthesisEngine(settings, self.pipeline, self.voices)
         self.batch = BatchRunner(settings, self.engine)
         self.training = TrainEngine(

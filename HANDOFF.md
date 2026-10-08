@@ -52,6 +52,7 @@
 | --- | --- |
 | `app/src/pages/` | 14 个页面：通用合成、批量合成、音色设计、声音克隆、音色库、历史、训练、语音变声、歌声转换、语音转文本、网易合成、网易转写、**IndexTTS 合成**、设置 |
 | `app/src/lib/providers/` | Provider 抽象：`mimo`（云端）、`gpt-sovits`（本地）、`selfhosted`（自定义） |
+| `app/src/lib/voices.ts` | 音色库客户端（`/api/voicelib/*`，网关托管、跨模型通用；含浏览器端音频时长探测） |
 | `app/src/lib/netease.ts` | 网易模块客户端（`/api/netease/*`，含 NDJSON 流式转写解析） |
 | `app/src/lib/sovits.ts` | 本地服务客户端（含 NDJSON 流式解析、音频地址映射） |
 | `app/src/lib/glossary.ts` | 术语表（100 条），含 `term/definition/impact/example` |
@@ -65,6 +66,7 @@
 | `trainer/tools/uvr_cli.py` | UVR5 非交互封装（调官方 `vr.py`/`mdxnet.py`，不改官方代码） |
 | `netease/` | **第二个 Python 运行时**（py≥3.10）：`server.py`、`app/tts_engine.py`（Confucius4-TTS 直连）、`app/r2t2.py` + `app/r2t2_worker.py`（R2T2 子进程 worker，vLLM 需 main 环境）、`app/engine.py`（引擎互斥）。上游 API 漂移只改 `tts_engine.py` / `r2t2_worker.py` 两个薄文件 |
 | `indextts/` | **第三个 Python 运行时**（uv 环境在 `upstream/.venv`，py3.11 + torch 2.8 cu128）：`server.py`、`app/{config,hardware,errors,indextts_engine,api}.py`。上游 `upstream/` 是 `git clone --depth 1` 的官方仓库（不改一行），权重在 `upstream/checkpoints/`（5.11 GB，ModelScope 下载）。端点：`/health`、`/v1/catalog`、`/v1/pipeline|warmup|unload`、`/v1/synth`（multipart：text/lang/file 或 ref_path/duration_factor/emo_vector/emo_file/emo_alpha）。上游 API 漂移只改 `indextts_engine.py` 一个薄文件 |
+| `voicelib/` | **音色库共享存储**（仓库根，不进版本库）：`voices.json` + `voices/<id>.<ext>`。网关（`server/src/services/voiceLibrary.ts`）与 trainer（`app/sovits/voices.py`）读写同一份，位置由 `VOICES_LIB_DIR` 统一覆盖。曾住 `trainer/.data/`，阶段 26补7 迁出（旧索引改名 `.migrated-to-voicelib` 保留） |
 
 ### 入口文件
 
@@ -85,6 +87,9 @@
 - IndexTTS 端点（经网关 `/api/indextts/*` 透传）：`/health`（同 netease 哲学，永远 200）、
   `/v1/catalog`（语种/滑杆范围/情感维度/**准入门槛**——门槛真源在服务端，坑 19）、
   `/v1/pipeline`、`/v1/warmup`、`/v1/unload`、`/v1/synth`（multipart，返回 base64 音频）
+- 音色库端点（网关原生 `/api/voicelib/*`，阶段 26补7，**不依赖任何 Python 服务**）：
+  `GET /`、`GET /:id`、`GET /:id/audio`、`POST /`（原始字节体 + 查询参数元数据）、`POST /source`、
+  `PATCH /:id`、`POST /:id/audio`、`DELETE /:id`；trainer 的 `/v1/voices*` 保留且读写同一份数据（坑 27）
 
 ### 数据模型
 
@@ -100,7 +105,8 @@
   —— 显存门槛**只从服务端取**（trainer `/v1/engines`、`netease /health`），前端只留兜底常量；
   内存由网关 `/api/health` 的 `host` 提供（见坑 19）
 - 持久化：
-  - 服务端：`trainer/.data/`（voices、outputs、jobs、experiments、uploads）
+  - 音色库：仓库根 `voicelib/`（网关与 trainer 共享，跨模型通用，见坑 27）
+  - 服务端：`trainer/.data/`（outputs、jobs、experiments、uploads）
   - 浏览器：`localStorage`（设置）+ `sessionStorage`（训练/批量会话）+ IndexedDB（历史）
 
 ## 决策与坑
@@ -116,7 +122,8 @@
 | 错误响应必须带 `hint` | 只报 `message` 用户无从下手（实测：用户对着「不支持合成语种 undefined」完全懵） |
 | 渲染错误用错误边界兜底 | React 渲染抛错会卸载整棵树 → 纯白页面，无信息 |
 | 术语提示：桌面悬浮 / 触屏点击 | Radix Tooltip 在触摸设备体验不可靠（悬浮不存在） |
-| 资源站入口：`ResourceSiteLink` 组件，三处（训练 / 变声 / 翻唱） | https://res.acgnai.top/ 提供角色语音数据集与 TTS·SVC 开源模型，正好补「训练没数据、变声没模型」两头；外部链接一律新窗口 + `noopener noreferrer` |
+| 资源站入口：**常驻 AppShell 顶栏右上角**（阶段 26补7 改） | https://res.acgnai.top/ 提供角色语音数据集与 TTS·SVC 开源模型，正好补「训练没数据、变声没模型」两头；原先散在训练 / 变声 / 翻唱三处页内，用户裁决改为每页右上角一处常驻（紧凑「资源库」按钮 + tooltip）。外部链接一律新窗口 + `noopener noreferrer` |
+| **音色库独立于 GPT-SoVITS：共享存储 `voicelib/` + 网关托管接口**（阶段 26补7） | 音色库曾住在 trainer :9881 里，而 GPT-SoVITS 默认停用 —— IndexTTS / 网易页选一段参考音频竟要把整个 GPT-SoVITS 拉起来。现在数据在仓库根 `voicelib/`，常驻的网关直接供 `/api/voicelib`；trainer 同读一份，合成/批量按 voice_id 解析不受影响。时长/采样率改由浏览器探测（Node 无 soundfile），迁移由网关首访触发（旧索引改名保留） |
 | 网易合成默认档位 **balanced**（非官方默认） | 官方默认 `num_beams=3` 会让 T2S 自回归跑三条候选（约 3 倍代价），是本机「慢」的主因之一；`balanced=(1,18)` 明显更快。档位定义在 `netease/app/routers/confucius.py::QUALITY_PRESETS`，要回官方默认选 `quality` |
 | **第二套本地 TTS（IndexTTS-2.5）定位为「补充」** | 0.8B / BF16 / 官方 RTF 0.2065（4090 数据），**阶段 26 本机实测：暖态 RTF ≈ 2.2，显存被抢时 5~14；常驻实测约 5.3 GB（远超 2~3 GB 估计）**。独有价值是**情感向量 / 拼音注音 / 语速倍率**这类精细可控。但它只有 5 语种，跨语种弱于网易 → 不抢主服务位置。已全链路接入（服务 + 网关透传 + 前端页 + 资源管控，`docs/INDEX-TTS-INTEGRATION.md` 阶段 0~2 完成） |
 | **主力模型不由我们预设**，交给「启动预加载选择」 | 用户 2026-10 裁决：网易 vs IndexTTS 谁当主力由**使用测试**决定。所以不做硬编码默认，改为开机时让用户选一个模型预加载（显存一次只够一个）。实现见 `server/src/services/preload.ts` + `StartupPreloadDialog`；新增模型只需往 `MODELS` 账本加一项 |
@@ -300,6 +307,15 @@
     - RTF 对「当时有多少程序在抢显存」极度敏感：暖态 2.2，桌面占满时 5~14。对比网易（稳态 2.0~2.5）
       时**必须在同一台机、同一种桌面状态下测**，不然结论会错。
 
+27. **音色库是两份进程共写的同一份 JSON（阶段 26补7）**
+    网关（Node）与 trainer（Python）都读写 `voicelib/voices.json`。规矩只有一条：
+    **任何一次 persist 之前必须先看到磁盘上的最新表** —— trainer 侧 `VoiceLibrary._refresh()`
+    按 mtime 在每次读写前刷新，网关侧干脆每次操作都重读文件。绕过这条（比如给 trainer 加缓存表）
+    会让 trainer 把网关侧新增的音色**整表覆盖丢**。
+    另外两点：迁移（`trainer/.data` → `voicelib/`）只由网关首访触发，只跑 trainer 不跑网关的机器
+    会看到空库（旧索引改名 `.migrated-to-voicelib` 保留，起一次网关即恢复）；
+    音频时长/采样率由**浏览器**探测后随创建请求带上（Node 没有 soundfile），curl 直连时可为空。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -363,6 +379,9 @@
   云端合成 MiMo（按所选后端条件渲染：选 MiMo 才出现密钥区，选 GPT-SoVITS 只给指引）→ 合成偏好 → 站点信息」；
   「默认使用小米 MiMo」过时文案已清；网关新增 `services/runtime.ts` 托管 netease/indextts 进程生命周期
   （复用外部实例、关不掉时先卸模型并如实提示）
+- **音色库已跨模型通用（阶段 26补7）**：数据迁到仓库根 `voicelib/`，网关原生 `/api/voicelib` 托管，
+  GPT-SoVITS 停用时 IndexTTS / 网易 / 音色库页照常列音色与取音频（浏览器实测）；trainer 同读一份 +
+  mtime 热重载（坑 27）；资源站入口常驻每页右上角
 
 ### 验收标准
 
@@ -400,8 +419,9 @@
   动 `netease/` 前必看第 12~17 条（R2T2 平台阻塞、HF 缓存、hf-mirror、fp16、float32 写盘、显存口径）；
   动 `indextts/` 前必看第 26 条（显存画像、准入自锁 bug、warmup 网络探测、RTF 波动）；
   动任何结果栏前必看第 18 条（统一走 `useResultStack`）；动资源预估前看第 19 条（门槛值在服务
-  端）；动任何上传/导入入口前看第 21、25 条（磁盘路径不能当 URL、拖拽统一走 `useFileDrop`）
+  端）；动任何上传/导入入口前看第 21、25 条（磁盘路径不能当 URL、拖拽统一走 `useFileDrop`）；
+  动音色库（网关或 trainer 任一侧）前必看第 27 条（共写同一份 JSON，persist 前必须刷新）
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志
 
-> 本次文档更新时间：10.06 12:25 [BY Qoder]（阶段 26：IndexTTS 全链路接入）
+> 本次文档更新时间：10.08 15:35 [BY Qoder]（阶段 26补7：音色库独立存储 + 资源站入口常驻顶栏）

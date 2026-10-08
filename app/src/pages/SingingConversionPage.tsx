@@ -12,7 +12,6 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
-import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
 import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
@@ -85,7 +84,6 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
           </CardHeader>
         </Card>
       ) : null}
-      <ResourceSiteLink label="缺歌声转换模型或伴奏素材？去 AI Hobbyist 资源库" className="self-start" />
       <SovitsServiceNotice onGoSettings={onGoSettings} />
       <div className="flex items-center gap-2">
         <EngineBadge catalog={catalog} />

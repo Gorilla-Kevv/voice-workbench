@@ -1278,3 +1278,57 @@
 
 - **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
 - 本次文档更新时间：10.06 15:35
+
+## 阶段 26补7 — 音色库独立存储（跨模型通用）+ 资源站入口常驻顶栏 [计划时间：10.08 14:30 BY Qoder][完成时间：10.08 15:30 BY Qoder]
+- 分支：feature/vc-svc
+
+- **起因**：用户两点反馈——① IndexTTS 页「从音色库选择」必须把 GPT-SoVITS 服务拉起来才能用
+  （音色库曾住在 trainer :9881 里，而它默认停用），逻辑离谱；要求音色库有独立存储路径、多模型通用。
+  ② AI Hobbyist 资源库链接散落在三处页内，应常驻每个页面右上角（浏览器批注指向变声页那条）。
+
+- **已完成**
+  - **共享存储**：音色库迁到仓库根 `voicelib/`（`voices.json` + `voices/<id>.<ext>`，已进 .gitignore）。
+    网关与 trainer 读写**同一份**；环境变量 `VOICES_LIB_DIR` 两端同参可改位置。
+  - **网关原生音色库接口**（新增 `server/src/services/voiceLibrary.ts` + `routes/voicelib.ts`，
+    挂 `/api/voicelib`，早于全局 express.json）：列表 / 详情 / 音频回放 / 创建（原始字节体 + 查询参数元数据，
+    不引 multer）/ 磁盘路径登记 / 更新 / 替换音频 / 删除。响应形状与 trainer `Voice.to_dict()` 一致，
+    前端 `SovitsVoice` 类型零改动。
+  - **一次性迁移**：网关首次访问时若 `voicelib/` 为空且 `trainer/.data/voices.json` 存在 →
+    复制托管音频、改写 audio_path、写新索引，旧索引**改名保留**
+    （`.migrated-to-voicelib`，不删除）。实测本机 1 条音色迁移成功。
+  - **trainer 指向共享目录 + 跨进程热重载**：`Settings.voices_lib_dir`（新）；
+    `VoiceLibrary` 读写前按索引 mtime 刷新内存表——否则 trainer 启动后网关新增的音色
+    会被 trainer 任何一次 persist **整表覆盖丢**（新坑 27）。
+  - **时长/采样率改由浏览器探测**：Node 侧没有 soundfile/ffprobe，`probeAudioFile`（AudioContext 解码）
+    在登记时随查询参数带上；GPT-SoVITS 的 3~10 秒警告口径不变。
+  - **前端全部切到网关**：新 `app/src/lib/voices.ts`（voiceApi）；音色库页 CRUD、
+    IndexTTS / 网易页音色 tab、批量页与 SovitsVoicePicker 列表源都改走 `/api/voicelib`；
+    音色场景下的 `SovitsServiceNotice` 与「音色库来自 GPT-SoVITS」文案清除；
+    sovits.ts 里已无人调用的音色方法段删除。trainer 的 `/v1/voices*` 保留（读写同一份，API 兼容）。
+  - **资源站入口常驻右上角**：`ResourceSiteLink` 改紧凑形态挂进 AppShell 顶栏（所有页面可见），
+    训练 / 变声 / 翻唱三处页内旧入口移除。
+
+- **未完成**：无（本阶段范围内）
+
+- **改动文件**：新增 `server/src/services/voiceLibrary.ts`、`server/src/routes/voicelib.ts`、
+  `app/src/lib/voices.ts`；改 `server/src/index.ts`、`trainer/app/config.py`、`trainer/app/api.py`、
+  `trainer/app/sovits/voices.py`、`trainer/.env.example`、`.gitignore`、
+  `app/src/pages/{VoiceLibraryPage,IndexttsTtsPage,NeteaseTtsPage,BatchPage}.tsx`、
+  `app/src/components/features/{SovitsVoicePicker,ResourceSiteLink}.tsx`、
+  `app/src/components/layout/AppShell.tsx`、`app/src/App.tsx`、`app/src/lib/sovits.ts`；
+  三页移除页内 ResourceSiteLink（TrainingPage / VoiceConversionPage / SingingConversionPage）
+
+- **测试结果**：typecheck（app+server）/ eslint / build 全过；Python ast 自检过。
+  接口实测：GET 列表含迁移记录 ✓、音频回放 200 audio/mpeg ✓、POST 创建（含中文元数据 + 原始字节体）✓、
+  DELETE ✓。跨进程验证：独立 Python 实例读 voicelib 看到网关新增音色，网关删除后**不重启即感知** ✓。
+  浏览器实测（GPT-SoVITS :9881 全程停用）：网易页与 IndexTTS 页「从音色库选择」直接列出「男 · 5.4s」并可选中；
+  音色库页正常渲染（无服务提示卡）；UI 新建音色走通（浏览器解码报 4.0 秒 → 保存 → 列表刷新）；
+  UI 删除走通；顶栏「资源库」链接在网易 / IndexTTS / 音色库页均常驻，指向 https://res.acgnai.top/；
+  控制台无新报错（仅服务未起的 503 探活噪音）。
+
+- **风险**：① 迁移只由网关触发——若有人只跑 trainer 不跑网关，音色库会显示为空（旧索引改名保留，
+    起一次网关即恢复）；② 两进程并发写同一 JSON 的窗口极小（本地场景），真撞车以后写者为准；
+    ③ 时长探测改在浏览器，用 curl 直连创建时 duration_s 可为空（只影响警告展示，不影响合成）。
+
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.08 15:30

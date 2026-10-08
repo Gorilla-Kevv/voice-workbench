@@ -174,6 +174,10 @@ class Settings:
 
     # ---------- 存储 ----------
     data_dir: Path = field(default_factory=lambda: ROOT / ".data")
+    #: 音色库共享目录（仓库根 voicelib/）。
+    #: 与网关（server/）读写**同一份** voices.json —— 音色库不再绑定 GPT-SoVITS 服务，
+    #: 网易 / IndexTTS 等任何运行时都能选用。
+    voices_lib_dir: Path = field(default_factory=lambda: ROOT.parent / "voicelib")
     #: 输出音频保留天数（0 表示不清理）
     output_retention_days: int = 30
 
@@ -199,10 +203,6 @@ class Settings:
     @property
     def outputs_dir(self) -> Path:
         return self.data_dir / "outputs"
-
-    @property
-    def voices_dir(self) -> Path:
-        return self.data_dir / "voices"
 
     @property
     def experiments_dir(self) -> Path:
@@ -284,6 +284,7 @@ class Settings:
 
         home = _env_str("GPT_SOVITS_HOME")
         data_dir = Path(_env_str("TTS_DATA_DIR", str(ROOT / ".data"))).expanduser()
+        voices_lib_dir = Path(_env_str("VOICES_LIB_DIR", str(ROOT.parent / "voicelib"))).expanduser()
         vendor_dir = Path(_env_str("VENDOR_DIR", str(ROOT.parent / "vendor"))).expanduser()
         models_dir = Path(_env_str("MODELS_DIR", str(ROOT.parent / "models"))).expanduser()
 
@@ -330,6 +331,7 @@ class Settings:
             asr_device=_env_str("ASR_DEVICE", "auto") or "auto",
             asr_cache_enabled=_env_bool("ASR_CACHE", True),
             data_dir=data_dir,
+            voices_lib_dir=voices_lib_dir,
             output_retention_days=_env_int("OUTPUT_RETENTION_DAYS", 30),
             dry_run=_env_bool("TTS_DRY_RUN", False),
             verbose=_env_bool("TTS_VERBOSE", False),
@@ -372,7 +374,7 @@ class Settings:
             self.jobs_dir,
             self.uploads_dir,
             self.outputs_dir,
-            self.voices_dir,
+            self.voices_lib_dir,
             self.experiments_dir,
             # 两个新板块：缓存、语音变声、歌声转换
             self.cache_dir,

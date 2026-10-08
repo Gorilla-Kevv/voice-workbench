@@ -38,6 +38,7 @@ import { formatBytes, formatDuration } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
 import { SOVITS_PARAM_SPECS } from '@/lib/constants';
 import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
+import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
 import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
 import type { AppSettings, SovitsBatchItemResult, SovitsJob, SovitsJobState, SovitsVoice } from '@/types';
@@ -232,7 +233,8 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
   const loadVoices = useCallback(async () => {
     setLoadingVoices(true);
     try {
-      const result = await sovitsApi.listVoices();
+      // 音色库走网关（跨模型共享，不依赖 GPT-SoVITS 在线；批量合成本身仍需要它）
+      const result = await voiceApi.listVoices();
       setVoices(result.voices);
       setConnectionError(null);
       setVoiceId((prev) => prev || result.voices[0]?.id || '');

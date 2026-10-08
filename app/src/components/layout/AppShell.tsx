@@ -28,6 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { FlowGuide } from '@/components/features/FlowGuide';
+import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
 import { cn } from '@/lib/utils';
 import type { ModuleStates, NavKey, SovitsLinkState } from '@/types';
 
@@ -410,6 +411,8 @@ export function AppShell({
             <p className="truncate text-xs text-muted-foreground lg:text-sm">{header.description}</p>
           </div>
           <div className="flex items-center gap-2">
+            {/* 资源站入口常驻右上角：所有页面一处可达（见 ResourceSiteLink 注释） */}
+            <ResourceSiteLink />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Badge variant="secondary" className="h-7 gap-1.5 px-2.5 font-mono text-[11px] font-normal">

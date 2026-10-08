@@ -9,8 +9,13 @@ GPT-SoVITS 与「预置音色」型 TTS 最大的不同：**它没有任何内�
 2. 反复合成时不必每次重新上传（本地场景里这是最烦人的一步）；
 3. 让批量合成可以「一次选音色，跑几百条文本」。
 
-数据落盘为 `<数据目录>/voices.json` + `<数据目录>/voices/<id>.<ext>`，
+数据落盘为 `<音色库目录>/voices.json` + `<音色库目录>/voices/<id>.<ext>`，
 不引入数据库，便于直接拷贝和备份。
+
+**目录是仓库根的 `voicelib/`（跨运行时共享），不再是 trainer/.data/** ——
+网关（server/）读写同一份索引，GPT-SoVITS 服务没起时网易 / IndexTTS 页面照样能选音色。
+因此本类的读与写之前都要按 mtime 刷新内存表（`_refresh`），
+否则 trainer 会把网关侧新增的记录整体覆盖丢。
 """
 
 from __future__ import annotations
@@ -121,7 +126,7 @@ class Voice:
 
 
 class VoiceLibrary:
-    """音色库的读写入口。线程安全。"""
+    """音色库的读写入口。线程安全；跨进程一致性靠磁盘 mtime 刷新。"""
 
     def __init__(self, data_dir: Path) -> None:
         self._data_dir = data_dir
@@ -129,8 +134,37 @@ class VoiceLibrary:
         self._index_path = data_dir / "voices.json"
         self._lock = threading.RLock()
         self._items: Dict[str, Voice] = {}
+        self._mtime: Optional[int] = None
         self._audio_dir.mkdir(parents=True, exist_ok=True)
         self._load()
+
+    # ------------------------------------------------------------------
+    # 跨进程刷新
+    # ------------------------------------------------------------------
+
+    def _index_mtime(self) -> Optional[int]:
+        try:
+            return self._index_path.stat().st_mtime_ns
+        except OSError:
+            return None
+
+    def _refresh(self) -> None:
+        """磁盘索引变了就重读。
+
+        网关与 trainer 都写同一份 voices.json：不刷新的话，
+        trainer 内存里还是启动时那份，任何一次 _persist 都会
+        把网关侧新增的音色**整表覆盖丢**。
+        """
+        mtime = self._index_mtime()
+        if mtime is None or mtime == self._mtime:
+            return
+        with self._lock:
+            mtime = self._index_mtime()
+            if mtime is None or mtime == self._mtime:
+                return
+            items, _repaired = _parse_index(self._index_path)
+            self._items = items
+            self._mtime = mtime
 
     # ------------------------------------------------------------------
     # 查询
@@ -145,12 +179,14 @@ class VoiceLibrary:
         return self._audio_dir
 
     def list(self) -> List[Voice]:
+        self._refresh()
         with self._lock:
             items = list(self._items.values())
         items.sort(key=lambda voice: voice.updated_at or voice.created_at, reverse=True)
         return items
 
     def get(self, voice_id: str) -> Voice:
+        self._refresh()
         with self._lock:
             voice = self._items.get(voice_id)
         if voice is None:
@@ -161,10 +197,12 @@ class VoiceLibrary:
         """把「音色 ID」解析为记录；解析不到返回 None（由调用方决定是否报错）。"""
         if not raw:
             return None
+        self._refresh()
         with self._lock:
             return self._items.get(raw)
 
     def find_by_name(self, name: str) -> Optional[Voice]:
+        self._refresh()
         with self._lock:
             for voice in self._items.values():
                 if voice.name == name:
@@ -187,6 +225,7 @@ class VoiceLibrary:
         tags: Optional[List[str]] = None,
     ) -> Voice:
         """新增音色。`content` 走托管存储，`external_path` 引用磁盘已有文件。"""
+        self._refresh()  # 先同步磁盘表，persist 时才不会覆盖网关侧新增的记录
         name = (name or "").strip()
         if not name:
             raise BadRequestError("音色名称不能为空")
@@ -321,6 +360,7 @@ class VoiceLibrary:
 
     def copy_into_library(self, source: Path, name: str, prompt_text: str, prompt_lang: str, note: str = "") -> Voice:
         """把磁盘上的文件复制进托管目录并登记。批量准备语料时用得上。"""
+        self._refresh()
         suffix = source.suffix.lower()
         voice_id = uuid.uuid4().hex[:12]
         target = self._audio_dir / ("%s%s" % (voice_id, suffix))
@@ -373,50 +413,60 @@ class VoiceLibrary:
             self._index_path.write_text(
                 json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
             )
+            self._mtime = self._index_mtime()
         except OSError:
             pass
 
     def _load(self) -> None:
-        if not self._index_path.is_file():
-            return
-        try:
-            raw = json.loads(self._index_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return
-        if not isinstance(raw, list):
-            return
-        # 「是否需要落盘」必须拿**磁盘上的原始值**判断：内存里的值已经被
-        # normalize_prompt_lang 改好了，拿它去比对永远相等，脏数据就永远写不回去。
-        repaired = False
-        for item in raw:
-            try:
-                stored_lang = item.get("prompt_lang")
-                lang = normalize_prompt_lang(stored_lang)
-                if stored_lang != lang:
-                    repaired = True
-                voice = Voice(
-                    id=item["id"],
-                    name=item["name"],
-                    audio_path=item["audio_path"],
-                    prompt_text=item.get("prompt_text", ""),
-                    prompt_lang=lang,
-                    note=item.get("note", ""),
-                    tags=list(item.get("tags") or []),
-                    origin=item.get("origin", "managed"),
-                    duration_s=item.get("duration_s"),
-                    sample_rate=item.get("sample_rate"),
-                    size_bytes=item.get("size_bytes", 0),
-                    created_at=item.get("created_at", 0.0),
-                    updated_at=item.get("updated_at", 0.0),
-                )
-            except KeyError:
-                continue
-            self._items[voice.id] = voice
+        items, repaired = _parse_index(self._index_path)
+        self._items = items
+        self._mtime = self._index_mtime()
 
         # 发现历史脏数据（例如字面量 "undefined"）就顺手落盘修正：
         # 否则备份出去、或拷贝到另一台机器时，脏数据会跟着一起走。
         if repaired:
             self._persist()
+
+
+def _parse_index(index_path: Path) -> Tuple[Dict[str, Voice], bool]:
+    """读索引文件 → (记录表, 是否发现待修复的脏语种)。"""
+    items: Dict[str, Voice] = {}
+    if not index_path.is_file():
+        return items, False
+    try:
+        raw = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return items, False
+    if not isinstance(raw, list):
+        return items, False
+    # 「是否需要落盘」必须拿**磁盘上的原始值**判断：内存里的值已经被
+    # normalize_prompt_lang 改好了，拿它去比对永远相等，脏数据就永远写不回去。
+    repaired = False
+    for item in raw:
+        try:
+            stored_lang = item.get("prompt_lang")
+            lang = normalize_prompt_lang(stored_lang)
+            if stored_lang != lang:
+                repaired = True
+            voice = Voice(
+                id=item["id"],
+                name=item["name"],
+                audio_path=item["audio_path"],
+                prompt_text=item.get("prompt_text", ""),
+                prompt_lang=lang,
+                note=item.get("note", ""),
+                tags=list(item.get("tags") or []),
+                origin=item.get("origin", "managed"),
+                duration_s=item.get("duration_s"),
+                sample_rate=item.get("sample_rate"),
+                size_bytes=item.get("size_bytes", 0),
+                created_at=item.get("created_at", 0.0),
+                updated_at=item.get("updated_at", 0.0),
+            )
+        except KeyError:
+            continue
+        items[voice.id] = voice
+    return items, repaired
 
 
 # --------------------------------------------------------------------------

@@ -29,10 +29,13 @@ Thumbs.db
 __pycache__/
 *.pyc
 
-# 本地运行数据：音色库、任务、输出音频、训练实验
+# 本地运行数据：任务、输出音频、训练实验
 # 这些是「本机产物」，换一台机器就该重来，不应进入版本库
 trainer/.data/
 trainer/.tmp/
+
+# 音色库共享目录（网关与 trainer 同读写，见 server/src/services/voiceLibrary.ts）
+voicelib/
 
 # 网易模块（netease/）：独立 venv 与本机运行产物；权重在全局 models/ 规则里
 netease/.venv/

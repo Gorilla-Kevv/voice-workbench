@@ -7,6 +7,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { TermTip } from '@/components/features/TermTip';
 import { sovitsApi } from '@/lib/sovits';
+import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
 import type { SovitsCatalog, SovitsVoice } from '@/types';
 
@@ -40,7 +41,7 @@ export function SovitsVoicePicker({ value, onChange }: SovitsVoicePickerProps) {
     setLoading(true);
     try {
       const [voiceResult, catalogResult] = await Promise.all([
-        sovitsApi.listVoices(),
+        voiceApi.listVoices(),
         sovitsApi.catalog().catch(() => null),
       ]);
       setVoices(voiceResult.voices);
@@ -77,7 +78,7 @@ export function SovitsVoicePicker({ value, onChange }: SovitsVoicePickerProps) {
       <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-xs">
         <p className="flex items-center gap-1.5 font-medium text-destructive">
           <AlertTriangle className="size-3.5" />
-          GPT-SoVITS 本地服务不可用
+          音色库读取失败
         </p>
         <p className="mt-1 text-muted-foreground">{error}</p>
         <Button size="sm" variant="outline" className="mt-2" onClick={() => void load()}>

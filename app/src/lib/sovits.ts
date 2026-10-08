@@ -25,8 +25,6 @@ import type {
   SovitsTTSResponse,
   SovitsTrainPayload,
   SovitsTrainPlan,
-  SovitsVoice,
-  SovitsVoiceDraft,
   SovitsWeightList,
 } from '@/types';
 
@@ -236,82 +234,6 @@ export const sovitsApi = {
     request<{ ok: boolean; pipeline: SovitsHealth['pipeline'] }>(
       '/v1/weights/load',
       { method: 'POST', body: JSON.stringify({ eager: true, ...payload }), timeoutMs: 0 },
-      baseUrl,
-    ),
-
-  // ------------------------------------------------------------------
-  // 音色库
-  // ------------------------------------------------------------------
-
-  listVoices: (baseUrl?: string) =>
-    request<{ ok: boolean; voices: SovitsVoice[]; total: number }>(
-      '/v1/voices',
-      { method: 'GET', timeoutMs: 30_000 },
-      baseUrl,
-    ),
-
-  createVoice: (draft: SovitsVoiceDraft, file: File, baseUrl?: string) => {
-    const form = new FormData();
-    form.append('name', draft.name);
-    form.append('prompt_text', draft.prompt_text);
-    form.append('prompt_lang', draft.prompt_lang);
-    form.append('note', draft.note ?? '');
-    form.append('tags', (draft.tags ?? []).join(','));
-    form.append('audio', file, file.name);
-    return request<{ ok: boolean; voice: SovitsVoice }>(
-      '/v1/voices',
-      { method: 'POST', body: form, timeoutMs: 120_000 },
-      baseUrl,
-    );
-  },
-
-  /** 引用磁盘上已有的音频（不复制文件） */
-  createVoiceFromPath: (
-    draft: SovitsVoiceDraft & { audio_path: string },
-    baseUrl?: string,
-  ) =>
-    request<{ ok: boolean; voice: SovitsVoice }>(
-      '/v1/voices/source',
-      {
-        method: 'POST',
-        body: JSON.stringify({
-          name: draft.name,
-          prompt_text: draft.prompt_text,
-          prompt_lang: draft.prompt_lang,
-          note: draft.note ?? '',
-          tags: (draft.tags ?? []).join(','),
-          audio_path: draft.audio_path,
-        }),
-        timeoutMs: 60_000,
-      },
-      baseUrl,
-    ),
-
-  updateVoice: (
-    id: string,
-    patch: Partial<Omit<SovitsVoice, 'id' | 'warnings' | 'exists'>>,
-    baseUrl?: string,
-  ) =>
-    request<{ ok: boolean; voice: SovitsVoice }>(
-      `/v1/voices/${id}`,
-      { method: 'PATCH', body: JSON.stringify(patch), timeoutMs: 60_000 },
-      baseUrl,
-    ),
-
-  replaceVoiceAudio: (id: string, file: File, baseUrl?: string) => {
-    const form = new FormData();
-    form.append('audio', file, file.name);
-    return request<{ ok: boolean; voice: SovitsVoice }>(
-      `/v1/voices/${id}/audio`,
-      { method: 'POST', body: form, timeoutMs: 120_000 },
-      baseUrl,
-    );
-  },
-
-  deleteVoice: (id: string, baseUrl?: string) =>
-    request<{ ok: boolean; message: string }>(
-      `/v1/voices/${id}`,
-      { method: 'DELETE', timeoutMs: 30_000 },
       baseUrl,
     ),
 

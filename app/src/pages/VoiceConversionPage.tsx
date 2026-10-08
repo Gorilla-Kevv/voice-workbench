@@ -17,7 +17,6 @@ import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
-import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
 import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
@@ -87,7 +86,6 @@ export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => voi
           </CardHeader>
         </Card>
       ) : null}
-      <ResourceSiteLink label="缺 .pth 音色模型？去 AI Hobbyist 资源库（SVC 开源模型）" className="self-start" />
       <SovitsServiceNotice onGoSettings={onGoSettings} />
       <EngineBadge catalog={catalog} onRefresh={refresh} accent={ACCENT_TEXT} />
       <ModelLibrary catalog={catalog} onChanged={refresh} accent={ACCENT_SOLID} />

@@ -16,10 +16,9 @@ import { ResultStack, type ResultStackEntry } from '@/components/features/Result
 import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
 import { neteaseApi } from '@/lib/netease';
-import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
+import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
 import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
-import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import type { NeteaseCatalog, NeteaseEngineStatus, NeteaseTtsResult } from '@/types';
 import type { SovitsVoice } from '@/types';
 
@@ -51,13 +50,7 @@ function base64ToUrl(base64: string, mime = 'audio/wav'): string {
  * 也因此现有音色库里的每条音色都能直接拿来用 —— 只取它的参考音频，
  * 转写文本不参与合成（页面里明确标注，避免「文本也要跟着改」的误解）。
  */
-export function NeteaseTtsPage({
-  onFallback,
-  onGoSettings,
-}: {
-  onFallback?: () => void;
-  onGoSettings?: () => void;
-} = {}) {
+export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {}) {
   const [catalog, setCatalog] = useState<NeteaseCatalog['tts'] | null>(null);
   const [engine, setEngine] = useState<NeteaseEngineStatus | null>(null);
   const [text, setText] = useState('这是网易 Confucius4-TTS 的零样本克隆合成：只需三秒参考音频，无需逐字转写文本。');
@@ -114,11 +107,11 @@ export function NeteaseTtsPage({
     })();
   }, []);
 
-  // 切到「从音色库选择」时按需拉一次音色列表（GPT-SoVITS 侧的服务）
+  // 切到「从音色库选择」时按需拉一次音色列表（网关托管的共享音色库，与 GPT-SoVITS 服务无关）
   const loadVoices = useCallback(() => {
     setVoicesLoading(true);
     setVoicesFailed(false);
-    sovitsApi
+    voiceApi
       .listVoices()
       .then((response) => setVoices(response.voices.filter((voice) => voice.exists)))
       .catch(() => setVoicesFailed(true))
@@ -218,10 +211,9 @@ export function NeteaseTtsPage({
       try {
         let upload: File | null = refFile;
         if (refSource === 'voice' && selectedVoice) {
-          // 音色库音色 → 取它的参考音频（经 GPT-SoVITS 网关），转写文本不参与合成。
-          // audio_path 是服务端磁盘路径，不能当 URL 用；可访问的是试听那条 /v1/voices/{id}/audio。
-          const url = resolveAudioUrl(`/v1/voices/${selectedVoice.id}/audio`);
-          if (!url) throw new RequestError(400, { code: 'REF_AUDIO_MISSING', message: `音色「${selectedVoice.name}」没有可用的参考音频` });
+          // 音色库音色 → 取它的参考音频（网关音色库接口），转写文本不参与合成。
+          // audio_path 是服务端磁盘路径，不能当 URL 用；可访问的是试听那条接口。
+          const url = voiceApi.voiceAudioUrl(selectedVoice.id);
           const blob = await fetch(url).then((response) => {
             if (!response.ok) throw new RequestError(response.status, {
               code: 'REF_AUDIO_FETCH_FAILED',
@@ -458,9 +450,8 @@ export function NeteaseTtsPage({
                 {voicesFailed ? (
                   <div className="space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      音色库列表来自 GPT-SoVITS 本地服务，它没在线时这里取不到数据。
+                      音色库由本机网关直接提供（与 GPT-SoVITS 服务无关），加载失败时请确认网关在跑。
                     </p>
-                    <SovitsServiceNotice onGoSettings={onGoSettings} />
                     <Button size="sm" variant="outline" onClick={loadVoices} disabled={voicesLoading}>
                       <RefreshCw className="mr-1.5 size-3.5" />
                       重新加载

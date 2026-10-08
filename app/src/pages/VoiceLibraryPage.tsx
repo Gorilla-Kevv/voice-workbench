@@ -29,7 +29,6 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { TermTip } from '@/components/features/TermTip';
-import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
@@ -37,7 +36,8 @@ import { Textarea } from '@/components/ui/textarea';
 import { asrApi } from '@/lib/asr';
 import { formatBytes, formatDuration, formatRelativeTime } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
-import { resolveAudioUrl, sovitsApi } from '@/lib/sovits';
+import { sovitsApi } from '@/lib/sovits';
+import { voiceApi } from '@/lib/voices';
 import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
 import { cn } from '@/lib/utils';
 import type { SovitsCatalog, SovitsVoice } from '@/types';
@@ -57,8 +57,11 @@ import type { SovitsCatalog, SovitsVoice } from '@/types';
  * 2. **前置警告**：时长不在 3~10 秒、缺转写文本这类问题会在合成前就标红，
  *    而不是等模型报错；
  * 3. **允许引用磁盘文件**：很多人的素材库已经在硬盘上了，没必要复制一份。
+ *
+ * 存储与接口：数据在仓库根 `voicelib/`，由**网关**直接供（`/api/voicelib`）——
+ * 音色库跨模型通用，本页不再要求 GPT-SoVITS 服务在线。
  */
-export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void } = {}) {
+export function VoiceLibraryPage() {
   const [voices, setVoices] = useState<SovitsVoice[]>([]);
   const [catalog, setCatalog] = useState<SovitsCatalog | null>(null);
   const [loading, setLoading] = useState(true);
@@ -124,7 +127,7 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
     setLoading(true);
     try {
       const [voiceResult, catalogResult] = await Promise.all([
-        sovitsApi.listVoices(),
+        voiceApi.listVoices(),
         sovitsApi.catalog().catch(() => null),
       ]);
       setVoices(voiceResult.voices);
@@ -174,8 +177,8 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
     setSubmitting(true);
     try {
       const result = file
-        ? await sovitsApi.createVoice(draft, file)
-        : await sovitsApi.createVoiceFromPath({ ...draft, audio_path: externalPath.trim() });
+        ? await voiceApi.createVoice(draft, file)
+        : await voiceApi.createVoiceFromPath({ ...draft, audio_path: externalPath.trim() });
       toast.success('音色已保存', {
         description: result.voice.warnings.length
           ? result.voice.warnings[0]
@@ -195,7 +198,7 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
     if (!editing) return;
     setSubmitting(true);
     try {
-      const result = await sovitsApi.updateVoice(editing.id, {
+      const result = await voiceApi.updateVoice(editing.id, {
         name: editing.name,
         prompt_text: editing.prompt_text,
         prompt_lang: editing.prompt_lang || 'zh',
@@ -215,7 +218,7 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
     async (voice: SovitsVoice, next: File) => {
       setSubmitting(true);
       try {
-        await sovitsApi.replaceVoiceAudio(voice.id, next);
+        await voiceApi.replaceVoiceAudio(voice.id, next);
         toast.success('已替换音频');
         setEditing(null);
         await load();
@@ -255,7 +258,7 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
     async (voice: SovitsVoice) => {
       if (!window.confirm(`确定删除音色「${voice.name}」吗？此操作不可撤销。`)) return;
       try {
-        await sovitsApi.deleteVoice(voice.id);
+        await voiceApi.deleteVoice(voice.id);
         toast.success('已删除');
         await load();
       } catch (err) {
@@ -279,9 +282,10 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
     return (
       <Alert variant="destructive">
         <Server className="size-4" />
-        <AlertTitle>GPT-SoVITS 本地服务不可用</AlertTitle>
+        <AlertTitle>音色库读取失败</AlertTitle>
         <AlertDescription className="space-y-2">
           <p>{error}</p>
+          <p className="text-xs">音色库由本机网关直接提供，不需要 GPT-SoVITS / 任何模型服务在线。</p>
           <Button size="sm" variant="outline" onClick={() => void load()}>
             <RefreshCw className="mr-1.5 size-3.5" />
             重新检测
@@ -293,7 +297,6 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
 
   return (
     <div className="space-y-5">
-      <SovitsServiceNotice onGoSettings={onGoSettings} />
       <Alert>
         <Mic className="size-4" />
         <AlertTitle>GPT-SoVITS 没有内置音色</AlertTitle>
@@ -381,7 +384,7 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
                       controls
                       preload="none"
                       className="h-8 w-full"
-                      src={resolveAudioUrl(`/v1/voices/${voice.id}/audio`) ?? undefined}
+                      src={voiceApi.voiceAudioUrl(voice.id)}
                     />
                   ) : (
                     <p className="text-xs text-destructive">音频文件已丢失，请重新上传</p>
@@ -486,7 +489,7 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
                 disabled={Boolean(file)}
               />
               <p className="text-[11px] text-muted-foreground">
-                参考音频需为 3~10 秒；相对路径按 GPT-SoVITS 根目录解析
+                参考音频需为 3~10 秒；请填写本机绝对路径
               </p>
             </div>
 
@@ -681,7 +684,7 @@ export function VoiceLibraryPage({ onGoSettings }: { onGoSettings?: () => void }
       </Dialog>
 
       <p className="text-center text-xs text-muted-foreground">
-        参考音频与转写文本全部保存在本机（默认位于 trainer/.data/voices），不会被上传到任何服务器。
+        参考音频与转写文本全部保存在本机（仓库根 <code className="rounded bg-muted px-1 py-0.5">voicelib/</code>，网关与 GPT-SoVITS 共用），不会被上传到任何服务器。
         {voices.length > 0
           ? ` 当前音色总时长 ${formatDuration(
               voices.reduce((sum, voice) => sum + (voice.duration_s ?? 0), 0),
