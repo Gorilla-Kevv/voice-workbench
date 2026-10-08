@@ -257,7 +257,7 @@ export const GUIDES: Guide[] = [
         page: 'history',
         how: ['在「历史记录」里回听、下载之前合成的结果（本地 IndexedDB 存储）。'],
         prev: '已经合成过至少一条。',
-        next: '想长期保留自己的音色，就进「模型训练」跑一遍完整训练链（见 GPT-SoVITS 指引）。',
+        next: '想长期保留自己的音色，就进「音色微调训练」跑一遍完整训练链（见 GPT-SoVITS 指引）。',
       },
     ],
   },

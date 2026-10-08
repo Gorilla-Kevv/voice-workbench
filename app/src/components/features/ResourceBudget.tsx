@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, CheckCircle2, Gauge, HardDrive, Loader2, RefreshCw, Sparkles } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Gauge, HardDrive, Loader2, MonitorDot, RefreshCw, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { GpuMonitorWindow } from '@/components/features/GpuMonitorWindow';
 import { cn } from '@/lib/utils';
 import { localServiceApi } from '@/lib/localService';
 import { arbiterApi } from '@/lib/arbiter';
@@ -55,6 +56,7 @@ export function ResourceBudget({
   const [releasing, setReleasing] = useState(false);
   const [stopping, setStopping] = useState(false);
   const [focusing, setFocusing] = useState(false);
+  const [monitorOpen, setMonitorOpen] = useState(false);
   const mounted = useRef(true);
 
   useEffect(() => {
@@ -192,6 +194,16 @@ export function ResourceBudget({
           size="sm"
           variant="ghost"
           className="ml-auto h-6 px-1.5 text-[11px]"
+          onClick={() => setMonitorOpen(true)}
+          title="看谁在占显存，右键可停掉选中的进程"
+        >
+          <MonitorDot className="size-3" />
+          显存监控
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-6 px-1.5 text-[11px]"
           onClick={() => void refresh()}
           disabled={loading}
         >
@@ -275,12 +287,14 @@ export function ResourceBudget({
                 <span className="font-medium text-foreground">当前挂在 GPU 上的进程（{gpuProcs.reduce((n, p) => n + p.count, 0)} 个）：</span>
                 {gpuProcs.slice(0, 10).map((p) => `${p.name}${p.count > 1 ? `×${p.count}` : ''}`).join('、')}
                 {gpuProcs.length > 10 ? ` 等 ${gpuProcs.length} 类` : ''}
-                <span className="opacity-70">（Windows 下拿不到每进程显存数，不认识的先别乱关；本项目自己的 python 服务进程在列属正常）</span>
+                <span className="opacity-70">（点上方「显存监控」看读数并停掉选中的进程；不认识的先别乱关，本项目自己的 python 服务进程在列属正常）</span>
               </li>
             ) : null}
           </ul>
         </div>
       ) : null}
+
+      <GpuMonitorWindow open={monitorOpen} onOpenChange={setMonitorOpen} />
     </div>
   );
 }

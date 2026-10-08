@@ -808,7 +808,7 @@ export function AsrPage() {
         <CardHeader className="flex flex-row items-center justify-between space-y-0">
           <div>
             <CardTitle className="text-base">已生成的数据集</CardTitle>
-            <CardDescription>清单可直接在「模型训练」里作为列表文件使用，也可以逐条校对。</CardDescription>
+            <CardDescription>清单可直接在「音色微调训练」里作为列表文件使用，也可以逐条校对。</CardDescription>
           </div>
         </CardHeader>
         <CardContent>

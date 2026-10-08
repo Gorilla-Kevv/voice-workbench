@@ -68,12 +68,12 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     description: '上传或录制一段音频样本，零样本复刻目标音色（MiMo 云端）',
   },
   voices: {
-    title: '音色库',
-    description: '管理本地 GPT-SoVITS 的参考音频与提示文本，这是本地合成的音色来源',
+    title: '音色库管理',
+    description: '跨模型共享的参考音频与提示文本：网易 / IndexTTS / GPT-SoVITS 都从这里取音色（voicelib/，网关托管）',
   },
   history: { title: '历史记录', description: '所有合成结果保存在浏览器本地，可随时回听、下载与清理' },
   training: {
-    title: '模型训练',
+    title: '音色微调训练',
     description: '用本地 GPU 跑 GPT-SoVITS 全流程：降噪、切分、标注、GPT 与 SoVITS 微调',
   },
   rvc: {

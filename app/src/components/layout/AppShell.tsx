@@ -28,7 +28,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { FlowGuide } from '@/components/features/FlowGuide';
-import { ResourceSiteLink } from '@/components/features/ResourceSiteLink';
+import { ResourceHubMenu } from '@/components/features/ResourceHub';
 import { cn } from '@/lib/utils';
 import type { ModuleStates, NavKey, SovitsLinkState } from '@/types';
 
@@ -166,11 +166,20 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     ],
   },
   {
+    // 音色库已跨模型通用（仓库根 voicelib/，网关托管）——不再挂在 GPT-SoVITS 组下，
+    // 独立成组，免得用户以为「选音色要先开 GPT-SoVITS」（阶段 26补7 修的就是这个误导）。
+    title: '音色库 · 跨模型共享',
+    items: [
+      { key: 'voices', label: '音色库管理', icon: Waves, hint: '参考音频与提示文本 · 网易 / IndexTTS / GPT-SoVITS 通用' },
+    ],
+  },
+  {
     title: 'GPT-SoVITS · 辅助',
     items: [
-      { key: 'voices', label: '音色库', icon: Waves, hint: '参考音频与提示文本' },
+      // 与「音色库管理」区分开：这里是 GPT-SoVITS 专属的**训练**链路
+      // （训出专属权重后，再回音色库登记用）；批量合成也走这条微调模型。
       { key: 'batch', label: '批量合成', icon: ListMusic, hint: '一份清单生成一批音频' },
-      { key: 'training', label: '模型训练', icon: FlaskConical, hint: '切分 / 标注 / 微调' },
+      { key: 'training', label: '音色微调训练', icon: FlaskConical, hint: '切分 / 标注 / 微调 · 训出 GPT-SoVITS 专属权重' },
     ],
   },
   {
@@ -411,8 +420,8 @@ export function AppShell({
             <p className="truncate text-xs text-muted-foreground lg:text-sm">{header.description}</p>
           </div>
           <div className="flex items-center gap-2">
-            {/* 资源站入口常驻右上角：所有页面一处可达（见 ResourceSiteLink 注释） */}
-            <ResourceSiteLink />
+            {/* 资源库：点开是下拉展开栏（调研快照的分类清单，可滚动浏览） */}
+            <ResourceHubMenu />
             <Tooltip>
               <TooltipTrigger asChild>
                 <Badge variant="secondary" className="h-7 gap-1.5 px-2.5 font-mono text-[11px] font-normal">

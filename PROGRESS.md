@@ -1371,3 +1371,50 @@
 
 - **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
 - 本次文档更新时间：10.08 15:57
+
+## 阶段 26补9 — 显存监控小窗（右键停进程）+ 音色库独立入口 + 资源库展开面板 [计划时间：10.08 16:00 BY Qoder][完成时间：10.08 16:35 BY Qoder]
+- 分支：feature/vc-svc
+
+- **起因**：用户三点需求——① 资源预估窗加显存占用监控小窗：点击看后台进程、大户高亮、**右键菜单手动停止进程**，
+  所有模型入口都要有；② 音色库从 GPT-SoVITS 导航组独立成单独入口，但 GPT-SoVITS 原训练入口不丢、改名区分；
+  ③ 顶栏「资源库」改成展开式下拉面板，集中展示阶段调研的全部结果（含未核实的评论区/简介网盘链与 BV 快速链接），
+  并在音色库页右侧约三分之一处内嵌同一面板。
+
+- **已完成**
+  - **网关**：`lib/gpuProcesses.ts` 重写——逐进程 pid + 显存读数（WDDM 拿不到就 null，界面标「未知」不编数）
+    + 按名聚合视图（补 mem_mb/pids）；新增 `POST /api/resources/gpu-processes/kill`，护栏三连：
+    pid 必须在强制刷新后的 nvidia-smi 快照里、系统关键进程名单（csrss/lsass/dwm/explorer 等）一律拒绝、
+    网关自身 pid 拒绝；满足才 `taskkill /F /T`。与 arbiter「不扫描不主动 kill」的边界不冲突——只杀用户亲眼选中的。
+  - **前端小窗**：新 `GpuMonitorWindow.tsx`（Dialog）——进程行按显存合计排序，≥1 GB 红标「显存大户」、
+    ≥300 MB 琥珀「占用不小」、占比条可视化；右键行出 ContextMenu（逐 pid 停止 / 多实例全停，一次确认）；
+    刷新按钮 + 结果回显条。挂在 `ResourceBudget` 头部「显存监控」按钮上——**所有模型入口一处接入全部生效**
+    （网易/IndexTTS/批量/训练/变声/翻唱/ASR 共用底座）。
+  - **导航**：音色库独立成组「音色库 · 跨模型共享 → 音色库管理」；GPT-SoVITS 组保留并改名训练入口
+    「模型训练 → 音色微调训练」（hint 写明「训出专属权重后再回音色库登记」）；
+    页头与四处「模型训练」文案引用同步。
+  - **资源库面板**：新 `lib/resourceHub.ts`（调研快照 2026-10-08，五分类 20 条，每条带已核实/未核实标记与
+    付费/需申请/网盘来源角标；B站三条真实网盘链：b23.tv 模型地址、夸克×2、百度+提取码）
+    + `ResourceHub.tsx`（ResourceHubMenu 顶栏下拉 / ResourceHubList 内嵌列表，滚动浏览）；
+    顶栏「资源库」由外链改为下拉展开栏；音色库页改 `lg:grid-cols-3`——左 2/3 管理表、右 1/3 资源库卡（sticky）；
+    旧 `ResourceSiteLink.tsx` 移除（res.acgnai.top 收进面板第一条）。
+
+- **未完成**：无（本阶段范围内）
+
+- **改动文件**：新增 `app/src/components/features/GpuMonitorWindow.tsx`、`app/src/components/features/ResourceHub.tsx`、
+  `app/src/lib/resourceHub.ts`；改 `server/src/lib/gpuProcesses.ts`、`server/src/routes/resources.ts`、
+  `app/src/lib/resources.ts`、`app/src/components/features/ResourceBudget.tsx`、
+  `app/src/components/layout/AppShell.tsx`、`app/src/pages/VoiceLibraryPage.tsx`、`app/src/App.tsx`、
+  `app/src/lib/guides.ts`、`app/src/pages/AsrPage.tsx`；删 `app/src/components/features/ResourceSiteLink.tsx`
+
+- **测试结果**：typecheck / eslint / build（app+server）全过。接口实测——gpu-processes 返回 32 类 37 进程含 pids ✓、
+  kill 护栏：不存在的 pid 拒（NOT_LISTED）✓、pid 4 拒（PROTECTED）✓。浏览器实测——「显存监控」小窗打开列出进程与
+  pid、「未知」如实显示；右键 cloudmusic 行出「停止进程 pid」菜单 ✓（未真杀任何进程）；顶栏「资源库」下拉含
+  五分类 + 未核实徽标 + 洛天依/夸克链 + 滚动 ✓；导航「音色库 · 跨模型共享」独立成组、「音色微调训练」改名 ✓；
+  音色库页左 496px/右 238px ≈ 2:1 内嵌资源库卡 ✓；控制台无新报错。
+
+- **风险**：① 本机 WDDM 下 nvidia-smi 对所有进程都报 N/A——小窗的高亮/占比条依赖读数，读不到时按实例数排序、
+    标「未知」，不假装精确；② taskkill /T 会带走子进程树，确认框已写明「未保存内容会一起丢」；
+    ③ 资源库是 10.08 的调研快照，网盘链失效是常态——面板底部已注明快照日期与「商用前逐条自查」。
+
+- **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
+- 本次文档更新时间：10.08 16:35

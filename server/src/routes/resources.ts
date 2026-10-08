@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { gpuProcesses } from '../lib/gpuProcesses.js';
+import { gpuProcesses, killGpuProcess } from '../lib/gpuProcesses.js';
 import { logger } from '../lib/logger.js';
 import { resourceArbiter, type FocusEngine } from '../services/arbiter.js';
 
@@ -70,8 +70,35 @@ resourcesRouter.get('/focus', (_req, res) => {
   res.json({ ok: true, ...resourceArbiter.status() });
 });
 
-/** 当前挂在 GPU 上的进程（按名字聚合）。WDDM 拿不到每进程显存数，只报谁在、几个实例。 */
+/** 当前挂在 GPU 上的进程（按名字聚合，含每程序显存合计与 pid 列表；WDDM 拿不到时为空）。 */
 resourcesRouter.get('/gpu-processes', async (_req, res) => {
   const processes = await gpuProcesses();
   res.json({ ok: true, processes });
+});
+
+/**
+ * 手动停止一个 GPU 进程（阶段 26补9）。
+ *
+ * 与 arbiter 的「不扫描、不主动 kill」边界不冲突：这里只杀用户在显存监控小窗里
+ * **亲眼选中**的 pid，且必须仍在 nvidia-smi 快照里、不在系统关键进程名单里（见 lib/gpuProcesses.ts）。
+ */
+resourcesRouter.post('/gpu-processes/kill', async (req, res) => {
+  const pid = Number(req.body?.pid);
+  if (!Number.isFinite(pid)) {
+    res.status(400).json({
+      ok: false,
+      error: { code: 'BAD_PID', message: `非法 pid：${String(req.body?.pid ?? '')}`, retryable: false, hint: '只能从监控小窗的列表里选进程。' },
+    });
+    return;
+  }
+  const result = await killGpuProcess(pid);
+  logger.info('手动停止 GPU 进程', { pid, status: result.status, message: result.message });
+  if (result.killed) {
+    res.json({ ok: true, ...result });
+  } else {
+    res.status(result.status === 'failed' ? 500 : 400).json({
+      ok: false,
+      error: { code: 'GPU_KILL_' + result.status.toUpperCase(), message: result.message, retryable: result.status === 'failed', hint: result.hint },
+    });
+  }
 });

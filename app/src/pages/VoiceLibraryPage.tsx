@@ -5,6 +5,7 @@ import {
   ChevronRight,
   FileAudio,
   FolderOpen,
+  LibraryBig,
   Loader2,
   Mic,
   Pencil,
@@ -35,6 +36,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { TermTip } from '@/components/features/TermTip';
+import { ResourceHubList } from '@/components/features/ResourceHub';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
@@ -532,10 +534,12 @@ export function VoiceLibraryPage() {
         <AlertDescription>
           一次零样本克隆需要「3~10 秒的参考音频」+「这段音频的逐字转写文本」。
           音频要求单人、无背景音乐、无混响；转写文本要准确，错字会被直接学进模型。
-          想获得更高相似度，可以到「模型训练」用 1 分钟以上的语料微调出专属权重。
+          想获得更高相似度，可以到「音色微调训练」用 1 分钟以上的语料微调出专属权重。
         </AlertDescription>
       </Alert>
 
+      <div className="grid items-start gap-5 lg:grid-cols-3">
+        <div className="min-w-0 space-y-5 lg:col-span-2">
       <Card>
         <CardHeader className="flex-row items-start justify-between gap-3 space-y-0 pb-3">
           <div>
@@ -873,6 +877,25 @@ export function VoiceLibraryPage() {
           ) : null}
         </CardContent>
       </Card>
+
+        </div>
+
+        {/* 右侧三分之一：资源库面板（与顶栏下拉同一份数据，可滚动浏览） */}
+        <Card className="lg:col-span-1 lg:sticky lg:top-20">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <LibraryBig className="size-4 text-violet-600 dark:text-violet-400" />
+              资源库
+            </CardTitle>
+            <CardDescription>
+              缺素材、缺模型、缺教程：音色模型 / 训练语料 / B站配布分类清单，滚动浏览（外部链接新窗口打开）
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="scrollbar-thin max-h-[68vh] overflow-y-auto">
+            <ResourceHubList />
+          </CardContent>
+        </Card>
+      </div>
 
       {/* ---------------- 新建（单条精导：带参考文本） ---------------- */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>

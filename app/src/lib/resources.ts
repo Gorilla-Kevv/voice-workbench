@@ -220,10 +220,12 @@ export function estimateTask(task: ResourceTask, snapshot: ResourceSnapshot): Re
   };
 }
 
-/** 挂在 GPU 上的进程（网关按名字聚合；WDDM 拿不到每进程显存数，所以只有谁在 + 实例数） */
+/** 挂在 GPU 上的进程（网关按名字聚合；WDDM 下每进程显存可能读不到，mem_mb 为 null 表示未知） */
 export interface GpuProcessGroup {
   name: string;
   count: number;
+  mem_mb: number | null;
+  pids: number[];
 }
 
 export async function fetchGpuProcesses(): Promise<GpuProcessGroup[]> {
@@ -235,6 +237,28 @@ export async function fetchGpuProcesses(): Promise<GpuProcessGroup[]> {
   } catch {
     return [];
   }
+}
+
+/**
+ * 手动停止一个 GPU 进程（网关护栏：pid 必须在 nvidia-smi 快照里、非系统关键进程）。
+ * 失败抛 RequestError 语义的对象，由调用方展示 message + hint。
+ */
+export async function killGpuProcess(pid: number): Promise<{ message: string; hint?: string }> {
+  const response = await fetch('/api/resources/gpu-processes/kill', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pid }),
+    signal: AbortSignal.timeout(15_000),
+  });
+  const payload = (await response.json().catch(() => null)) as
+    | { ok: boolean; message?: string; hint?: string; error?: { code?: string; message?: string; hint?: string } }
+    | null;
+  if (!response.ok || !payload?.ok) {
+    throw new Error(
+      [payload?.error?.message ?? `停止失败（HTTP ${response.status}）`, payload?.error?.hint].filter(Boolean).join('\n'),
+    );
+  }
+  return { message: payload.message ?? '已停止', hint: payload.hint };
 }
 
 /** 释放常驻显存：三个自有服务的模型都试，失败不影响另一个 */
