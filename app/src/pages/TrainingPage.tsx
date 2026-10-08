@@ -807,28 +807,6 @@ export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {
   const versionOptions = catalog?.versions ?? [{ id: 'v2ProPlus', label: 'v2ProPlus' }];
   const versionLabel = versionOptions.find((item) => item.id === version)?.label ?? version;
 
-  if (connectionError) {
-    return (
-      <Alert variant="destructive">
-        <Server className="size-4" />
-        <AlertTitle>GPT-SoVITS 本地服务不可用</AlertTitle>
-        <AlertDescription className="space-y-2">
-          <p>{connectionError}</p>
-          <p className="text-xs opacity-90">
-            训练需要本机有 GPU 与完整环境。这个服务<strong>默认停用</strong>（把显存留给网易主服务），
-            `npm run dev` 不再自动拉起 —— 要先开启它，训练才跑得起。
-          </p>
-          {/* 整页报错时把「直接开启」的入口一起带上，别让用户对着一条做不到的建议 */}
-          <SovitsServiceNotice onGoSettings={onGoSettings} />
-          <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
-            <RefreshCw className="mr-1.5 size-3.5" />
-            重新加载
-          </Button>
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
   return (
     <div className="space-y-5">
       {health && !health.capabilities.training ? (
@@ -848,6 +826,24 @@ export function TrainingPage({ onGoSettings }: { onGoSettings?: () => void } = {
       {/* 训练是最吃显存的一项（门槛 6 GB），开跑前先把账算清楚 */}
       <ResourceBudget task="training" />
       <SovitsServiceNotice onGoSettings={onGoSettings} />
+
+      {/* 服务停着时页面照常渲染（阶段 26补10）：这里只补一条具体报错与重试，不再整页塌掉 */}
+      {connectionError ? (
+        <Alert variant="destructive">
+          <Server className="size-4" />
+          <AlertTitle>GPT-SoVITS 本地服务未启动</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>{connectionError}</p>
+            <p className="text-xs opacity-90">
+              页面可以照常浏览与填写；训练需要本机有 GPU 与完整环境，先用上方「直接开启」拉起服务，再点「重新加载」。
+            </p>
+            <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
+              <RefreshCw className="mr-1.5 size-3.5" />
+              重新加载
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       <Card>
         <CardHeader className="pb-3">

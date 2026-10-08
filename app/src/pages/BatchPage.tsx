@@ -713,33 +713,30 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
   // 渲染
   // ------------------------------------------------------------------
 
-  if (connectionError) {
-    return (
-      <Alert variant="destructive">
-        <Server className="size-4" />
-        <AlertTitle>GPT-SoVITS 本地服务不可用</AlertTitle>
-        <AlertDescription className="space-y-2">
-          <p>{connectionError}</p>
-          <p className="text-xs opacity-90">
-            本地服务由项目内置的 Python 进程提供（默认 http://127.0.0.1:9881）。它<strong>默认停用</strong>
-            （把显存留给网易主服务），`npm run dev` 不会再自动拉起 —— 要用批量合成得先开启。
-          </p>
-          {/* 整页报错时把「直接开启」的入口一起带上：否则这张卡替掉了页面里的提示，用户只剩一条做不到的建议 */}
-          <SovitsServiceNotice onGoSettings={onGoSettings} />
-          <Button size="sm" variant="outline" onClick={() => void loadVoices()}>
-            <RefreshCw className="mr-1.5 size-3.5" />
-            重新检测
-          </Button>
-        </AlertDescription>
-      </Alert>
-    );
-  }
-
   return (
     <div className="space-y-5">
       {/* 批量一次几十条，跑之前先看显存够不够（门槛 3 GB，条数越多峰值越高） */}
       <ResourceBudget task="batch" />
       <SovitsServiceNotice onGoSettings={onGoSettings} />
+
+      {/* 服务状态异常时页面照常渲染（阶段 26补10）：只补一条具体报错与重试，不再整页塌掉 */}
+      {connectionError ? (
+        <Alert variant="destructive">
+          <Server className="size-4" />
+          <AlertTitle>GPT-SoVITS 本地服务未启动</AlertTitle>
+          <AlertDescription className="space-y-2">
+            <p>{connectionError}</p>
+            <p className="text-xs opacity-90">
+              清单与参数可以照常填写（音色列表走网关的共享音色库，不依赖本服务）；批量合成需要服务在线
+              （默认 http://127.0.0.1:9881，默认停用），先用上方「直接开启」，再点「重新检测」。
+            </p>
+            <Button size="sm" variant="outline" onClick={() => void loadVoices()}>
+              <RefreshCw className="mr-1.5 size-3.5" />
+              重新检测
+            </Button>
+          </AlertDescription>
+        </Alert>
+      ) : null}
 
       {/* ---------------- 音色与文本 ---------------- */}
       <Card>
