@@ -3,10 +3,11 @@
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
 ## 进度看板
-- 当前正在开发任务：无进行中阶段——阶段 26 及补 2~6 已完成，**等用户实测对比网易 vs IndexTTS（听感 + 用时）拍板主力**
-- 下一阶段任务：主力拍板后回填 preload 账本与门槛值；R2T2 离线转写接入（Windows 原生可行，见 HANDOFF 坑 12）
-- 可提前进行的任务：阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理
+- 当前正在开发任务：**阶段 27 已完成**（Genie-TTS / dots.tts 评估 + 本机跨引擎实测基准，结论见 `docs/GENIE-DOTSTTS-EVALUATION.md`），等用户对「dots.tts 试点阶段 A」点头
+- 下一阶段任务：阶段 28 dots.tts 试点 A——`audiocpp_server` 起 9884 + 网关 `/api/dots/*` 透传 + arbiter/preload 记账（实测净占 ~6.3 GB）
+- 可提前进行的任务：主力拍板后回填 preload 账本与门槛值；R2T2 离线转写接入（HANDOFF 坑 12）；阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理
 - 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）
+- 已否决的路线：**GPT-SoVITS 整体迁移到 Genie-TTS**（阶段 27 实测+源码核查，理由见评估文档 §5）
 
 ## 编号说明（2026-10-06 合规整理时补记）
 - 历史上出现过**两组同号阶段**：「阶段 23」= 浏览器走查 与 文档修正、「阶段 24」= 全站拖拽导入 与 启动预加载。
@@ -1444,3 +1445,69 @@
 
 - **下一阶段入口**：不变（用户 A/B 定主力；R2T2 离线转写）
 - 本次文档更新时间：10.08 16:48
+
+
+## 阶段 27 — 引擎评估：Genie-TTS 与 dots.tts（含本机跨引擎实测基准） [计划时间：10.08 16:31 BY Qoder][完成时间：10.08 17:42 BY Qoder]
+- 分支：feature/vc-svc
+
+- **起因**：用户提出把 GPT-SoVITS 整体架构迁到 Genie-TTS（`github.com/High-Logic/Genie-TTS`），
+  动机是「它能让生成的语音情感被明显操控」；随后追加 dots.tts（`github.com/studio-dots-ai/dots.tts`）
+  与现有 IndexTTS-2.5 / 网易 Confucius4-TTS 一起对比。要求：先收集信息 + 跑数据，**不动任何项目代码**。
+
+- **已完成**
+  - **源码级核查 Genie-TTS**（浅克隆到临时目录，64 个 py 文件全量 grep）：确认它只是 GPT-SoVITS 的
+    ONNX CPU 推理器 + 权重转换器，**情感控制为零**（全仓库只在 README 注释出现"情感和语调克隆"，
+    即靠参考音频，与 GPT-SoVITS 同机制）；公开 API 无 `top_k/top_p/temperature/seed/speed`；
+    FastAPI 6 个 POST 且无 `/health`；`Utils/Shared.py` 全局单槽参考音频是并发缺陷；
+    版本只到 V2/V2ProPlus 且靠 `.pth` 体积 >150MB 猜版本（我们 `s2Gv2Pro.pth` = 155MB 会被误判）
+  - **dots.tts 调研**：2B 连续 AR（Qwen2.5-1.5B + DiT flow-matching + 48kHz AudioVAE），Apache-2.0，
+    当日仍在提交；官方 Python 路径要求 py3.10–3.12 + torch 2.8/CUDA 12.8 + bf16 5.3–7.9 GB +
+    `torch.compile` 冷启动 ~3 分钟 → 本机 8.6 GB 卡不可行；社区 **audio.cpp**（ggml/C++，无 Python）
+    原生支持 SOAR/MF/Edit 的 q8_0 GGUF + Windows CUDA 后端 → 本机可行路径
+  - **本机实测基准**（脚本与样本全部落在仓库外 `F:\schoolCompWorks\clone\_bench\`，项目代码零改动）：
+    统一 6 句文本 + 统一参考音色，测 RTF / 暖机 / 整卡显存峰值 / 采样率——
+    GPT-SoVITS **RTF 0.46**、暖机 22.2s、峰值 4563 MB、32 kHz；IndexTTS 1.354 / 64.9s / 7562 MB / 22.05 kHz；
+    网易 1.605 / 68.9s / 7752 MB / 22.05 kHz；**Genie CPU 0.851、载模型 7.5s、零显存、32 kHz**；
+    **dots.tts SOAR q8 0.918、载模型 ~10s、净占 ~6.3 GB、48 kHz**
+  - **情感能力实测**（同句只换参考音频，五引擎同一协议）：五套都能迁移情感，差异在稳定性；
+    Genie 语速跨度最大（Δ3.99 字·s⁻¹，哀 10.2s / 怒 3.88s）与 issue #31「情绪很容易乱飘」吻合
+  - **情感控制实测**：dots.tts.edit 的 `<emo type="cheerful|angry|melancholic">` 生效
+    （F0 106→222.8 / 250.0），**中文标签 `type="开心|悲伤"` 同样生效**（F0 238.3 / 152.4）；
+    `<rate factor="1.3">` 实测倍率 ×1.32；`<pitch semitones="5">` 仅部分跟随（+13%）；
+    局部 `<emo>` 只改目标句（F0 106→331、能量 0.050→0.426），非目标句能量基本保持（0.0375→0.0414）；
+    **反向验证：普通 TTS 模板内联 `<emo>` 与 `instruction_tts` 自然语言指令均无效**（开心/悲伤 F0 109.8 vs 108.6）
+    → 情感控制必须走「生成 + Edit 两段式」
+  - **Genie 权重转换打通**：`s1v3.ckpt` + `s2Gv2ProPlus.pth` → 320 MB ONNX，自动识别 `Model Type: V2ProPlus` ✓
+  - **安装兼容性实测取证**：`jieba_fast` 在 PyPI **从未发布 wheel**（15 个文件全 sdist）→ Windows
+    `pip install genie-tts` 必失败（需 MSVC）；py3.13 连 `tokenizers` 都编不过；最终靠定向装依赖 +
+    手写 `jieba_fast` 垫片 + `HF_ENDPOINT=hf-mirror` 才跑通。另发现 `import genie_tts` 在缺 GenieData 时
+    **同步 `input()` 阻塞**、并在 GBK 控制台 `UnicodeEncodeError` 崩在导入期（`Core/Resources.py:68`）
+  - **交付文档**：新增 `docs/GENIE-DOTSTTS-EVALUATION.md`（结论 / 环境协议 / 性能表 / 情感表 / 逐维度评估 /
+    迁移判定 / dots.tts 落地路径与风险 / 复现清单）
+
+- **未完成**：dots.tts 试点阶段 A（`audiocpp_server` 9884 + 网关 `/api/dots/*` 透传 + arbiter/preload 记账）
+  未开工——本阶段被明确要求「先不动代码」；Genie 的「零显存备援第四服务」方案同样只写到建议，未实施
+
+- **改动文件**：`docs/GENIE-DOTSTTS-EVALUATION.md`（新增）、`PROGRESS.md`、`HANDOFF.md`。
+  **项目代码零改动**；基准脚本/样本在仓库外 `_bench/`（`bench_existing.py`、`bench_emo2.py`、
+  `bench_genie.py`、`bench_genie_emotion.py`、`bench_dots.py`、`bench_dots_edit.py`、
+  `analyse_preservation.py`、`aggregate_results.py`）
+
+- **测试结果**：三套本地服务全链路实测通（经网关 8787 透传，服务按阶段前状态恢复：
+  GPT-SoVITS/网易 关、IndexTTS 开且模型已卸载，整卡显存回到 1460 MB）；Genie CPU 端到端出音 6 句 +
+  情感迁移 4 句；dots.tts 单会话 16 请求全部成功 + Edit 情感矩阵 9 例全部成功；
+  跨引擎汇总表 `_bench/comparison_tables.md`。**修正两处测量协议错误**：
+  ① 绝对能量阈值把轻声有效合成误判为静音（已改自适应）；② flat 参考音配错转写导致
+  GPT-SoVITS 出现 23s 近静音（属我方错误，配对文本后重测正常）——教训记入 HANDOFF 坑 28
+
+- **风险**：① dots.tts q8 净占 ~6.3 GB，比网易/IndexTTS 更吃紧，接入必须复用「已加载就跳过准入」的修法；
+  ② 情感标签只在 Edit 检查点生效，UI 若放到生成页会造成"以为坏了"的误报；③ dots.tts 音质/内容准确度
+  未做 ASR 客观核对（本轮只测了声学指标与相对变化），试听样本在 `_bench/out/` 待用户听感裁决；
+  ④ `<pitch>` 数值承诺要保守（实测 +13% 对要求 +33%）
+
+- **下一阶段入口**：阶段 28（dots.tts 试点 A）。目标=端到端跑通一次生成 + 一次 `<emo>` 编辑；
+  涉及文件=`server/src/services/runtime.ts`、`server/src/routes/`（新增 dots 透传）、
+  `server/src/services/arbiter.ts`、`server/src/services/preload.ts`、`app/src/lib/`（新增 dots 客户端）；
+  分支=feature/vc-svc；验证命令=`npm run typecheck && npm run lint` +
+  `audiocpp_cli --task tts --family dots_tts --model dl/dots-tts-soar-q8_0.gguf --backend cuda --metrics`
+- 本次文档更新时间：10.08 17:42
