@@ -90,7 +90,8 @@ WEIGHTS: List[WeightSpec] = [
         relative="assets/pretrained_v2/f0G32k.pth",
         url=_HF_RVC + "pretrained_v2/f0G32k.pth",
         mirrors=[_HF_RVC_MIRROR + "pretrained_v2/f0G32k.pth"],
-        size_mb=84.0,
+        # 体积按**实测**填（阶段 29补1 下载后校正）：此前的 84MB 是估的
+        size_mb=70.5,
         description="RVC v2 32k 生成器底模（仅训练需要）",
         required=False,
     ),
@@ -100,8 +101,30 @@ WEIGHTS: List[WeightSpec] = [
         relative="assets/pretrained_v2/f0D32k.pth",
         url=_HF_RVC + "pretrained_v2/f0D32k.pth",
         mirrors=[_HF_RVC_MIRROR + "pretrained_v2/f0D32k.pth"],
-        size_mb=54.0,
+        size_mb=136.3,
         description="RVC v2 32k 判别器底模（仅训练需要）",
+        required=False,
+    ),
+    # 48k 底模（阶段 29补1 补）：`configs/v2/48k.json` 一直存在，但没底模就等于
+    # 选了 48k 也只能从零训。32k 省显存、48k 保高频（齿音/气声更完整），两条都留着。
+    WeightSpec(
+        key="rvc_pretrained_g48",
+        engine="rvc",
+        relative="assets/pretrained_v2/f0G48k.pth",
+        url=_HF_RVC + "pretrained_v2/f0G48k.pth",
+        mirrors=[_HF_RVC_MIRROR + "pretrained_v2/f0G48k.pth"],
+        size_mb=72.0,
+        description="RVC v2 48k 生成器底模（仅训练需要）",
+        required=False,
+    ),
+    WeightSpec(
+        key="rvc_pretrained_d48",
+        engine="rvc",
+        relative="assets/pretrained_v2/f0D48k.pth",
+        url=_HF_RVC + "pretrained_v2/f0D48k.pth",
+        mirrors=[_HF_RVC_MIRROR + "pretrained_v2/f0D48k.pth"],
+        size_mb=136.3,
+        description="RVC v2 48k 判别器底模（仅训练需要）",
         required=False,
     ),
     # ---------------- DDSP-SVC（歌声转换） ----------------

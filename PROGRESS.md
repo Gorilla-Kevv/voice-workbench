@@ -2401,6 +2401,34 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 - 本次文档更新时间：10.09 00:25（计划态，未动代码）
 
+## 阶段 29补1 —— 补齐 32k / 48k 训练底模 [计划时间：10.10 02:00 BY CodeBuddy][完成时间：10.10 02:14 BY CodeBuddy]
+
+- 分支：feature/vc-svc
+- 用户 10.10 拍板：「下 32k/48k 底模，顺手补前端入口 → 最后真机小 epochs 冒烟」。本条是第一步。
+
+### 已完成
+
+| 文件 | 内容 |
+| --- | --- |
+| `trainer/app/weights.py` | 新增 `rvc_pretrained_g48` / `rvc_pretrained_d48`（`assets/pretrained_v2/f0G48k.pth`、`f0D48k.pth`）；并把四个底模的 `size_mb` 从估值（84/54）改成**下载后的实测值** |
+| `vendor/rvc/assets/pretrained_v2/` | 实测下载到位：`f0G32k` 70.5MB、`f0D32k` 136.3MB、`f0G48k` 72.0MB、`f0D48k` 136.3MB（连同原有的 40k 一组，三种采样率齐了） |
+
+下载走的是既有链路 `scripts/download_models.py --engine rvc`（镜像兜底 + 断点续传），**没有新造轮子**。
+
+### 测试结果
+
+- `.tmp/verify_vc_train_official.py` **37/37 全绿**（脚本里两条「32k 缺底模」的断言已按新事实改写为「必须有」，并补了 48k 两条）
+- 复跑 dry-run：四个底模全部 `[skip]`（已存在），无 `.part` 残留
+
+### 意义
+
+改前 `full` 模式只有 **40k + v1** 一条路（32k/48k 只能从零训）；现在 **32k / 48k + v2** 也能带底模训，
+**32k 更省显存**（8GB 卡上比 40k 稳），**48k 保留更多高频**。三条路都通了。
+
+### 下一阶段入口
+
+阶段 29补2 —— 前端「RVC 训练」入口（T3）+ 真机小 epochs 冒烟。
+
 ## 阶段 30（计划）—— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化
 
 - 分支=feature/vc-svc（拟定）
