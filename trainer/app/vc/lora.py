@@ -250,7 +250,14 @@ def unmerge_adapter(model: nn.Module) -> int:
 
 
 def save_adapter(model: nn.Module, path: Path, meta: Optional[Dict[str, Any]] = None) -> Path:
-    """存一个适配器文件（仅 LoRA 权重 + 元信息）。"""
+    """存一个适配器文件（仅 LoRA 权重 + 元信息）。
+
+    **必须经文件对象写，不能把路径字符串交给 `torch.save`。**
+    坑（2026-10 实测）：torch 的 `PyTorchFileWriter` 在 Windows 上用 UTF-16 打开路径，
+    文件名里**奇数个非 ASCII 字符**时会越界一格，直接
+    `RuntimeError: File ... cannot be opened.`（偶数个则正常，极具迷惑性）。
+    用户的中文音色名很容易撞上。走 `open(...,'wb')` 把编码交给 Python 的 IO 层就没这问题。
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -260,7 +267,8 @@ def save_adapter(model: nn.Module, path: Path, meta: Optional[Dict[str, Any]] = 
         "meta": meta or {},
         "state": {key: value.cpu() for key, value in adapter_state_dict(model).items()},
     }
-    torch.save(payload, str(path))
+    with open(path, "wb") as handle:
+        torch.save(payload, handle)
     return path
 
 
@@ -290,6 +298,54 @@ def _has_lora(model: nn.Module) -> bool:
 # --------------------------------------------------------------------------
 # 微调
 # --------------------------------------------------------------------------
+
+#: 官方 config 里我们真正需要的 mel 前端字段。缺一不可，缺了就算错 mel。
+_MEL_KEYS = ("filter_length", "n_mel_channels", "sampling_rate", "hop_length", "win_length")
+
+
+def _load_official_mel_config(sr: str, version: str) -> Dict[str, Any]:
+    """读官方 `configs/<v1|v2>/<sr>.json` 里的 `data` 段。
+
+    这是 mel 参数的**唯一权威来源** —— ckpt 里只存模型结构（`config`），
+    不存 hop/n_mels 这类前端参数，凭 ckpt 推算一定会错。
+
+    目录选择照抄官方 `infer-web.py`：
+        if version19 == "v1" or sr2 == "40k":
+            config_path = "v1/%s.json" % sr2
+        else:
+            config_path = "v2/%s.json" % sr2
+    注意 40k 走的是 **v1** 目录（其 n_mel_channels=125，与 v2 的 80/128 都不同）。
+    """
+    root = Path(__file__).resolve().parents[3] / "vendor" / "rvc" / "configs"
+    # `sr` 可能是 `"40k"`，也可能是 ckpt 里的裸赫兹 `"40000"`；配置文件名一律用 `40k` 形态。
+    tag = str(sr).strip().lower()
+    if tag.endswith("k"):
+        tag = tag
+    else:
+        try:
+            tag = "%dk" % (int(float(tag)) // 1000)
+        except (TypeError, ValueError):
+            tag = str(sr)
+    candidates = []
+    if version == "v1" or tag == "40k":
+        candidates.append(root / "v1" / ("%s.json" % tag))
+    candidates.append(root / "v2" / ("%s.json" % tag))
+    candidates.append(root / "v1" / ("%s.json" % tag))
+
+    for path in candidates:
+        if not path.is_file():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8")).get("data") or {}
+        except Exception:  # noqa: BLE001 - 配置坏了就换下一个候选，最后统一报错
+            continue
+        if all(key in data for key in _MEL_KEYS):
+            return data
+    raise FileNotFoundError(
+        "找不到官方 mel 配置：sr=%s version=%s（试过 %s）。"
+        "vendor/rvc/configs 可能不完整，训练无法保证 mel 与推理一致。"
+        % (sr, version, "、".join(str(p) for p in candidates))
+    )
 
 
 def finetune(
@@ -334,6 +390,7 @@ def finetune(
         from infer.lib.train import losses  # type: ignore  # noqa: PLC0415
         from infer.lib.train.mel_processing import (  # type: ignore  # noqa: PLC0415
             mel_spectrogram_torch,
+            spec_to_mel_torch,
         )
 
         ckpt = torch.load(str(base_model), map_location="cpu")
@@ -351,21 +408,37 @@ def finetune(
         model.load_state_dict(ckpt.get("weight") or {}, strict=False)
 
         target_device = device or ("cuda" if torch.cuda.is_available() else "cpu")
-        model = model.to(target_device)
+        # 顺序要紧：**先注入 LoRA，再整体搬上设备**。
+        # 反过来的话（先 `.to(device)` 再 `inject_lora`），新插入的 lora_a/lora_b
+        # 是 CPU 张量，一旦前向就会 `Expected all tensors to be on the same device`
+        # （2026-10 实测）。
         info = inject_lora(model, config)
+        model = model.to(target_device)
 
         params = [p for p in lora_parameters(model)]
         optimizer = torch.optim.AdamW(params, lr=learning_rate)
 
-        # mel 参数取官方 40k 配置的经验值，与数据准备阶段保持一致
+        # mel 参数必须与官方训练/推理用的**完全一致**，否则算出来的 mel 与模型
+        # 期望的分布对不上，听感会发闷、沙哑。这些值不在 ckpt 里，而在官方的
+        # `configs/<v1|v2>/<sr>.json` —— 所以直接去读那份 JSON，别自行推算。
+        #
+        # 坑（2026-10 实测）：早先误取 `cfg[-4]` 当 hop_size。但按官方
+        # `process_ckpt.savee()` 的布局，[-4] 是 `upsample_kernel_sizes`，是个 list，
+        # 于是 `int() argument must be ... not 'list'` 直接崩。
+        # 顺带纠正两个更隐蔽的错误来源：
+        #   * 40k 的配置在 `configs/v1/40k.json`（**不是 v2** —— 官方 infer-web.py
+        #     明确写 `if version19 == "v1" or sr2 == "40k": config_path = "v1/%s.json"`），
+        #     其 `n_mel_channels=125`，既不是 80 也不是 256；
+        #   * `n_mel_channels` 与 gin/spk 维度无关，凭 `cfg[-2]` 猜必错。
+        mel_cfg = _load_official_mel_config(str(cfg[-1]), version)
         mel_kwargs = dict(
-            n_fft=2048,
-            num_mels=cfg[-2] if len(cfg) > 2 else 128,
-            sampling_rate=sample_rate,
-            hop_size=int(cfg[-4]) if len(cfg) > 4 else 512,
-            win_size=2048,
-            fmin=0,
-            fmax=None,
+            n_fft=int(mel_cfg["filter_length"]),
+            num_mels=int(mel_cfg["n_mel_channels"]),
+            sampling_rate=int(mel_cfg["sampling_rate"]),
+            hop_size=int(mel_cfg["hop_length"]),
+            win_size=int(mel_cfg["win_length"]),
+            fmin=float(mel_cfg.get("mel_fmin") or 0.0),
+            fmax=mel_cfg.get("mel_fmax"),
         )
 
         started = time.time()
@@ -374,24 +447,35 @@ def finetune(
             count = 0
             for index in range(0, len(samples), int(batch_size)):
                 batch = samples[index : index + int(batch_size)]
-                tensors = _collate(batch, sample_rate, target_device)
+                tensors = _collate(batch, sample_rate, mel_cfg, target_device)
                 if tensors is None:
                     continue
-                phone, phone_lengths, pitch, pitchf, spec, spec_lengths = tensors
+                phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid = tensors
                 optimizer.zero_grad(set_to_none=True)
                 with torch.autocast(device_type="cuda", enabled=False):
                     if f0:
-                        (y_hat, _, z_mask, (_, z_p, m_p, logs_p, m_q, logs_q)) = model(
-                            phone, phone_lengths, pitch, pitchf, spec, spec_lengths, None
+                        y_hat, ids_slice, _x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q) = model(
+                            phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid
                         )
                     else:
-                        (y_hat, _, z_mask, (_, z_p, m_p, logs_p, m_q, logs_q)) = model(
-                            phone, phone_lengths, spec, spec_lengths, None
+                        y_hat, ids_slice, _x_mask, y_mask, (z, z_p, m_p, logs_p, m_q, logs_q) = model(
+                            phone, phone_lengths, spec, spec_lengths, sid
                         )
-                    mel = mel_spectrogram_torch(spec.squeeze(1).float(), **mel_kwargs)
+                    # ---- 损失，口径对齐官方 train.py ----
+                    # 目标 mel：线性谱 → spec_to_mel；预测 mel：波形 → mel_spectrogram。
+                    # 两者都裁到共同长度再算 L1，避免 segment 切分导致的错位。
+                    mel = spec_to_mel_torch(
+                        spec.float(),
+                        int(mel_cfg["filter_length"]),
+                        int(mel_cfg["n_mel_channels"]),
+                        int(mel_cfg["sampling_rate"]),
+                        float(mel_cfg.get("mel_fmin") or 0.0),
+                        mel_cfg.get("mel_fmax"),
+                    )
                     y_mel = mel_spectrogram_torch(y_hat.float().squeeze(1), **mel_kwargs)
-                    loss = torch.nn.functional.l1_loss(y_mel, mel) * 45.0
-                    loss = loss + losses.kl_loss(z_p, logs_q, m_p, logs_p, z_mask)
+                    span = min(mel.size(-1), y_mel.size(-1))
+                    loss = torch.nn.functional.l1_loss(y_mel[..., :span], mel[..., :span]) * 45.0
+                    loss = loss + losses.kl_loss(z_p, logs_q, m_p, logs_p, y_mask)
                 loss.backward()
                 optimizer.step()
                 running += float(loss.detach().cpu())
@@ -423,30 +507,58 @@ def _load_filelist(path: Path) -> List[List[str]]:
     return samples
 
 
-def _collate(batch: List[List[str]], sample_rate: int, device: str):
-    """把一个 batch 的样本拼成模型输入。单条失败不影响整批。"""
-    phones, pitches, pitchfs, specs = [], [], [], []
+def _collate(batch: List[List[str]], sample_rate: int, spectrogram: Any, device: str):
+    """把一个 batch 的样本拼成模型输入。单条失败不影响整批。
+
+    返回需与 `SynthesizerTrnMs768NSFsid.forward` 的顺序严格对应：
+        phone, phone_lengths, pitch, pitchf, spec, spec_lengths, sid
+
+    要点（每一条都踩过）：
+      * `spec` 必须是**线性谱**（通道数 = `n_fft//2+1`，40k 是 1025），
+        直接把波形塞进去会撞 `enc_q` 的 `spec_channels`：
+        「expected input[...] to have 1025 channels, but got 1 channels」。
+      * `sid` 不能漏，否则 `emb_g(ds)` 收到 None。
+      * `spec_lengths` 是**帧数**（= 波形样本数 // hop_length），不是样本数。
+    """
+    phones, pitches, pitchfs, linears, sids = [], [], [], [], []
     for item in batch:
         try:
             import numpy as np  # noqa: PLC0415
 
-            feature = np.load(item[1])
-            spec = np.load(item[0]) if item[0].endswith(".npy") else None
-            if spec is None:
-                import librosa  # noqa: PLC0415
-
-                spec, _ = librosa.load(item[0], sr=sample_rate, mono=True)
+            feature = np.load(item[1])  # hubert 内容特征 [T, 768]
+            audio, _ = _read_audio(item[0], sample_rate)  # 原始波形（float32，[-1,1]）
+            if audio is None or audio.size == 0:
+                continue
+            # 线性谱：官方 `text.spectrogram_torch` 的等价实现，n_fft=filter_length
+            linear = _linear_spectrogram(audio, spectrogram, device="cpu")
+            if linear is None or linear.size(-1) <= 0:
+                continue
             phone = torch.from_numpy(feature).float()
             if len(item) >= 4:
                 pitch = torch.from_numpy(np.load(item[2])).float()
                 pitchf = torch.from_numpy(np.load(item[3])).float()
             else:
                 pitch = pitchf = None
-            length = min(len(phone), len(spec) // 512 if spec is not None else len(phone))
+
+            # 三者的时间轴必须对齐到帧：特征帧数 ≤ 线性谱帧数
+            spec_len = linear.size(-1)
+            feature_len = phone.size(0)
+            length = min(feature_len, spec_len)
             if length <= 0:
                 continue
+
+            # filelist 官方格式最后一列是说话人 id；缺失时按 0 处理
+            # （单说话人微调本来就是 0，官方 infer-web 写 filelist 时也填 0）。
+            sid = 0
+            if len(item) >= 5:
+                try:
+                    sid = int(item[4])
+                except (TypeError, ValueError):
+                    sid = 0
+
             phones.append(phone[:length])
-            specs.append(torch.from_numpy(np.asarray(spec)[: length * 512]).float())
+            linears.append(linear[..., :length])
+            sids.append(sid)
             if pitch is not None:
                 pitches.append(pitch[:length].long())
                 pitchfs.append(pitchf[:length])
@@ -458,10 +570,12 @@ def _collate(batch: List[List[str]], sample_rate: int, device: str):
     max_len = max(p.size(0) for p in phones)
     phone_batch = torch.zeros(len(phones), max_len, phones[0].size(-1))
     phone_lengths = torch.LongTensor([p.size(0) for p in phones])
-    spec_batch = torch.zeros(len(specs), max_len * 512)
-    for index, (phone, spec) in enumerate(zip(phones, specs)):
+    spec_channels = linears[0].size(0)
+    spec_batch = torch.zeros(len(linears), spec_channels, max_len)
+    for index, (phone, linear) in enumerate(zip(phones, linears)):
         phone_batch[index, : phone.size(0)] = phone
-        spec_batch[index, : spec.size(0)] = spec
+        spec_batch[index, :, : linear.size(-1)] = linear
+
     out = [phone_batch.to(device), phone_lengths.to(device)]
     if pitches:
         pitch_batch = torch.zeros(len(pitches), max_len, dtype=torch.long)
@@ -472,5 +586,62 @@ def _collate(batch: List[List[str]], sample_rate: int, device: str):
         out += [pitch_batch.to(device), pitchf_batch.to(device)]
     else:
         out += [torch.zeros(1).to(device), torch.zeros(1).to(device)]
-    out += [spec_batch.unsqueeze(1).to(device), phone_lengths.to(device) * 512]
+    # spec_lengths 是帧数（官方 train.py 传的就是 y_lengths = 帧数），
+    # 不是样本数 —— 传错会让 y_mask 与 enc_q 的卷积步长对不上。
+    out += [spec_batch.to(device), phone_lengths.to(device)]
+    out += [torch.LongTensor(sids).to(device)]
     return tuple(out)
+
+
+def _read_audio(path: str, sample_rate: int):
+    """读一条音频为 float32 单声道。返回 (np.ndarray | None, sr)。"""
+    import numpy as np  # noqa: PLC0415
+
+    try:
+        import soundfile as sf  # noqa: PLC0415
+
+        data, sr = sf.read(path, dtype="float32", always_2d=False)
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        if sr != sample_rate:
+            import librosa  # noqa: PLC0415
+
+            data = librosa.resample(np.asarray(data, dtype=np.float32), orig_sr=sr, target_sr=sample_rate)
+        return np.asarray(data, dtype=np.float32), sample_rate
+    except Exception:  # noqa: BLE001
+        try:
+            import librosa  # noqa: PLC0415
+
+            data, _ = librosa.load(path, sr=sample_rate, mono=True)
+            return np.asarray(data, dtype=np.float32), sample_rate
+        except Exception:  # noqa: BLE001
+            return None, sample_rate
+
+
+def _linear_spectrogram(audio, cfg: Any, device: str = "cpu"):
+    """线性幅度谱，等价官方 `text.spectrogram_torch`（return_complex=False）。"""
+    import numpy as np  # noqa: PLC0415
+    import torch  # noqa: PLC0415
+
+    n_fft = int(cfg["filter_length"])
+    hop = int(cfg["hop_length"])
+    win = int(cfg["win_length"])
+    try:
+        tensor = torch.from_numpy(np.asarray(audio, dtype=np.float32)).to(device)
+        window = torch.hann_window(win).to(device)
+        spec = torch.stft(
+            tensor,
+            n_fft,
+            hop_length=hop,
+            win_length=win,
+            window=window,
+            center=True,
+            pad_mode="reflect",
+            normalized=False,
+            onesided=True,
+            return_complex=True,
+        )
+        spec = torch.sqrt(spec.real.pow(2) + spec.imag.pow(2) + 1e-6)
+        return spec.squeeze(0)
+    except Exception:  # noqa: BLE001
+        return None

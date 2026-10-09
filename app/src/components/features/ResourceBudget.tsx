@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { GpuMonitorWindow } from '@/components/features/GpuMonitorWindow';
 import { cn } from '@/lib/utils';
-import { localServiceApi } from '@/lib/localService';
+import { localServiceApi, notifyServiceEnabledChanged } from '@/lib/localService';
 import { arbiterApi } from '@/lib/arbiter';
 import {
   RESOURCE_TASK_LABEL,
@@ -80,6 +80,26 @@ export function ResourceBudget({
     void refresh();
   }, [refresh]);
 
+  /**
+   * 引擎加载态一变就重取快照。
+   *
+   * 为什么必须联动：判定「够不够」要区分「未加载」与「已加载」
+   * （已加载时模型自己占的显存已经在账上，不能再扣一次需求 —— 否则会自己把自己
+   * 检测成占用者，报出「还差 4.8 GB」这种荒谬结论）。
+   * 而这两个状态是父组件异步拿到的：页面挂载时 `engine` 还是 null，预热完成后才变 true。
+   * 只在挂载时取一次的话，界面上永远停在「未加载」的旧算式上（2026-10 用户实测）。
+   */
+  const loadedKey = `${neteaseTtsLoaded}|${neteaseAsrLoaded}|${indexttsLoaded}`;
+  const firstLoad = useRef(true);
+  useEffect(() => {
+    if (firstLoad.current) {
+      // 挂载时那一次已经由上面的 effect 取了，避免开局打两次请求
+      firstLoad.current = false;
+      return;
+    }
+    void refresh();
+  }, [loadedKey, refresh]);
+
   const estimate = useMemo(
     () => (snapshot ? estimateTask(task, snapshot) : null),
     [snapshot, task],
@@ -123,6 +143,7 @@ export function ResourceBudget({
     setStopping(true);
     try {
       const result = await localServiceApi.toggle(false);
+      notifyServiceEnabledChanged();
       toast.success('已关闭 GPT-SoVITS 服务', { description: result.hint });
       await refresh();
     } catch (error) {
@@ -216,7 +237,13 @@ export function ResourceBudget({
       <div className={cn('flex items-start gap-2 rounded-md border px-2 py-1.5', tone)}>
         <Icon className="mt-0.5 size-3.5 shrink-0" />
         <div className="min-w-0">
-          {estimate.verdict === 'insufficient' ? (
+          {estimate.engineLoaded ? (
+            // 引擎已在显存里：不再用「空闲 − 需求」判（那会把它自己算成占用者）
+            <p className="font-medium">
+              模型已常驻显存，可以直接跑
+              {estimate.verdict === 'tight' ? '（但余量很少，同时跑别的任务会把它挤掉）' : ''}
+            </p>
+          ) : estimate.verdict === 'insufficient' ? (
             <p className="font-medium">
               显存不足：还差约 {gb(estimate.gap_mb)}，直接跑大概率中途 OOM
             </p>
@@ -228,7 +255,12 @@ export function ResourceBudget({
             <p className="font-medium">资源充足，可以直接跑</p>
           )}
 
-          {snapshot?.vram_source === 'nvidia-smi' && snapshot.vram_free_mb != null && snapshot.vram_total_mb ? (
+          {estimate.engineLoaded ? (
+            <p className="mt-0.5 opacity-80">
+              「空闲 {gb(estimate.vram_free_mb)}」里已经扣掉了本模型的常驻占用（约 {gb(estimate.vram_need_mb)}），
+              所以不再重复计算需求 —— 这是「已加载」与「未加载」判定的区别。
+            </p>
+          ) : snapshot?.vram_source === 'nvidia-smi' && snapshot.vram_free_mb != null && snapshot.vram_total_mb ? (
             <p className="mt-0.5 opacity-80">
               读数来自 nvidia-smi（含其它进程占用）
               {snapshot.active_engine ? ` · 当前本地引擎：${snapshot.active_engine}` : ''}
@@ -237,8 +269,8 @@ export function ResourceBudget({
         </div>
       </div>
 
-      {/* 第三行：能动手的建议 */}
-      {estimate.verdict !== 'ok' ? (
+      {/* 第三行：能动手的建议（引擎已加载且余量够时不必再劝他「释放显存」） */}
+      {estimate.verdict !== 'ok' && !(estimate.engineLoaded && estimate.verdict === 'tight') ? (
         <div className="space-y-1.5">
           <div className="flex flex-wrap gap-2">
             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void handleFocus()} disabled={focusing}>

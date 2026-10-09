@@ -12,13 +12,14 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
 
 import numpy as np
 
-from .. import vendor_paths
+from .. import torch_compat, vendor_paths
 from ..audio.io import save
 from ..config import Settings
 from . import bootstrap, models as model_store
@@ -40,8 +41,14 @@ class VcEngine:
     # ---------- 生命周期 ----------
 
     def _context(self):
-        """RVC 调用期间接管 sys.path 与 cwd。"""
+        """RVC 调用期间接管 sys.path 与 cwd。
+
+        顺带补一次 `_in_projection`：GPT-SoVITS 的 MHA 补丁是**它自己 import 时**
+        才装上的，顺序可能是「先 RVC、后 GPT-SoVITS、再 RVC」，
+        只在引擎初始化时补一次不够（见 `torch_compat.ensure_mha_patch_complete`）。
+        """
         root = bootstrap.vendor_root(self.settings)
+        torch_compat.ensure_mha_patch_complete()
         return vendor_paths.temporary_context(entries=[str(root)], cwd=str(root), argv=["rvc"])
 
     def _ensure_vc(self) -> None:
@@ -61,7 +68,7 @@ class VcEngine:
         if path is None:
             raise bootstrap.VcError(
                 "未找到音色模型：%s" % model_key,
-                hint="先把 .pth 放进模型库（.data/vc/models），或从界面导入。",
+                hint="把 .pth 放进 models/rvc/（或从「音色库 → RVC」页导入）。",
                 code="MODEL_MISSING",
             )
         hubert = bootstrap.assets_dir(self.settings) / "hubert" / "hubert_base.pt"
@@ -74,6 +81,15 @@ class VcEngine:
 
         self._ensure_vc()
         with self._context():
+            # RVC 的 `VC.get_vc(sid)` 内部拼的是 `f'{weight_root}/{sid}'`
+            # （`vendor/rvc/infer/modules/vc/modules.py`），所以 `weight_root`
+            # 必须是**模型自己所在的目录** —— 我们只传文件名。
+            #
+            # 这样嵌套目录也能加载：`models/RVC语音模型/MYGO全员/乐奈/lenai.pth`
+            # 把 weight_root 指到 `.../MYGO全员/乐奈` 即可，无需改动上游。
+            # `index_root` 同理（官方 `get_index_path_from_model` 在它下面递归找索引）。
+            os.environ["weight_root"] = str(path.parent)
+            os.environ["index_root"] = str(path.parent)
             self._vc.get_vc(str(path.name))
         self.model_path = path
         self.loaded_at = time.time()

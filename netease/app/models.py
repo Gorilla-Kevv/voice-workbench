@@ -25,6 +25,9 @@ class HealthResponse(BaseModel):
     torch: bool = False
     cuda: bool = False
     device: Optional[str] = None
+    #: 服务自身进程号。网关靠它**确证**「端口上那个进程就是我起的服务」——
+    #: 比从命令行反推可靠得多（命令行可能是相对路径，启发式判据会漏）。
+    pid: Optional[int] = None
     #: 显存读数。值里有字符串（口径来源），所以不能用 dict[str, int]
     vram: Optional[dict[str, Any]] = None
     engines: dict[str, Any] = Field(default_factory=dict)

@@ -61,7 +61,8 @@
 | `server/src/routes/sovits.ts` | 反向代理（必须挂在 `express.json()` **之前**，否则 multipart / 流式透传失效） |
 | `server/src/routes/netease.ts` | 网易模块透明反代（同上挂载顺序；**无 supervisor**，opt-in 不拉起） |
 | `server/src/services/sovits.ts` | 托管 Python 服务：探活、解释器探测、日志环形缓冲 |
-| `trainer/app/sovits/` | 与官方代码的直连层：`bootstrap`（定位+sys.path）、`catalog`（能力清单，唯一常量源）、`pipeline`（管线常驻）、`synth`（请求翻译）、`voices`（音色库） |
+| `trainer/app/sovits/` | 与官方代码的直连层：`bootstrap`（定位+sys.path）、`catalog`（能力清单，唯一常量源）、`pipeline`（**跨进程代理**）、`synth`（请求翻译 + 异常归一）、`voices`（音色库） |
+| `trainer/app/sovits/worker/` | **官方管线 worker 子进程**（见 `docs/ENGINE-ISOLATION.md`）：`protocol`（行协议+stdout 隔离）、`server`（请求循环 + interrupt 读线程）、`client`（主进程侧拉起/心跳/退避重启）、`__main__`（按文件路径启动的入口） |
 | `trainer/app/` | `training.py`（12 阶段编排）、`batch.py`、`inference.py`、`annotations.py`（清单读写）、`jobs.py`、`queue.py` |
 | `trainer/tools/uvr_cli.py` | UVR5 非交互封装（调官方 `vr.py`/`mdxnet.py`，不改官方代码） |
 | `netease/` | **第二个 Python 运行时**（py≥3.10）：`server.py`、`app/tts_engine.py`（Confucius4-TTS 直连）、`app/r2t2.py` + `app/r2t2_worker.py`（R2T2 子进程 worker，vLLM 需 main 环境）、`app/engine.py`（引擎互斥）。上游 API 漂移只改 `tts_engine.py` / `r2t2_worker.py` 两个薄文件 |
@@ -118,7 +119,7 @@
 
 | 决策 | 原因 |
 | --- | --- |
-| **本地引擎选型（阶段 27）：GPT-SoVITS 不迁 Genie-TTS；情感操控走 dots.tts.edit 试点** | 源码核查 + 本机实测双重否掉 Genie：它没有任何情感参数（与 GSV 同靠参考音频），无训练、无 `top_k/temperature/seed/speed`、只支持 V2/V2ProPlus，实测 CPU RTF 0.85 反而慢于 GPU 的 0.46。它唯一真实收益是**零显存 + 7.5s 冷启动**，那属于「备援第四服务」范畴，不是架构替换。用户真正要的「情感明显操控」实测只在 **dots.tts.edit** 成立（本机 48kHz、RTF 0.92、q8 净占 ~6.3 GB），且必须**生成→编辑两段式**（普通 TTS 模板内联 `<emo>` 与 `instruction_tts` 实测均无效） |
+| **本地引擎选型（阶段 27–28）：GPT-SoVITS 不迁 Genie-TTS；dots.tts 试点已作废；日语走 Irodori** | 阶段 27 源码核查 + 本机实测双重否掉 Genie：它没有任何情感参数（与 GSV 同靠参考音频），无训练、无 `top_k/temperature/seed/speed`、只支持 V2/V2ProPlus，实测 CPU RTF 0.85 反而慢于 GPU 的 0.46；它唯一真实收益是**零显存 + 7.5s 冷启动**，属于「备援第四服务」范畴而非架构替换。dots.tts 的 `<emo>` 编辑实测有效（F0 106→222.8、`<rate>` 精度 ±2%）但需两段式 + q8 净占 ~6.3GB，**用户 10.08 裁决"Genie-TTS 与 dots.tts 弃用，不考虑了"**。接力评估的 Irodori-TTS（阶段 28）在"情感明显操控"这条诉求上实测最强且最快（emoji/caption 有量化差异、int4 6 步 RTF 0.121），代价是仅日语 + 男声 emoji 失效 + Windows 依赖链（坑 33） |
 | 模型管线**常驻内存**，不每次 subprocess 调 CLI | 官方 `inference_cli.py` 每次重加载 4 个模型（约 1 分钟），本地试听不可用 |
 | Python 服务生命周期交给**启动编排器**（concurrently），不由网关托管 | 网关在 dev 下被 `tsx watch` 重启，若托管 Python 会连带重启（改一行代码等 40 秒重加载） |
 | 网关代理用 `node:http` + `pipe` 而非 `fetch` | 音频上传（multipart）与流式（NDJSON）需要原始字节流，pipe 天然支持 |
@@ -135,6 +136,13 @@
 | 预加载顺序 **先让位 → 再检查 → 最后加载** | 反过来会因为另一套还占着显存导致检查必然失败，还会误导用户以为卡太小。这个顺序写在 `preload.ts` 的注释里 |
 | 网易模块**不进 Provider 抽象**、独立成 `netease/` 运行时 | 上游要求 py≥3.10 + torch≥2.5 + cu≥12.6，与 trainer 的 py3.9/torch2.0 互斥（`MODERN-TTS-FEASIBILITY.md` 已论证）；它是本地引擎不是云端 BYOK，塞进 Provider 抽象反而要特化密钥态 |
 | R2T2 走**子进程 worker**（stdin/stdout JSON 行协议） | vLLM 引擎要求 `__main__` 环境启动（上游 README 明确警告）；worker 自成主进程规避，还能用 `NETEASE_R2T2_PYTHON` 独立解释器解决依赖冲突 |
+| **官方 GPT-SoVITS 管线移入独立 worker 进程**（2026-11，方案 B） | 官方 `AR/modules/activation.py` 在 **import 期**执行 `F.multi_head_attention_forward = <patch>`，改的是 torch 模块级单例 —— **整理 sys.path、摘 sys.modules 都救不了**，只能靠进程边界。踩到的坑是 RVC 变声报 `NameError: _in_projection`（补丁函数漏了这个名字，而 fairseq `MultiheadAttention` 恰好走那条分支）。顺带把 `bootstrap.install()` 的永久 `os.chdir` 也关了进去。**对外契约零变化**：`pipeline.py` 变同签名代理，`api.py`/`inference.py` 调用点一行未改；`/health` 只追加 `worker_alive`/`worker_error`/`worker_pid` 三个字段。完整设计与 139 项验证见 `docs/ENGINE-ISOLATION.md` |
+| `bootstrap.install()` 加 `chdir=False` 默认参数，**`sys.path` 注入仍在主进程** | `os.chdir` 是会话级的、会改变主进程的相对路径语义，必须搬走；但 `sys.path` 得留 —— UVR5 / ASR 的脚本通道要 `from tools.uvr5.vr import ...`。只有 `worker/server.py::main()` 传 `chdir=True` |
+| worker **按文件路径**启动，不用 `-m app.sovits.worker` | 整合包解释器是 embedded distribution（`runtime/python39._pth`），**完全忽略 `PYTHONPATH`** 且不给 `-m` 提供 `sys.path[0]` —— 用 `-m` 会以「No module named 'app'」死在我们的代码之前。按路径启动时 Python 会把该文件所在目录放进 `sys.path`，项目根由 `__main__.py` 自己补 |
+| worker **懒启动**（第一次进入推理才拉） | 服务启动时不拉起，免得拖慢 `/health` 探活与前端首屏；`--warmup` 可提前摊掉首载的 24 s |
+| **IPC 超时必须长于业务锁等待上限** | 同步路 330 s（> `SYNC_LOCK_WAIT_S=300`），否则 worker 健康地排队时会被主进程误判成超时。流式不设总超时，改逐块软超时（首块 120 s / 之后每块 30 s，出块即续期） |
+| worker 崩溃**不自动重载模型**，只退避重启 | 冷启动 30~90 s + 2~4 GB 显存，自动重载会把「worker 反复崩」放大成「服务器反复 OOM」。退避 1/2/4/8/16/32/60 s，连续失败 5 次停止自动重启 |
+| 退避窗口内的重试**等待**而不是立刻 503 | 「崩溃后马上重试」是最正常的行为；退避的目的是防 OOM 放大，不是拒绝对外服务。上限 10 s，超过才报错 |
 | 网易两引擎**进程内互斥**，跨进程显存协调暂不做 | 8 GB 卡同时常驻 GPT-SoVITS + 1.3B LLM 本就不现实；先靠加载前空闲显存检查 + 明确报错兜底 |
 | ~~网易模块 opt-in~~ **已改为主服务**（2026-10） | 免转写克隆 + 14 语种是日常合成的最优路径；`npm run dev` 现在会拉起它，网关仍**无 supervisor**（只转发不托管生命周期） |
 | `dev:netease` 走 `--skip-if-missing` | 主服务也要照顾「没装权重」的机器：没 `netease/.venv` 或端口已被占用时安静跳过，不再崩掉一个 dev 窗格 |
@@ -336,6 +344,307 @@
       并在 GBK 控制台直接崩在导入期。评估与本机实测数据见 `docs/GENIE-DOTSTTS-EVALUATION.md`，
       基准脚本与音频样本在仓库外 `F:\schoolCompWorks\clone\_bench\`。
 
+29. **GPT-SoVITS 的 MHA 补丁会污染同进程的 RVC（变声必崩）**
+    `GPT_SoVITS/AR/modules/activation.py:14` 在 **import 期**执行
+    `F.multi_head_attention_forward = multi_head_attention_forward_patched`，
+    把 torch 的多头注意力全局换成它的 KV-cache 版。而补丁文件
+    `AR/modules/patched_mha_with_cache.py` 只 import 了 `_in_projection_packed`，
+    **漏了 `_in_projection`** —— 后者只在 `use_separate_proj_weight=True`（q/k/v 投影分开传）
+    分支被用到。GPT-SoVITS 自己的 AR 走 packed 分支碰不到，所以官方链路上永远不暴露；
+    RVC 的内容编码器是 **fairseq 的 HuBERT**（`infer/modules/vc/utils.py::load_hubert`），
+    正好走 separate 分支 → 变声一开始就 `NameError: name '_in_projection' is not defined`。
+    **修法（官方整合包零改动）**：`trainer/app/torch_compat.py::ensure_mha_patch_complete()`
+    往补丁函数的 `__globals__` 补回该名字（torch 2.0.0 里在 `torch/nn/functional.py:4790`，
+    缺失时回退到等价的三次 `F.linear`）。三处调用点：`vc/bootstrap.prepare_env()`、
+    `vc/pipeline.VcEngine._context()`（**每次**变声前——补丁可能是 RVC 之后才被装上的，
+    只在初始化补一次不够）、`svc/bootstrap.ensure_import_path()`。
+    排障出口：`GET /v1/vc/catalog` 的 `mha_patch` 字段（`patched` / `in_projection_bound`）。
+    验证脚本 `trainer/.tmp/check_mha_patch.py`（整合包 python 跑，能复现 NameError 并验证修复）。
+    教训：三个上游共用**一个进程**时，"全局 monkey patch" 是隐性耦合，排查时先看
+    `F.multi_head_attention_forward.__module__` 这类被换掉的全局对象。
+    **已根治（2026-11，方案 B）**：GPT-SoVITS 现跑在独立 worker 进程里，补丁不再出那个进程，
+    主进程的 `F.multi_head_attention_forward` 始终是原生实现。`torch_compat` **保留**
+    （仍是对「未来某个引擎又打补丁」的兜底），但 RVC 路径已不再依赖它。
+    见 `docs/ENGINE-ISOLATION.md`。
+
+30. **worker 的 stdout 会被官方 `print` 污染**
+    `TTS.py` 里有 `print(f"first_package_delay: ...")`、`print("%.3f\t%.3f\t...")` 等调试输出。
+    worker 用 stdout 跑 JSON-lines 协议，这些 print 会插进协议流里把行撕开。
+    **修法**：`protocol.isolate_stdout()` —— `os.dup(1)` 存下真 stdout 作为协议私有通道，
+    再把 fd1 `dup2` 到 stderr，最后 `sys.stdout = sys.stderr`。于是官方 print 和日志
+    统统走到 stderr（由主进程加 `[sovits-worker]` 前缀转发），协议通道干净。
+    这是「必须踩一次才会想到」的坑：只重定向 `sys.stdout` 不够，C 层 fd 也得换。
+
+31. **整合包解释器是 embedded distribution，忽略 `PYTHONPATH`**
+    整合包里 `runtime/python39._pth` 内容只有 `python39.zip` / `.` / `import site` 三行。
+    后果有二：(1) **完全忽略 `PYTHONPATH`**；(2) 不给 `-m` 提供 `sys.path[0]`。
+    所以 `python -m app.sovits.worker` 会以「No module named 'app'」死在我们的代码之前
+    —— 连错误都传不出来，对外表现只是「worker 启动超时（300 秒内未收到 ready）」。
+    **修法**：按**文件路径**启动 `[python, "-u", "<abs>/__main__.py"]`，
+    `__main__.py` 里自己把项目根 `sys.path.insert(0, ...)`。诊断方法：
+    打印 `sys.path[:8]` + `cat runtime/python39._pth`。
+
+32. **状态镜像的读取顺序会导致「服务撒谎」**
+    `Pipeline.status()` 里若先把 `payload = self.state.to_dict()` 取好、**再**刷新 worker
+    存活状态，返回的就是一帧过期快照 —— worker 刚猝死时 `loaded` 还是 `True`，
+    `/health` 谎报「已就绪」，前端显示绿色，用户一点合成立刻 503。
+    **修法**：(a) 刷新必须在 `to_dict()` **之前**；(b) 把「worker 死 → 模型没了」
+    收口成 `PipelineState.mark_worker_lost()` 一个方法，供 `status()` /
+    `_raise_worker_gone()` / `unload()` 三处共用（原来三处各自手改字段，漏一处就退化）。
+    注意不能只靠发请求时才纠正 —— worker 自己猝死时没人发请求，
+    只有读线程看到 EOF，必须让 `/health` 这条读路径负责纠正。
+
+33. **Irodori-TTS 若要接入：Windows 三个必踩坑（阶段 28 本机实测）**
+    ① **`prepare_manifest.py` 在 Windows 会静默空转**：datasets 的 Audio 解码走 torchcodec，
+      cu128 索引没有 Windows wheel → 结果是 `seen=16 written=0 skipped_audio=16`、**退出码 0、
+      manifest 0 字节**（上游 issue #40 的本地复现）。任何训练前必须断言 manifest 行数 > 0，
+      否则会"跑一整晚训练了个空数据集"。绕法已验证可用：直接用
+      `irodori_tts.codec.DACVAECodec.encode_file()` 编 latent，按官方 schema 手写 JSONL。
+    ② **`torchaudio.load` 在本机直接 ImportError**（torch≥2.9 把它整个委托给 torchcodec），
+      而读参考音/编 latent 都走这条路。基准脚本用 `_bench/shim/sitecustomize.py` 换成 soundfile；
+      正式接入应在自己的服务里显式用 soundfile/ffmpeg，别依赖 torchaudio.load。
+    ③ **emoji 情感控制对男声基本无效**（复现 issue #9）：同一批 emoji 打在男声参考音上，
+      F0 全锁在 110.3–111.9Hz（跨度 1.6Hz）。我们音色库是男声 ⇒ UI 文案只能承诺"节奏与插入音"，
+      不能写"男声情感操控"。另：⏩/🐢/👂 三条在女声上也没兑现（语速 5.25≈基线 5.26、能量没降）。
+    附带：`dacvae` 与 `silentcipher` 是 **git-only 依赖**（PyPI 没有），github.com 直连不通时走
+    codeload tarball；`sample_rf` 有**偶发长尾**（实测 89.17s 合成 4.96s，只在某个 seed 复现，
+    降到 20 步即绕开）→ 服务侧必须有超时 + 重试。全部数据见 `docs/IRODORI-TTS-EVALUATION.md`。
+
+34. **DDSP-SVC 的 `.pt` 不是自包含的：必须配同目录 `config.yaml`（阶段 27补4 实测）**
+    RVC 的 `.pth` 自带版本/采样率信息，DDSP-SVC 的 `.pt` **只是纯权重** —— 采样率、编码器
+    （`contentvec768l12tta2x`）、F0 提取器、`block_size` 全在同目录的 `config.yaml` 里。
+    少一个都加载不了。这决定了三件事：① 导入入口**必须同时收两个文件**（只收 `.pt` 会得到
+    一个「看得见、选不了」的幽灵条目）；② `catalog.list_models()` 把无 config 的标 `available=False`
+    并给 hint；③ **删除必须成对删**（只删 `.pt` 会留下孤儿 config）。
+    另一个连带坑：DDSP-SVC 官方导出的权重**几乎都叫 `model.pt`**，真正区分音色的是
+    **所在目录名**（`<expdir>/model.pt`）——`describe_model()` 因此改成「在自有子目录时用目录名当 id」，
+    否则多模型会在下拉框里挤成一堆 `model`，且 `id` 不唯一会让 `/models/load` 的 `model_key` 解析命中错条目。
+
+35. **删模型端点要加「边界检查」，不能只按 id 删（阶段 27补4）**
+    `DELETE /v1/svc/models` 的 `model` 参数接受「id / name / 绝对路径」三态（与 `/models/load` 口径一致），
+    但**路径形态必须做归属校验**：只有落在 `catalog.model_dirs()` 之内的文件才允许删。
+    否则一个传错路径的请求就能删掉用户任意位置的 `.pt`。实测：传 `vendor/rvc/.../not-ours.pt`
+    会返回 `ok=False` + 明确理由，且文件原封不动。
+
+36. **`audio/io.py::save()` 有两个独立缺陷，都是「照搬旧习惯」造成的（阶段 27补5，2026-10）**
+    用户主诉「音频增益过大，全部失真」，根因在**第一个**；排查时又撞见**第二个**。
+
+    **① 整数输入被强转 float32 → 100% 削波成方波。**
+    RVC 的 `vc_single()` 返回的是**已缩放到 ±32768 的 int16**
+    （`vendor/rvc/infer/modules/vc/pipeline.py` 末尾 `(audio_opt * max_int16).astype(np.int16)`）。
+    原写法 `np.asarray(data, dtype=np.float32)` 把 `24351` 交给 soundfile ——
+    而 soundfile 的**浮点约定是 [-1, 1]**，于是单样本直接顶满量程。
+    实测对照：int16 原样写 absmax=0.7431 / 削波 0.00%；强转 float32 后 absmax=1.0000 / 削波 **100.00%**。
+    修法：`np.issubdtype(array.dtype, np.floating)` **分流** —— 浮点规整成 float32，整数保留原 dtype。
+
+    **② 多声道数组被 `.T` 转置 → libsndfile 直接拒绝。**
+    `soundfile >= 0.12` 的 `sf.write` 要 **frames-first**（`(N, channels)`）；
+    老版 librosa 习惯的 `(channels, frames)` 已经不认。原来的 `array.T` 对单声道 `(N,)` 无影响
+    （`ndim == 1` 不转置），但立体声 `(N, 2)` 会被转成 `(2, N)` = **2 帧 × 80000 声道**，
+    报 `LibsndfileError: Format not recognised`。变声主路径是单声道，所以这个坑一直没暴露。
+    修法：删掉转置，只 `np.ascontiguousarray`；`ndim > 2` 明确抛 `AudioError`。
+    回归锁：`.tmp/verify_vc_audio.py`（10 项，含「channels-first 必被拒绝」与「旧写法必 100% 削波」两条反证）。
+
+37. **FastAPI 端点的 `payload: Any` 必须显式写 `Body(default=None)`（阶段 27补5）**
+    裸 `def f(payload: Any)` 会被 FastAPI 当成**必需的 query 参数**，
+    前端发 JSON body 就报 `422 VALIDATION_ERROR: query.payload Field required`。
+    踩中的 7 个端点：`/v1/vc/merge`、`/v1/vc/train/plan`、`/v1/vc/train`
+    （`routers/vc.py`）与 `/v1/asr/plan`、`/v1/asr/models/load`、`/v1/asr/train/plan`、`/v1/asr/train`（`routers/asr.py`）。
+
+38. **同步端点里 `asyncio.Event()` 会炸：anyio 工作线程没有事件循环（阶段 27补5）**
+    FastAPI 把同步端点丢进 anyio 线程池执行，那里没有「当前事件循环」，
+    无参 `asyncio.Event()` 内部调 `get_event_loop()` → `RuntimeError: There is no current event loop
+    in thread 'AnyIO worker thread'`。表现为「一提交训练就 500」。
+    双管齐下修：① `Scheduler.start()` 记 `self._loop = asyncio.get_running_loop()`，
+    `submit()` 用 `_make_cancel_event()` 在该 loop 上建 Event
+    （3.9 没有 `Event(loop=...)`，构造后重绑 `event._loop`）；② 受影响的端点改 `async def`。
+
+39. **`torch.save(payload, "路径字符串")` 在 Windows 上对中文名有奇偶陷阱（阶段 27补5，最迷惑的一个）**
+    torch 的 `PyTorchFileWriter` 在 Windows 上用 **UTF-16** 打开路径，
+    文件名里**奇数个非 ASCII 字符**时必然越界一格 →
+    `RuntimeError: File ... cannot be opened.`，**偶数个则完全正常**。
+    实测「验收二轮_训练_流水线」这个含奇数个中文字符的名字 100% 失败，换个偶数名就过 ——
+    与路径长度、目录是否存在都无关，逐字符扫描才确认是奇偶规律。
+    **修法：`with open(path, "wb") as h: torch.save(payload, h)`**（走文件对象，绕开字符串路径）。
+    已改：`vc/lora.py::save_adapter()`、`vc/merge.py`。
+
+40. **RVC 官方 mel 配置的口径必须照抄 `infer-web.py`，不能从 ckpt 里猜（阶段 27补5）**
+    `ckpt["config"]` 的布局（`vendor/rvc/infer/lib/train/process_ckpt.py::savee()`）是：
+    `[-1] sampling_rate`、`[-2] gin_channels`、`[-3] spk_embed_dim`、`[-4] upsample_kernel_sizes`（**是 list**）、
+    `[-5] upsample_initial_channel`、`[-6] upsample_rates` ——
+    **里面根本没有 `hop_length` / `n_mel_channels`**，必须去读官方 `configs/<v1|v2>/<sr>.json` 的 `data` 段。
+    目录选择照抄官方 `infer-web.py`：`if version19 == "v1" or sr2 == "40k": config_path = "v1/%s.json"` ——
+    **40k 走 v1 目录**（`n_mel_channels=125`、`hop_length=400`），与 v1 的 48k/32k 都不同。
+    另一个易错点：config 文件名是 `40k.json` 而 ckpt 里存的是赫兹 `40000`，需要做 `"40000" → "40k"` 归一。
+    误用 `cfg[-4]`（`upsample_kernel_sizes`，list）当 hop_size 会报
+    `TypeError: int() argument must be ... not 'list'`。
+
+41. **`svc_infer` 的产物路径嵌在 `artifacts.artifacts` 里，`urls` 却在外层（阶段 27补5）**
+    前端展示「运行产物 + 本地路径」时最容易在这里漏掉路径。真实落库形状是：
+    ```
+    { "job_id": ..., "artifacts": { "vocal": "F:\\...\\song_vocal.wav", ... },
+      "stages": [...], "urls": { "vocal": "/files/svc/<id>/song_vocal.wav", ... } }
+    ```
+    成因：`cover.py::run_cover()` 返回 `{"artifacts": {...}, "stages", "elapsed_s"}`，
+    `routers/svc.py` 的 runner 直接 `{"job_id": ..., **result, "urls": urls}` 抛给队列。
+    而 `vc_infer` 是扁平的（顶层直接 `output` + `urls.output`）—— **两类任务形状不同**。
+    所以 `app/src/hooks/useVcRunHistory.ts::collectTracks()` 必须同时看顶层与内层 `artifacts`，
+    且只接受「像盘符路径或 `/files/` 开头」的字符串，否则 `sample_rate` / `stages` / `info` 会被误当产物。
+    回归锁：`.tmp/verify_run_artifacts.py`（20 项，覆盖 vc_infer 单产物 / 翻唱三轨 / 直接转换 / 四类边界）。
+
+42. **资源预估的「重复扣账」：引擎已加载时不能再算 `空闲 − 需求`（阶段 27补6，2026-10 用户主诉）**
+    主诉「网易模型显存空出来，模型已经预热成功加载后，上方检测又显示不够了
+    （实际应该是自己的模型在跑，自己把自己检测到了）」。
+    **读数没错，是算式错了**：引擎常驻后它自己占的那几 GB 已经反映在 `vram_free` 里，
+    `estimateTask()` 再减一次需求就是**把模型自己当成了占用者**。
+    实测复现（`loaded=True`、`free=807 MB`、`tts_required_vram_mb=5120`）：
+    `807 − 5120 = −4313 → insufficient`，界面显示「还差约 4.3 GB」——与用户截图「还差约 4.8 GB」同量级。
+    **修法（`app/src/lib/resources.ts::estimateTask()`）**：`engineLoaded` 时**不做减法**，
+    `vram_free < 512` 才降级 `tight`；未加载时保留原算式。
+    **字段名三个服务各不相同，别想当然**：
+    网易 TTS → `engines.confucius_tts.loaded`；网易 ASR → `engines.r2t2.model_loaded`（**不是 `loaded`**）；
+    IndexTTS → `engine.loaded`。
+    **联动刷新同样关键**：`ResourceBudget` 原来只在挂载时 `refresh()` 一次，
+    而页面挂载时父组件的 `engine` 还是 `null`、预热完成后才变 `true` ——
+    只看第一次会永远停在「未加载」的旧算式上。修法是拿
+    `loadedKey = ${neteaseTtsLoaded}|${neteaseAsrLoaded}|${indexttsLoaded}` 做 effect 依赖
+    （用 `firstLoad` ref 跳过挂载那一次，避免开局打两次请求）。
+    回归锁：`.tmp/verify_vram_estimate.py`（11 项：6 条纯算式 + 5 条真实 `/health` 核对）。
+
+43. **`shutdown()` 只杀 `this.child` → 外部实例永远关不掉（阶段 27补6，2026-10 用户主诉「网易进程关不掉，想切换 IndexTTS 无法切换」）**
+    服务有**三条启动路径**：① 网关 spawn（`this.child` 有值）；② `npm run dev` 的 concurrently 起的；
+    ③ 用户手动 `node scripts/netease.mjs` 起的。②③ 都让 `this.child === null`，
+    旧实现「`!child` 就放弃」→ **开关写成了 `enabled: false`，进程却还活着**。
+    现场取证：`server/.data/netease-service.json` 是 `enabled: false`，9882 端口 PID 16780 仍 LISTENING，
+    切 IndexTTS 时两个服务抢显存。
+    **修法**：`shutdown()` 补第二路「**按端口反查 + 项目归属校验**」（`server/src/lib/processOwnership.ts`），
+    先杀 `child`、再杀端口上能确认归属的。原界面的「外部实例请去终端 Ctrl+C」是**错误引导**，已改为读 `status.shutdownNote`。
+    实测：关闭后显存 **6985 → 1059 MiB**（释放约 5.8 GB），端口释放。
+    `sovits.ts` 有**同样的缺陷**（`shutdown()` 也只杀 `child`），已一并修。
+
+44. **进程归属识别：宁可漏杀，不可错杀（阶段 27补6）**
+    `lib/processOwnership.ts::classify()` 按可信度从高到低排五条判据：
+    ⓪ **服务 `/health` 自报 PID**（最硬，为此给 netease / indextts 的 `/health` 都加了 `pid` 字段）；
+    ① 命令行指向 `<root>/scripts/<name>.mjs`；② 项目绝对根路径 + 服务标识词；
+    ③ **相对路径形态** `python netease/server.py`（正则必须是 `<hint>/server.py`，不能只凭 `server.py`——太泛会误伤别的项目）；
+    ④⑤ 解释器 `ExecutablePath` 落在项目根内 + 服务标识词 / 入口脚本。
+    **③ 是实测补的**：命令行 `"...Python312\python.exe" netease/server.py` 既无绝对路径也无 `scripts/`，
+    判据 ①② 全命中不了，导致一次关停演练失败（`ours=false` → `stopped:false`）。
+    **硬约束：判不了归属的进程一律不动** —— 停错别人的进程比「关不掉」严重得多。
+
+45. **Windows 上必须 `taskkill /t /f`，且注意三代嵌套（阶段 27补6）**
+    实测进程树是 `python.exe(监听者) ← python.exe ← node.exe`，真实监听者是**第三代**。
+    只杀 node 会留下两个孤儿 python 继续占端口与显存；`child.kill()` 同理杀不干净。
+    另注：`"/health` 自报的 `pid` 与 supervisor 的 `status().pid` **不是同一个** ——
+    实测 node 包装进程 40640，真正监听的 python 是 38924，正因如此才需要自报 PID 这条判据。
+    **调试侧**：Bash 工具跑 `powershell` 拿不到 stdout（安全策略），`wmic` 在 Win11 已移除，
+    要用 Win32 API（`ctypes.CreateToolhelp32Snapshot`）或 Node 的 `execFile` 读进程信息。
+    **`npx tsx` 脚本 `process.exit(0)` 会把 spawn 的子进程一起带走** ——
+    后台起服务必须 `run_in_background=true` 并让脚本挂住（`await new Promise(() => {})`），
+    `nohup ... &` 也会随命令结束被回收。
+
+46. **侧栏状态与设置页开关必须共用同一个事实源（阶段 27补7，2026-10 用户主诉）**
+    主诉「左侧状态栏显示网易已就绪，但设置页显示未启动，那到底是启动还是没启动？」
+    —— 这不是两个 bug，是**同一个状态被两套独立探活各自缓存**：
+    * 侧栏只探 `netease /health`（判「权重装了没 / 包能不能 import」），**完全不读 `enabled`**；
+    * 设置页读 supervisor 的 `enabled` 与 `reachable`。
+    `npm run dev` 用 concurrently **无条件**起 `dev:netease --skip-if-missing`，而 `enabled` 默认 `false`
+    —— 所以「进程在跑 + 开关是关的」是**开发模式下的常态**，不是偶发。
+    **修法（`app/src/App.tsx`）**：侧栏判定改成两级 —— 先问 supervisor 的 `enabled`
+    （用户意图，唯一事实源），`enabled=true` 才去探 `/health` 判 ready / incomplete；
+    `enabled=false` 一律 `offline`。设置页的 Badge 也统一到 `enabled && reachable` 口径
+    （原来只看 `reachable`），并在 `enabled=false && reachable=true` 时补一句
+    「检测到未托管的进程仍在 :9882 上运行」把实情说清。
+
+47. **网关的状态接口必须「读时现探」，不能吐缓存（阶段 27补7）**
+    `/api/netease/service` 与 `/api/indextts/service` 原来直接返回 `supervisor.status()`，
+    而 `reachable` 只在 supervisor 自己的启动/关停流程里更新过 ——
+    网关起来后从没探过就是初始的 `false`。于是出现
+    「端口上明明有进程在跑，接口却报 `reachable=false`」，把界面上「未托管进程」的提示也吞掉了。
+    修法：GET 处理器 `await supervisor.probe()` 再返回。
+    **`/api/sovits/service` 本来就有这一行**（`await sovitsSupervisor.probe()`），
+    netease / indextts 是漏网的那个 —— 新增服务接入时记得对齐。
+
+48. **开关切换要广播，否则界面滞后一个轮询周期（阶段 27补7）**
+    侧栏探活是 30s（就绪后）/ 10s（未就绪）轮询。用户点了设置页的开关后，
+    侧栏要等下一轮才翻转，观感就是「点了没反应」。
+    修法：`lib/localService.ts` 导出 `notifyServiceEnabledChanged()`，
+    设置页 / 资源卡 / IndexTTS 页在所有 `toggle` 成功后调用；
+    `App.tsx` 用一个 `serviceChangedTick` state 订阅 `service-enabled-changed` 事件并放进
+    三个探活 effect 的 deps —— 事件一来 effect 重建、旧定时器被 cleanup 回收、立刻重探。
+
+49. **RVC 的 `VC.get_vc(sid)` 拼的是 `f'{weight_root}/{sid}'` —— 嵌套模型加载的关键（阶段 30 / P0）**
+    `vendor/rvc/infer/modules/vc/modules.py` 里：
+    ```python
+    person = f'{os.getenv("weight_root")}/{sid}'
+    self.cpt = torch.load(person, map_location="cpu")
+    ```
+    改前 `pipeline.load()` 传的是 `str(path.name)`（只有文件名），而 `weight_root` 固定为
+    模型库根目录 —— 于是**模型在子目录里时拼出来的路径根本不存在**，加载必然失败
+    （实测：10/10 嵌套模型全部拼不出路径）。
+    **修法（无需改上游）**：加载前把 `weight_root` 与 `index_root` 都设成
+    **模型自己所在的目录**，`sid` 仍只传文件名：
+    ```python
+    os.environ["weight_root"] = str(path.parent)
+    os.environ["index_root"] = str(path.parent)
+    self._vc.get_vc(str(path.name))
+    ```
+    `index_root` 同理 —— 官方 `get_index_path_from_model()` 在它下面递归找 `.index`。
+
+50. **多根搜索时，`find_model` 必须「逐根先精确后递归」，不能「所有根先精确再统一递归」（阶段 30 / P0）**
+    错误写法（每根都只试相对路径，全部试完再统一递归）：
+    ```python
+    for root in roots:                     # ← 先跑完所有根的精确匹配
+        if (root / name).is_file(): return root / name
+    for root in roots:                     # ← 才轮到递归
+        ...
+    ```
+    后果：`.data/vc/models/lenai.pth`（扁平、低优先级根）会抢在
+    `models/RVC语音模型/MYGO全员/乐奈/lenai.pth`（嵌套、高优先级根）之前命中 ——
+    用户在新根或嵌套目录里放的同名模型**永远选不中**。
+    正确写法是**逐根闭环**：在同一个根里先试精确路径、再递归匹配，都不中才换下一根。
+
+51. **换扫描根必须同时保留「兼容读取的旧位置」，且网关与引擎两侧的根列表要逐一对应（阶段 30 / P0）**
+    直接换根会让既有模型全部「消失」（用户会以为数据丢了）。
+    定为三根并存：`models/rvc/`（规范，写入根）→ `models/RVC语音模型/`（用户的组织方式）
+    → `trainer/.data/vc/models/`（旧根）。
+    **两侧必须对齐** —— 实测网关只配 1 个旧根时它看到 10 个、trainer 看到 18 个，
+    结果是「引擎能加载但界面看不见」的错位；补齐后两侧都是 18。
+    配置入口：trainer 用 `Settings.rvc_model_search_dirs`（`RVC_MODEL_DIRS` 可覆盖），
+    网关用 `MODEL_CATEGORIES[].legacy_dirs`。
+
+52. **路径边界检查要把「路径 == 根本身」算在界内（阶段 31 / P1）**
+    `assertInsideCategory` 里写成 `relative !== '' && !startsWith('..')` 是错的：
+    `path.relative(root, root)` 返回 `''`，于是**根本身被判成越界** ——
+    实测后果是「把扁平旧根里的模型迁走」这种合法操作被自己的安全检查全部拒掉
+    （8 个模型报「路径不在任何搜索目录内」）。
+    正确写法：`relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))`。
+
+53. **迁移要按「模型的文件」搬，不能按「目录」搬（阶段 31 / P1）**
+    扁平布局下多个模型共用一个目录，若按目录整体搬，会把同目录里别的模型一起卷走。
+    正确做法是只搬 `model.files` + 该模型自己的 sidecar。
+    （配套设计：`ModelEntry.single_model_dir` 决定 sidecar 放目录级 `.meta.json`
+     还是 `<stem>.meta.json` —— 否则同目录多模型会共用一份元数据、互相覆盖显示名。）
+
+54. **Windows Git Bash 的 curl 会把 UTF-8 命令行参数转成 GBK 再发送（阶段 31 / P1 实测）**
+    用 `curl -d '{"name":"改名后"}'` 测接口，中文在服务端会变成 `U+FFFD` 替换字符
+    （3 个汉字 → 6 个 `\xef\xbf\xbd`），看起来像服务端编码 bug，**其实是测试工具的锅**。
+    另：URL 里放未编码的中文会让 Node 的 HTTP 解析器直接回 **400 且无 body**（不是业务错误）。
+    → 手工测接口请用 Python `urllib` + 显式 UTF-8 编码；前端 `fetch`/`URLSearchParams` 本身没问题。
+    回归脚本已按此实现（`.tmp/verify_model_manage.py`）。
+
+55. **任务产物里的 `urls.<key>` 是「服务内相对路径」，直接塞给 `<audio src>` 必然 404（阶段 32 / P2）**
+    `/v1/jobs` 回的是 `/files/vc/<job>/converted.wav`，浏览器要的是 `/api/sovits/files/...`。
+    vite 只代理 `/api`，网关根下也没有 `/files` 挂载 —— 所以**必须过 `resolveAudioUrl()` 补前缀**。
+    阶段 27补5 的 `RunResultCard` 当时是直接用的原始值（同一条链路上的坑 27 复发），
+    现在 `collectTracks()`（`@/lib/jobArtifacts.ts`）统一收口，变声 / 翻唱 / 产出记录页共用后一并修复。
+    实测：`HEAD /api/sovits/files/vc/<job>/converted.wav` → 200 `audio/wav`。
+
+56. **「历史记录」≠「全部产出」：本地引擎的产物根本不在 IndexedDB（阶段 32 / P2）**
+    MiMo 的合成走浏览器库（IndexedDB），而 RVC / DDSP-SVC / GPT-SoVITS / UVR5 / ASR 的产物
+    一律落在服务端 `trainer/.data/jobs/*.json`。**不是没记录，只是没有页面去读它。**
+    `GET /v1/jobs` 不带 `kind` 就返回全部类型（`limit` 上限 200），产出记录页的数据源一直是现成的。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -351,6 +660,7 @@
 | 启动预加载 | `GET /api/preload/catalog`（各模型显存代价 + 当前余量）、`POST /api/preload`（执行）、`PUT /api/preload/preference`；偏好存 `server/.data/preload.json` |
 | 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`） |
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]` |
+| worker 隔离验证（5 个脚本，共 139 项） | 先起服务 `./GPT-SoVITS-v2pro-20250604/runtime/python.exe trainer/server.py --port 19881 --no-open --no-warmup`，然后：`python .tmp/worker_smoke.py`（32 项，任意 py）、`python .tmp/verify_http.py 19881`（51 项）、`python .tmp/verify_recovery.py 19881`（14 项）；另两个用整合包解释器：`.tmp/verify_isolation.py`（12 项）、`.tmp/verify_synthesis.py`（30 项）。**脚本里都清掉了 `http_proxy`**（本机系统代理会拦 127.0.0.1） |
 | 只起网关+前端 | `npm run dev:cloud` |
 | 只起本地模型服务 | `npm run dev:sovits` |
 | 环境体检 | `npm run sovits:check`（退出码 0 表示就绪） |
@@ -412,6 +722,24 @@
 - **GPT-SoVITS 辅助两页离线不塌页（阶段 26补10）**：训练/批量页删掉「connectionError 整页只留错误卡」的
   提前返回——现在服务停用时页面照常渲染，顶部提示卡 + 内嵌报错条（带「直接开启」与重试）；
   批量页的音色列表走网关共享库，离线也完整可用
+- **RVC 变声结果听不了已修（阶段 27补3）**：根因是前端把服务端**绝对路径**`F:\...`交给 `resolveAudioUrl`，
+  拼出必然 404 的 `/api/sovits/F:/...`，浏览器拿到零时长音频 → 播放器渲染成灰色禁用。
+  新增 `pickArtifactUrl()`（`app/src/lib/sovits.ts`）收口「优先 urls、拦住盘符路径」，
+  变声/翻唱两页都改走它；后端同步分支补 `urls`
+- **DDSP-SVC 音色加载入口已补（阶段 27补4）**：`SingingConversionPage` 原来**只有一个下拉框**，
+  无任何导入途径 —— 后端三个端点（load/unload/upload）其实早就齐了。新增 `SvcModelLibrary`
+  组件（照 RVC 页契约）：拖拽或选文件**成对导入 `.pt` + `config.yaml`**、导入即热加载、
+  列表标出「当前音色」、缺 config 的条目显示原因并禁用加载；后端补 `DELETE /v1/svc/models`
+  （带归属边界检查，越界路径拒删）。顺带修掉 `describe_model()` 的 id 口径 ——
+  原来取文件名 `model.pt` 的茎，导致下拉框里全是「model」且 id 不唯一，现改为优先取目录名。
+  验证脚本 `.tmp/verify_svc_models.py` 25 项全绿；tsc / eslint / vite build 均通过
+- **产出记录页已取代「历史记录」（阶段 32 / P2）**：三源合并 —— 服务端任务
+  `GET /v1/jobs`（不带 kind，limit=200，实测 total=45）+ 本地模型 `/api/models/*`
+  + 云端 IndexedDB（MiMo）。`collectTracks()` 提到 `@/lib/jobArtifacts.ts` 供 8 种 job kind 共用，
+  并统一走 `resolveAudioUrl()` 补网关前缀（新坑 55）。三源各自取数各自报错：
+  本地服务停着时只丢第一源，另两源照常显示。侧栏「历史记录」→「产出记录」
+  （NavKey 仍是 `history`，`guides.ts` 的 FlowGuide 引用它）。
+  **遗留**：浏览器人工走查未做（要跑一次变声 / 翻唱 / 训练各验一条）
 
 ### 验收标准
 
@@ -426,7 +754,9 @@
 
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
-| 高 | **决策：dots.tts 试点阶段 A 是否开工** | 阶段 27 已给出结论：**GPT-SoVITS 不迁 Genie**（无情感控制、丢训练、参数面收窄、v2Pro 兼容风险），用户想要的「情感明显操控」实测在 **dots.tts.edit** 上成立（`<emo>` 中文标签可用、`<rate factor>` 精度 ±2%、局部编辑保持非目标句）。试点 A = `audiocpp_server` 起 9884 + 网关 `/api/dots/*` 透传 + arbiter/preload 记账（q8 净占 ~6.3 GB，比网易/IndexTTS 更吃紧，必须复用坑 26「已加载就跳过准入」的修法）。详见 `docs/GENIE-DOTSTTS-EVALUATION.md` §6 |
+| 高 | **产出记录页的浏览器人工走查（阶段 32 遗留验收）** | 跑一次 RVC 变声 + 一次翻唱 + 一次训练，三条记录都要出现在「产出记录」，且能内联播放、能复制本机路径。数据源已实测可用（`total=45`，音频地址加前缀 200），只差用户在浏览器点一遍 |
+| 中 | **P3 体验收尾（音色模型统一管理）** | 各引擎页接 `/api/models` 新数据源（含 GPT-SoVITS 的「零样本 / 微调模型」两段式选择器）、「未识别文件」提示与缺配套文件引导。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` |
+| 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
 | 高 | 端到端实测阶段 6 的新 UI | **走查已做完一半**（阶段 23）：训练页 s2→s1 顺序 / 官方 hint / 完成卡 E-S 解释、设置页权重下拉（**实测出下拉显示空白，已修**，见坑 22）均浏览器验过；仍缺 ① 带 `slice` 阶段的任务来验切分结果面板（现有历史任务无一含切分），② 权重「加载所选权重」联动（本机 `GPT/SoVITS_weights_v2ProPlus/` 为空，没有训练产物可选） |
 | 高 | **用实际合成对比网易 vs IndexTTS，决定主力** | **IndexTTS 已接入**（阶段 26），两套都可跑：网易稳态 RTF 2.0~2.5 / 常驻 4.9 GB；IndexTTS 暖态 RTF ≈ 2.2、显存被抢时 5~14 / 常驻实测 ≈ 5.3 GB。主力由**用户听感 + 使用测试**拍板；定完回填 preload 账本门槛与默认项 |
 | 高 | 网易合成页的 UI 交互人工过一遍 | **已做完**（阶段 23）：上传、音色库选取（**实测必挂，已修**，见坑 21）、语种切换、回退按钮、显存不足报错均验过；**唯一没验到的是「合成成功 → 结果卡播放/下载」**，被显存准入拦死（见下一条），需要先把门槛口径拍板或手动腾显存 |
@@ -455,4 +785,11 @@
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志
 
-> 本次文档更新时间：10.08 17:55 [BY Qoder]（阶段 27：Genie-TTS / dots.tts 评估与跨引擎实测基准，新增坑 28）
+> 上次文档更新时间：10.08 18:58 [BY Qoder]（阶段 27补1：RVC 变声 `_in_projection` NameError 修复，新增坑 29；同夜另有阶段 27补2 进程隔离收尾）
+> 本次文档更新时间：10.09 00:32 [BY Qoder]（阶段 28：Irodori-TTS 评估与本机推理/训练实测，新增坑 33；dots.tts 试点行按用户裁决改写为 Irodori 决策行）
+> 本次文档更新时间：10.09 00:44 [BY Qoder]（阶段 27补4：DDSP-SVC 音色加载入口 + 导入/删除闭环；`describe_model` id 口径修正；新增坑 34/35）
+> 本次文档更新时间：10.09 08:10 [BY Qoder]（阶段 27补6：用户主诉两个严重 bug —— ①显存预估「自己把自己检测成占用者」的重复扣账；②服务进程关不掉（只杀 child 导致外部实例漏网）。新增 `server/src/lib/processOwnership.ts`，`runtime.ts` / `sovits.ts` 的 `shutdown()` 均补端口反查一路；netease / indextts 的 `/health` 新增 `pid` 自报。新增坑 42–45）
+> 本次文档更新时间：10.09 19:56 [BY Qoder]（阶段 31 / P1：音色模型统一管理「管得住」。新增 `/api/models` 的 import（流式落盘）/ rename（联动配套）/ update（sidecar 元数据）/ migrate（默认 dry-run）；前端加导入、批量重命名（带预览）、编辑弹窗、迁移确认；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`，两个旧根清空，迁移后加载正常。修掉两个真 bug：路径边界检查把「根本身」判成越界、迁移按目录搬会卷走别的模型。新增坑 52–54）
+> 本次文档更新时间：10.09 19:20 [BY Qoder]（阶段 30 / P0：音色模型统一管理「看得见」。新增网关 `modelRegistry.ts` + `/api/models/*`；RVC 改为「规范根 + 两个兼容旧根」的多根递归扫描，可见模型 5 → 18；`weight_root` 改指模型自身目录使**嵌套模型可加载**（改前 10/10 拼不出路径）；音色库页改多 Tab。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md`。新增坑 49–51）
+> 本次文档更新时间：10.09 23:41 [BY CodeBuddy]（阶段 32 / P2：产出记录页取代历史记录，三源合并 —— 服务端任务 + 本地模型 + 云端 IndexedDB；`collectTracks()` 提到 `@/lib/jobArtifacts.ts` 共用；产物 url 统一补网关前缀。新增坑 55/56）
+> 本次文档更新时间：10.09 17:20 [BY Qoder]（阶段 27补7：用户主诉「左侧状态栏显示网易已就绪，但设置页显示未启动」。根因是**两套独立探活各自缓存**：侧栏只探 `/health` 不读 `enabled`，而 `npm run dev` 无条件起 netease、`enabled` 默认 false，导致「进程在跑 + 开关关着」成为开发模式常态。侧栏判定改为以 `enabled` 为唯一事实源；网关状态接口补「读时现探」；开关切换加 `service-enabled-changed` 广播。新增坑 46–48）

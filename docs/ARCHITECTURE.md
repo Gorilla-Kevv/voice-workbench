@@ -8,14 +8,21 @@
 
 ```
 浏览器 ──▶ Node 网关（:8787） ──▶ ┬─▶ MiMo 云端 API
-                                  └─▶ GPT-SoVITS 本地服务（:9881） ──▶ 官方整合包
+                                  └─▶ GPT-SoVITS 本地服务（:9881）
+                                          │
+                                          └─▶ worker 子进程 ──▶ 官方整合包
 ```
+
+本地服务不是单体：官方 GPT-SoVITS 管线被放在自己的 **worker 子进程**里
+（`trainer/app/sovits/worker/`），因为官方代码在 import 期会做进程级
+猴子补丁。详见第四节与 `docs/ENGINE-ISOLATION.md`。
 
 | 层 | 技术 | 职责 | 不做什么 |
 | --- | --- | --- | --- |
 | 前端 `app/` | React 19 + TS + Vite | 界面、音色库管理、结果回放与导出 | 不直接碰模型；不做音频编解码的重活 |
 | 网关 `server/` | Node 18 + Express 4 | MiMo 封装、本地服务探活与反向代理、静态托管 | 不持有 Python 进程；不解析 GPT-SoVITS 的请求体 |
-| 本地服务 `trainer/` | Python 3.9+ + FastAPI | 官方管线的常驻封装、音色库、批量合成、训练流水线 | 不重复实现官方算法，全部调用官方代码 |
+| 本地服务 `trainer/` | Python 3.9+ + FastAPI | 官方管线的跨进程代理、音色库、批量合成、训练流水线 | 不重复实现官方算法，全部调用官方代码 |
+| worker 子进程 | 整合包自带解释器 | 真正持有官方管线、跑推理 | 不对外暴露端口；不碰音色库与任务系统 |
 
 ---
 
@@ -85,7 +92,9 @@ torch 装在 GPT-SoVITS 整合包自带的 `runtime/` 里，而用户很可能�
 
 ---
 
-## 四、为什么 Python 服务直接 import 官方管线
+## 四、为什么 Python 服务把官方管线放进独立 worker 进程
+
+### 4.1 官方仓库的运行前提
 
 官方仓库不是可 import 的库，而是一个「必须站在自己根目录下运行」的项目：
 `TTS.py` 里 `now_dir = os.getcwd()` 并用它拼声码器路径，`sv.py` 在 import 期
@@ -95,8 +104,45 @@ torch 装在 GPT-SoVITS 整合包自带的 `runtime/` 里，而用户很可能�
   （`AR`、`text`、`sv`、`module` 在这里），且后者要排在更前面；
 - `os.chdir(根目录)`。
 
-旧的实现走的是「每次合成都 `subprocess` 调 `inference_cli.py`」，
-等价于每次都要重新加载 4 个模型（约 1 分钟）。现在改为常驻管线：
+### 4.2 为什么这些动作必须待在别的进程里
+
+上面两件事里，`os.chdir` 是**永久**的（`bootstrap.py` 改完不恢复），
+而这还不是最严重的。真正的麻烦是 **import 期副作用**：
+
+`GPT_SoVITS/AR/modules/activation.py` 在被 import 的那一刻就执行
+
+```python
+F.multi_head_attention_forward = multi_head_attention_forward_patched
+```
+
+`torch.nn.functional` 是**模块级单例** —— 这一行改的不是 GPT-SoVITS 自己，
+是整个进程里所有用 torch MHA 的代码。而 RVC 的 HuBERT（fairseq
+`MultiheadAttention`）正好走到补丁函数缺了名字的那个分支，于是：
+
+```
+NameError: name '_in_projection' is not defined
+```
+
+**整理 `sys.path`、摘 `sys.modules` 都救不了这种情况** —— 补丁已经打在 torch
+自己身上了。唯一干净的隔离边界是**进程**。同理，一次永久 `os.chdir` 也会让
+主进程的相对路径语义悄悄改变，是后排不掉的隐患。
+
+所以官方 GPT-SoVITS 管线跑在 `trainer/app/sovits/worker/` 这个独立子进程里。
+完整的设计与验证记录见 **`docs/ENGINE-ISOLATION.md`**；这里有三个要点：
+
+1. **主进程保留 `sys.path` 注入，只搬走 `os.chdir`** —— UVR5 与 ASR 的脚本通道
+   仍要 `from tools.uvr5.vr import ...`，所以 `bootstrap.install()` 拆成
+   `chdir=False`（主进程，默认）与 `chdir=True`（worker）。
+2. **对外契约零变化** —— `pipeline.py` 变成同签名代理，`api.py` / `inference.py`
+   一行调用点都不用改；`/health` 原有字段全部保留，只**追加**三个 worker 字段
+   （`worker_alive` / `worker_error` / `worker_pid`）。
+3. **worker 是懒启动的** —— 服务启动时不拉起，第一次进入推理才拉，
+   免得拖慢 `/health` 探活与前端首屏。
+
+### 4.3 常驻管线带来的收益
+
+旧实现走的是「每次合成都 `subprocess` 调 `inference_cli.py`」，
+等价于每次都要重新加载 4 个模型（约 1 分钟）。现在是常驻管线：
 
 | 场景 | 旧实现 | 现在 |
 | --- | --- | --- |
@@ -105,12 +151,30 @@ torch 装在 GPT-SoVITS 整合包自带的 `runtime/` 里，而用户很可能�
 | 切换权重 | 重启进程 | `init_t2s_weights` / `init_vits_weights` 热切换 |
 | 切换设备/精度 | 重启进程 | `set_device` / `enable_half_precision` |
 
-并发模型是**单卡串行**：所有推理走同一把锁。本地工具的正确性优先于吞吐，
+worker 首载实测约 **24 s**（冷缓存）/ 3~4 s（OS 缓存已热），
+IPC 跳数开销可忽略。
+
+### 4.4 并发与容错
+
+并发模型仍是**单卡串行**：所有推理走同一把锁。本地工具的正确性优先于吞吐，
 两个请求同时抢显存只会一起 OOM。但「等待」有明确上限：
 
 - 同步合等等 300 秒，超时返回「有另一个任务正在占用显卡」；
 - 流式合成只等 5 秒 —— 流式的价值就是「马上听到」，
   排不上队就该立刻告诉用户，而不是让他等 5 分钟再听到第一声。
+
+**IPC 超时必须长于业务锁等待上限**（所以同步这条路是 330 s），否则 worker
+健康地排队时会被主进程误判成超时。流式不能设总超时，改为逐块软超时：
+首块 120 s，之后每块 30 s，出块即续期。
+
+worker 崩溃的处理原则是「**不撒谎、能自愈**」：
+
+- 进程没了 = 模型必然没了，镜像立刻打回 `loaded=False` 并给出 `worker_error`。
+  绝不出现「`/health` 说已就绪、一合成却 503」这种最坑人的状态；
+- 退避重启（1/2/4/8/16/32/60 s），连续失败 5 次后停止自动重启
+  —— 不无脑重载模型，因为「worker 反复崩」会被自动重载放大成「服务器反复 OOM」；
+- 退避窗口内的重试会**等一下**再重启（上限 10 s），而不是立刻甩 503
+  —— 「崩溃后马上重试」是最正常不过的行为。
 
 ---
 
@@ -175,8 +239,14 @@ MiMo 与 GPT-SoVITS 都实现它，于是「切换模型」对上层页面是透
 | 前缀 | 内容 | 密度 |
 | --- | --- | --- |
 | `[sovits]` | 模型服务的原始输出：体检报告、模型加载进度 | 首次启动约 40 行 |
+| `[sovits-worker]` | worker 子进程的转发输出：启动、就绪、加载、崩溃 | 首次加载约 5 行 |
 | `[server]` | 网关的叙事：就绪摘要、阻断项、新手引导 | 约 7 行 |
 | `[app]` | Vite | 3 行 |
+
+worker 是独立进程，它的 **stdout 被重定向到 stderr** 之后再由主进程加前缀转发
+—— 这是刻意的：worker 的 stdout 是 JSON-lines 协议通道，官方 `TTS.py` 里的
+`print(f"first_package_delay: ...")` 之类会污染协议流，所以协议走 fd 复制出来的
+私有通道，人类可读的日志统一走 stderr。这样可以一边看协议一边看日志。
 
 网关曾经把 Python 的每一行都转发成自己的 `debug` 日志，一次正常启动能刷满两屏，
 真正要看的信息（服务是否就绪、有没有报错）反而找不到。现在逐行转发默认关闭、

@@ -251,6 +251,34 @@ class Settings:
     def checkpoints_dir(self) -> Path:
         return self.models_dir / "checkpoints"
 
+    @property
+    def rvc_models_dir(self) -> Path:
+        """RVC 音色模型的**写入根**（P0 起为 `models/rvc/`）。
+
+        所有新建产物（上传、训练导出、模型融合）都落这里，
+        与网关的 `modelRegistry` 类别表 `rvc` 一致。
+        """
+        return self.models_dir / "rvc"
+
+    @property
+    def rvc_model_search_dirs(self) -> List[Path]:
+        """RVC 音色模型的**读取搜索目录**（新根优先，旧位置兼容）。
+
+        为什么要多根：改前模型散落在两处，且用户自己按「角色组」建过嵌套目录，
+        直接换根会让既有模型全部「消失」。所以先并存读取，
+        等迁移脚本（见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §9）跑完再摘掉旧根。
+
+        可用环境变量 `RVC_MODEL_DIRS`（`os.pathsep` 分隔）完全覆盖。
+        """
+        override = os.environ.get("RVC_MODEL_DIRS", "").strip()
+        if override:
+            return [Path(item).expanduser() for item in override.split(os.pathsep) if item.strip()]
+        return [
+            self.rvc_models_dir,              # 新根（规范位置）
+            self.models_dir / "RVC语音模型",   # 用户自己的组织方式（历史遗留）
+            self.vc_dir / "models",           # P0 之前的旧根
+        ]
+
     # ---------- 构造 ----------
 
     @classmethod

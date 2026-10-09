@@ -113,7 +113,12 @@ def merge_models(
     }
     if base_ckpt.get("sr"):
         payload["sr"] = base_ckpt["sr"]
-    torch.save(payload, str(target))
+    # 走文件对象而非路径字符串：torch 的 PyTorchFileWriter 在 Windows 上处理
+    # 「奇数个非 ASCII 字符」的文件名会失败（详见 vc/lora.py::save_adapter 的注释）。
+    # 融合结果的默认名字常带中文，这里必须一起防住。
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with open(target, "wb") as handle:
+        torch.save(payload, handle)
 
     return {
         "path": str(target),

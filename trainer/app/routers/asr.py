@@ -23,7 +23,7 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import Body, FastAPI, File, Form, UploadFile
 
 from ..asr import catalog, training
 from ..asr.bootstrap import AsrError
@@ -145,7 +145,7 @@ def register(app: FastAPI, ctx) -> None:
         return {"ok": True, **ctx.asr.status()}
 
     @app.post("/v1/asr/plan", tags=["asr"])
-    def asr_plan(payload: Any) -> Any:
+    def asr_plan(payload: Any = Body(default=None)) -> Any:
         """只算「会怎么跑」，不执行。前端用它把模型与通道回显给用户。"""
         data = payload if isinstance(payload, dict) else {}
         resolved = ctx.asr.resolve(
@@ -159,7 +159,7 @@ def register(app: FastAPI, ctx) -> None:
         return {"ok": True, **_public(resolved)}
 
     @app.post("/v1/asr/models/load", tags=["asr"])
-    def asr_load_model(payload: Any) -> Any:
+    def asr_load_model(payload: Any = Body(default=None)) -> Any:
         """加载（或热切换到）指定模型。常驻通道才有意义。"""
         data = payload if isinstance(payload, dict) else {}
         handle = ctx.engines.acquire("asr", reason="加载 ASR 模型")
@@ -241,13 +241,13 @@ def register(app: FastAPI, ctx) -> None:
         return {"ok": True, "files": saved, "skipped": skipped, "dir": str(target_dir)}
 
     @app.post("/v1/asr/train/plan", tags=["asr"])
-    def asr_train_plan(payload: Any) -> Any:
+    def asr_train_plan(payload: Any = Body(default=None)) -> Any:
         """训练入口预检：会转写多少条、走哪条通道、产物落在哪。"""
         request = _request_from(payload)
         return {"ok": True, **training.plan(ctx.asr, request)}
 
     @app.post("/v1/asr/train", tags=["asr"])
-    def asr_train(payload: Any) -> Any:
+    async def asr_train(payload: Any = Body(default=None)) -> Any:
         """提交训练入口任务（批量音频 → 逐字文本数据集）。"""
         request = _request_from(payload)
         if not request.corpus_dir.strip() and not request.files:

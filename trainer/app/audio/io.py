@@ -155,14 +155,43 @@ def resample(data: np.ndarray, src_sr: int, dst_sr: int) -> np.ndarray:
 
 
 def save(path: Path, data: np.ndarray, sample_rate: int, subtype: str = "PCM_16") -> Path:
-    """写音频文件。父目录自动创建。"""
+    """写音频文件。父目录自动创建。
+
+    **整数输入必须原样交给 soundfile，不能强转 float32。**
+
+    这是 2026-10 修掉的一个真实缺陷：上游 RVC 的 `vc_single()` 返回的是
+    **已经缩放到 ±32768 的 int16 数组**（见 `vendor/rvc/infer/modules/vc/pipeline.py`
+    末尾的 `(audio_opt * max_int16).astype(np.int16)`）。原先这里无脑
+    `np.asarray(data, dtype=np.float32)`，于是 `24351` 被当成**归一化浮点**交给
+    soundfile → 单个样本直接顶到满量程，整段音频变成 ±32767 的方波（实测削波 80%+，
+    听感即「增益过大、全部失真」）。
+
+    soundfile 的浮点约定是 [-1, 1]，整数约定是满量程 —— 两者的语义不同，
+    所以只在**浮点输入**上做 dtype 规整（保证 `sf.write` 拿到 float32），
+    整数输入（int16/int32）保持原 dtype 直接写。
+
+    **数组布局也必须保持 frames-first，不能转置。**
+
+    这是同一轮里查出的第二个缺陷。`soundfile >= 0.12` 的 `sf.write` 要求
+    `(frames, channels)`；老版 librosa 习惯的 `(channels, frames)` 已经不认了。
+    之前的 `array.T` 是照搬老习惯，对单声道 `(N,)` 无影响（`ndim == 1` 不转置），
+    但立体声 `(N, 2)` 会被转成 `(2, N)`，即 **2 帧 × 80000 声道** ——
+    libsndfile 直接报 `Format not recognised`（实测复现）。变声主路径是单声道，
+    所以这个坑一直没暴露。
+    """
     import soundfile as sf  # noqa: PLC0415
 
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    array = np.asarray(data, dtype=np.float32)
-    if array.ndim > 1:
-        array = np.ascontiguousarray(array.T)
+    array = np.asarray(data)
+    # 浮点 → 统一 float32（soundfile 认这个）；整数 → 保留原 dtype（满量程语义）
+    if np.issubdtype(array.dtype, np.floating):
+        array = array.astype(np.float32, copy=False)
+    if array.ndim > 2:
+        # (channels, frames) 或 (frames, channels, ...) 都不该出现；明确报错好过写坏文件
+        raise AudioError("只支持一维（单声道）或二维（frames x channels）音频数组，收到 %d 维" % array.ndim)
+    # 确保内存连续即可，**不转置**：soundfile 要的就是 frames-first
+    array = np.ascontiguousarray(array)
     sf.write(str(path), array, int(sample_rate), subtype=subtype)
     return path
 

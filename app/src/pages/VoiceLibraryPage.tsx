@@ -40,13 +40,16 @@ import { ResourceHubList } from '@/components/features/ResourceHub';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { asrApi } from '@/lib/asr';
 import { formatBytes, formatDuration, formatRelativeTime } from '@/lib/audio';
 import { RequestError } from '@/lib/errors';
+import { modelsApi, type ModelCategoryKey, type ModelCategoryView } from '@/lib/models';
 import { sovitsApi } from '@/lib/sovits';
 import { voiceApi } from '@/lib/voices';
 import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
+import { ModelCategoryPanel } from '@/components/features/ModelCategoryPanel';
 import { cn } from '@/lib/utils';
 import type { SovitsCatalog, SovitsVoice } from '@/types';
 
@@ -89,7 +92,13 @@ function safeFileName(name: string): string {
  * 多选批量删除与批量导出 / 单条精导（带参考文本）与批量快导（多文件按文件名登记）。
  * 批量快导登记出来的音色**没有参考文本**（会标警告），补文本用编辑弹窗或一键智能转写。
  */
-export function VoiceLibraryPage() {
+/**
+ * 「参考音频」面板 —— 零样本三引擎（GPT-SoVITS 零样本 / IndexTTS / 网易）共用的素材库。
+ *
+ * P0 起本页改为多 Tab 容器（见文件末尾的 `VoiceLibraryPage`），
+ * 这个组件整体搬进「参考音频」Tab，内部逻辑不变。
+ */
+function ReferenceAudioPanel() {
   const [voices, setVoices] = useState<SovitsVoice[]>([]);
   const [catalog, setCatalog] = useState<SovitsCatalog | null>(null);
   const [loading, setLoading] = useState(true);
@@ -1202,5 +1211,94 @@ export function VoiceLibraryPage() {
           : ''}
       </p>
     </div>
+  );
+}
+
+/**
+ * 音色库（统一管理页）。
+ *
+ * P0 起从「只管参考音频」升级为**多 Tab 容器**：
+ *   * 参考音频 —— 零样本三引擎共用素材（原页面整体搬进这个 Tab）
+ *   * RVC / DDSP-SVC / GPT-SoVITS —— 各自的**权重文件**（P0 先做看得见 / 打开目录 / 删除）
+ *
+ * 为什么要分这两类：按引擎的真实模型形态，五套引擎分两族 ——
+ * 零样本（音色 = 一段参考音频）与训练型（音色 = 一个权重文件）。
+ * 详见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §4.4。
+ */
+const MODEL_TABS: { key: ModelCategoryKey; label: string }[] = [
+  { key: 'rvc', label: 'RVC 变声' },
+  { key: 'ddsp-svc', label: '歌声转换' },
+  { key: 'gpt-sovits', label: 'GPT-SoVITS' },
+  { key: 'netease', label: '网易（预留）' },
+];
+
+export function VoiceLibraryPage() {
+  const [tab, setTab] = useState<string>('reference');
+  const [catalog, setCatalog] = useState<ModelCategoryView[]>([]);
+
+  const refreshCatalog = useCallback(async () => {
+    try {
+      const payload = await modelsApi.catalog();
+      setCatalog(payload.categories);
+    } catch {
+      // 目录取不到不该挡住「参考音频」这个主功能：静默降级为空
+      setCatalog([]);
+    }
+  }, []);
+
+  // 挂载时取一次类别总览（Tab 计数与「放这里」的目录提示都要它）。
+  // 写成 IIFE + cancelled 标记：与 App.tsx 里几个探活 effect 同一形状，
+  // 避免 setState 落在 effect 同步体内（react-hooks/set-state-in-effect）。
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const payload = await modelsApi.catalog();
+        if (!cancelled) setCatalog(payload.categories);
+      } catch {
+        if (!cancelled) setCatalog([]);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const categoryInfo = useCallback(
+    (key: ModelCategoryKey) => catalog.find((item) => item.key === key) ?? null,
+    [catalog],
+  );
+
+  return (
+    <Tabs value={tab} onValueChange={setTab} className="space-y-4">
+      <TabsList className="flex-wrap">
+        <TabsTrigger value="reference" className="text-xs">
+          参考音频
+        </TabsTrigger>
+        {MODEL_TABS.map((item) => {
+          const info = categoryInfo(item.key);
+          return (
+            <TabsTrigger key={item.key} value={item.key} className="text-xs">
+              {item.label}
+              {info && info.count > 0 ? `（${info.count}）` : ''}
+            </TabsTrigger>
+          );
+        })}
+      </TabsList>
+
+      <TabsContent value="reference">
+        <ReferenceAudioPanel />
+      </TabsContent>
+
+      {MODEL_TABS.map((item) => (
+        <TabsContent key={item.key} value={item.key}>
+          <ModelCategoryPanel
+            category={item.key}
+            info={categoryInfo(item.key)}
+            onChanged={() => void refreshCatalog()}
+          />
+        </TabsContent>
+      ))}
+    </Tabs>
   );
 }

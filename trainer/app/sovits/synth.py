@@ -17,9 +17,9 @@ import time
 import wave
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterator, List, Optional, Tuple
 
-from ..errors import BadRequestError, EnvironmentError_
+from ..errors import BadRequestError, EnvironmentError_, SynthesisError
 from . import catalog
 from .voices import Voice, VoiceLibrary
 
@@ -383,3 +383,75 @@ def wav_file_duration_s(path: Path) -> float:
 
 def timestamp() -> float:
     return time.time()
+
+
+# --------------------------------------------------------------------------
+# 官方推理产物的处理与异常翻译
+# --------------------------------------------------------------------------
+#
+# 这两个函数原先住在 `pipeline.py` 里。worker 化之后它们**两边的需要**：
+# worker 侧（消费官方生成器、翻译官方异常）与主进程侧都要用。
+# 放在 `synth.py` 是因为它是「与官方打交道但自己不含 IPC」的那一层 ——
+# 谁 import 它都不会引入循环（`pipeline.py` 与 `worker/server.py` 都依赖它）。
+#
+# 放在 `pipeline.py` 会让 worker 反向依赖代理模块，那是循环的。
+
+
+def last_chunk(generator: "Iterator[Tuple[int, Any]]") -> Tuple[int, Any]:
+    """官方 `run()` 在多段场景下会 yield 多次，非流式调用应取最后一块完整音频。
+
+    官方 `api_v2.py` 用的是 `next(tts_generator)`，但那在 `size` 较小时
+    会丢掉后续片段。这里改为取最后一帧，语义等价且不会截断。
+    """
+    last: Optional[Tuple[int, Any]] = None
+    for sample_rate, audio in generator:
+        last = (sample_rate, audio)
+    if last is None:
+        raise SynthesisError(
+            "推理未产出任何音频",
+            hint="文本可能为空，或已被文本清洗阶段全部过滤。",
+            code="EMPTY_AUDIO",
+        )
+    return last
+
+
+def as_synthesis_error(exc: Exception) -> SynthesisError:
+    """把官方零散异常翻译成带修复建议的业务错误。
+
+    判据是官方异常的**原始文本**（`"3~10秒"`、`"out of memory"` 等），
+    所以这个函数只能在拿到原始异常的那一侧调用 —— 也就是 worker。
+    """
+    text = "%s: %s" % (type(exc).__name__, exc)
+    lower = text.lower()
+
+    if "3~10秒" in text or "3~10" in text:
+        return SynthesisError(
+            "参考音频时长不在 3~10 秒范围内",
+            hint="这是官方硬约束。请重新裁剪参考音频到 3~10 秒后重试。",
+            code="REF_AUDIO_DURATION",
+        )
+    if "not exists" in lower or "no such file" in lower:
+        return SynthesisError(
+            "参考音频文件不存在",
+            hint="音色库中的音频可能已被移动或删除，请重新上传。",
+            code="REF_AUDIO_MISSING",
+        )
+    if "out of memory" in lower or "cuda error" in lower:
+        return SynthesisError(
+            "显存不足，推理中断",
+            hint="可尝试：降低批大小（batch_size=1）、关闭并行推理、改用更小的版本（v2ProPlus → v2），或停止其它占用显卡的程序。",
+            code="CUDA_OOM",
+        )
+    if "prompt_text cannot be empty" in lower:
+        return SynthesisError(
+            "当前模型要求提供参考音频的转写文本",
+            hint="v3/v4 声码器模型不支持空参考文本，请在音色库中补全提示文本。",
+            code="PROMPT_TEXT_REQUIRED",
+        )
+    if "repetition" in lower or "复读" in text:
+        return SynthesisError(
+            "模型出现复读（重复输出），已中断",
+            hint="可调低 temperature 或提高 repetition_penalty，或改用更细的文本切分方式（cut4 / cut5）。",
+            code="REPETITION",
+        )
+    return SynthesisError("推理失败：" + text, hint="完整堆栈见服务端控制台输出。", code="SYNTHESIS_FAILED")

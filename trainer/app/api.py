@@ -77,6 +77,10 @@ class Context:
         self.started_at = time.time()
         self.store = JobStore(settings.jobs_dir)
         self.scheduler = Scheduler(settings, self.store)
+        # 官方 GPT-SoVITS 管线跑在独立 worker 进程里（见 docs/ENGINE-ISOLATION.md）：
+        # 官方激活函数在 import 期全局替换 `F.multi_head_attention_forward`，
+        # 还外加一次永久 `os.chdir`，只有进程隔离才能把这些副作用关起来。
+        # 这里拿到的是与重构前同签名的代理，所以下面所有调用点都不用改。
         self.pipeline = Pipeline(settings.data_dir)
         # 音色库落在仓库根 voicelib/（共享目录）：网关也读写这一份，
         # 所以 GPT-SoVITS 服务没起时其它页面照样能选音色。见 sovits/voices.py 的跨进程刷新。
@@ -280,7 +284,10 @@ def create_app(ctx: Context) -> FastAPI:
             yield
         finally:
             await ctx.scheduler.stop()
+            # 先让 worker 自己释放模型（会等正在跑的推理结束），
+            # 再让它退出进程 —— 顺序反过来的话，模型还在显存里进程就没了。
             ctx.pipeline.unload()
+            ctx.pipeline.shutdown()
 
     app = FastAPI(
         title="GPT-SoVITS 本地语音工作台",

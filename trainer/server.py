@@ -316,6 +316,11 @@ def build_context(settings: Settings) -> Context:
         auto_discover=settings.auto_discover,
     )
     if installation is not None:
+        # 不传 chdir：主进程**必须**保持自己的 cwd。
+        # 原先这里会 `os.chdir(整合包根)` 且不恢复，把所有相对路径的口径永久改掉；
+        # 那个需求只对官方管线成立，而它已经搬进 worker 进程了。
+        # sys.path 注入保留 —— UVR5 / ASR 的脚本通道依赖它。
+        # 见 docs/ENGINE-ISOLATION.md §3.5。
         bootstrap.install(installation)
 
     settings.ensure_dirs()

@@ -25,7 +25,7 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 
-from .. import vendor_paths
+from .. import torch_compat, vendor_paths
 from ..config import Settings
 
 __all__ = [
@@ -60,8 +60,14 @@ def vendor_root(settings: Settings) -> Path:
 
 
 def ensure_import_path(settings: Settings) -> Path:
-    """把上游根目录放进 `sys.path`（幂等）。DDSP-SVC 的顶层模块名是 `ddsp` / `reflow` 等。"""
+    """把上游根目录放进 `sys.path`（幂等）。DDSP-SVC 的顶层模块名是 `ddsp` / `reflow` 等。
+
+    顺带补一次 `torch_compat.ensure_mha_patch_complete()`：DDSP 现在的编码器是自己
+    实现的 HuBERT（不走 fairseq），但它的 contentvec 分支随时可能换成 fairseq 实现，
+    而 GPT-SoVITS 的 MHA 补丁缺失是**进程级**的坑 —— 补一次成本为零。
+    """
     root = vendor_root(settings)
+    torch_compat.ensure_mha_patch_complete()
     entry = str(root)
     if entry not in _IMPORTED_ROOTS:
         if entry in __import__("sys").path:

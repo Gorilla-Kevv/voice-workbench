@@ -166,6 +166,11 @@ def register(app: FastAPI, ctx) -> None:
         _svc_engine(ctx).unload()
         return {"ok": True, "message": "已释放歌声转换模型"}
 
+    @app.delete("/v1/svc/models", tags=["svc"])
+    def svc_delete_model(model: str = "") -> Any:
+        """从音色库删除一个模型（.pt + 同目录 config.yaml）。"""
+        return {"ok": True, **catalog.delete_model(ctx.settings, model)}
+
     @app.post("/v1/svc/models/upload", tags=["svc"])
     async def svc_upload_model(
         model: UploadFile = File(...),

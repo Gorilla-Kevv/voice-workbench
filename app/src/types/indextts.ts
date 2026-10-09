@@ -23,6 +23,8 @@ export interface IndexttsHealth {
   service: string;
   version: string;
   cuda: boolean;
+  /** 服务自身进程号（网关用它确证端口归属） */
+  pid?: number | null;
   vram: IndexttsVram;
   engine: IndexttsEngineStatus;
 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Upload, Waves } from 'lucide-react';
+import { FolderOpen, Loader2, Upload, Waves } from 'lucide-react';
 import { toast } from 'sonner';
 import { RequestError } from '@/lib/errors';
 import { dropHighlight, applyFilesToInput, useFileDrop } from '@/hooks/useFileDrop';
@@ -20,9 +20,12 @@ import { SourceNote } from '@/components/features/SourceNote';
 import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { RunResultCard } from '@/components/features/RunResultCard';
 import { useResultStack } from '@/hooks/useResultStack';
-import { resolveAudioUrl, vcApi } from '@/lib/vc';
-import type { SovitsJob, VcCatalog, VcModel } from '@/types';
+import { useVcTrainHistory } from '@/hooks/useVcTrainHistory';
+import { notifyVcRunChanged } from '@/hooks/useVcRunHistory';
+import { pickArtifactUrl, vcApi } from '@/lib/vc';
+import type { SovitsJob, VcCatalog, VcModel, VcTrainArtifact } from '@/types';
 
 /** 一条变声结果：输出（服务端地址）+ 当时的源音频快照，够独立回听 A·B 对比 */
 interface VcResultItem {
@@ -90,7 +93,16 @@ export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => voi
       <EngineBadge catalog={catalog} onRefresh={refresh} accent={ACCENT_TEXT} />
       <ModelLibrary catalog={catalog} onChanged={refresh} accent={ACCENT_SOLID} />
       <ConvertCard catalog={catalog} accentText={ACCENT_TEXT} accentSolid={ACCENT_SOLID} onChanged={refresh} />
+      <RunResultCard
+        kind="vc_infer"
+        title="变声结果"
+        description="历次变声产出的音频。记录来自本地服务（重启后仍在），可直接回听，点路径文字可复制。"
+        icon={<Waves className="size-4" />}
+        accentText={ACCENT_TEXT}
+        emptyHint="上面跑一次变声"
+      />
       <WorkshopCard catalog={catalog} accentSolid={ACCENT_SOLID} onChanged={refresh} />
+      <TrainResultCard onChanged={refresh} />
     </div>
   );
 }
@@ -231,6 +243,21 @@ function ModelCard({ model, accent, onChanged }: { model: VcModel; accent: strin
           variant="ghost"
           className="h-7 px-2 text-xs text-muted-foreground"
           onClick={() => {
+            const next = window.prompt('新的音色名称（会同时重命名配套索引）', model.name);
+            if (next === null || !next.trim() || next.trim() === model.name) return;
+            void vcApi
+              .renameModel(model.id, next.trim())
+              .then(() => onChanged())
+              .catch((cause: RequestError) => toast.error('重命名失败', { description: cause.fullMessage }));
+          }}
+        >
+          改名
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs text-muted-foreground"
+          onClick={() => {
             void vcApi.deleteModel(model.id).then(onChanged);
           }}
         >
@@ -312,7 +339,7 @@ function ConvertCard({
         protect,
       });
       if ('job_id' in result) setJobId(result.job_id);
-      else pushResult(resolveAudioUrl(result.output));
+      else pushResult(pickArtifactUrl(result as unknown as Record<string, unknown>));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause));
     } finally {
@@ -332,9 +359,13 @@ function ConvertCard({
   };
 
   const onJobDone = (job: SovitsJob) => {
-    const output = (job.artifacts as { output?: string } | null)?.output;
-    if (output) pushResult(resolveAudioUrl(output));
+    // 产物里 `output` 是服务端绝对路径、`urls.output` 才是 Web 路径。
+    // 取错会拼出 `/api/sovits/F:/...` → 404 → 播放器灰色禁用（用户看到的现象）。
+    // 统一走 `pickArtifactUrl` 收口这个判断，别在各页面手写。
+    pushResult(pickArtifactUrl(job.artifacts as Record<string, unknown> | null));
     onChanged();
+    // 通知「变声结果」面板立刻把这条新记录读回来
+    notifyVcRunChanged();
   };
 
   const vcEntries: ResultStackEntry[] = results.entries.map((entry) => ({
@@ -482,7 +513,7 @@ function WorkshopCard({ catalog, accentSolid, onChanged }: { catalog: VcCatalog 
             <MergeTab models={modelNames} accentSolid={accentSolid} onChanged={onChanged} />
           </TabsContent>
           <TabsContent value="lora" className="pt-4">
-            <LoraTab models={modelNames} accentSolid={accentSolid} />
+            <LoraTab models={modelNames} accentSolid={accentSolid} onTrained={onChanged} />
           </TabsContent>
         </Tabs>
       </CardContent>
@@ -568,7 +599,15 @@ function MergeTab({ models, accentSolid, onChanged }: { models: string[]; accent
   );
 }
 
-function LoraTab({ models, accentSolid }: { models: string[]; accentSolid: string }) {
+function LoraTab({
+  models,
+  accentSolid,
+  onTrained,
+}: {
+  models: string[];
+  accentSolid: string;
+  onTrained: () => void;
+}) {
   const [name, setName] = useState('my-voice');
   const [corpusDir, setCorpusDir] = useState('');
   const [base, setBase] = useState('');
@@ -645,7 +684,175 @@ function LoraTab({ models, accentSolid }: { models: string[]; accentSolid: strin
         </Button>
         <p className="text-xs text-muted-foreground">只训练约 4% 的参数，产物是几 MB 的适配器，可随时热切换。</p>
       </div>
-      <JobPanel jobId={jobId} accent={accentSolid.replace('bg-indigo-600', 'text-indigo-500').replace(' text-white', '')} title="训练任务" />
+      <JobPanel
+        jobId={jobId}
+        onComplete={onTrained}
+        accent={accentSolid.replace('bg-indigo-600', 'text-indigo-500').replace(' text-white', '')}
+        title="训练任务"
+      />
     </div>
   );
+}
+
+/** 产物类型 → 图标与配色 */
+const ARTIFACT_STYLE: Record<string, { label: string; className: string }> = {
+  model: { label: '模型', className: 'bg-indigo-500/10 text-indigo-600 dark:text-indigo-400' },
+  adapter: { label: 'LoRA', className: 'bg-violet-500/10 text-violet-600 dark:text-violet-400' },
+  index: { label: '索引', className: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' },
+};
+
+/**
+ * 训练结果面板。
+ *
+ * 这解决的是用户 2026-10 报的问题：「训练的结果在网站重启之后就没了」。
+ * 真相是**产物一直在磁盘上、任务记录也一直在**（服务端写 `trainer/.data/jobs/`），
+ * 但前端此前只在 `LoraTab` 的局部 state 里记着 `jobId`，组件一卸载就断了线索。
+ * 现在改成挂载时就去服务端把 `vc_train` 历史拉回来 —— 刷新、重启浏览器、
+ * 甚至重启服务，记录都还在。
+ */
+function TrainResultCard({ onChanged }: { onChanged: () => void }) {
+  const { records, loading, error, refresh } = useVcTrainHistory();
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copyPath = async (path: string) => {
+    try {
+      await navigator.clipboard.writeText(path);
+      setCopied(path);
+      window.setTimeout(() => setCopied((prev) => (prev === path ? null : prev)), 1500);
+    } catch {
+      toast.error('复制失败', { description: '浏览器拒绝了剪贴板访问，请手动选中路径复制。' });
+    }
+  };
+
+  const total = records.reduce((sum, record) => sum + record.artifacts.length, 0);
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-start justify-between gap-2">
+          <div>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FolderOpen className={`size-4 ${ACCENT_TEXT}`} /> 训练结果
+            </CardTitle>
+            <CardDescription>
+              历次训练产出的模型 / 适配器 / 索引。记录来自本地服务（重启后仍在），点路径文字可复制。
+            </CardDescription>
+          </div>
+          <Button variant="ghost" size="sm" className="h-7 shrink-0 text-xs text-muted-foreground" onClick={refresh}>
+            刷新
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {error ? <p className="text-xs text-destructive">读取训练记录失败：{error}</p> : null}
+        {loading && records.length === 0 ? (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" /> 正在读取训练记录…
+          </p>
+        ) : records.length === 0 ? (
+          <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+            还没有训练记录。上面跑一次 LoRA 微调，产物会自动出现在这里。
+          </p>
+        ) : (
+          <div className="space-y-2">
+            <p className="text-[11px] text-muted-foreground">
+              共 {records.length} 次训练 · {total} 件产物
+            </p>
+            {records.map((record) => (
+              <div key={record.jobId} className="rounded-lg border p-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="truncate text-sm font-medium">{record.name}</span>
+                  <Badge variant="outline" className="shrink-0 text-[11px]">{record.mode}</Badge>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      'shrink-0 text-[11px]',
+                      record.state === 'succeeded'
+                        ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
+                        : record.state === 'failed'
+                          ? 'border-destructive/40 text-destructive'
+                          : 'text-muted-foreground',
+                    )}
+                  >
+                    {record.state === 'succeeded' ? '成功' : record.state === 'failed' ? '失败' : record.state === 'cancelled' ? '已取消' : record.state}
+                  </Badge>
+                  <span className="ml-auto shrink-0 text-[11px] text-muted-foreground">
+                    {formatTime(record.createdAt)}
+                  </span>
+                </div>
+
+                {record.artifacts.length === 0 ? (
+                  <p className="mt-2 text-xs text-muted-foreground">这次训练没有产出可展示的产物。</p>
+                ) : (
+                  <ul className="mt-2 space-y-1.5">
+                    {record.artifacts.map((artifact) => {
+                      const style = ARTIFACT_STYLE[artifact.kind] ?? { label: '产物', className: 'bg-muted text-muted-foreground' };
+                      return (
+                        <li key={artifact.path} className="flex items-start gap-2">
+                          <span className={cn('mt-0.5 shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium', style.className)}>
+                            {style.label}
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-xs font-medium">{artifact.label}</p>
+                            <button
+                              type="button"
+                              className="block w-full truncate text-left font-mono text-[11px] text-muted-foreground transition hover:text-foreground"
+                              title="点击复制完整路径"
+                              onClick={() => void copyPath(artifact.path)}
+                            >
+                              {artifact.path}
+                            </button>
+                          </div>
+                          <span className="shrink-0 text-[11px] text-muted-foreground">
+                            {copied === artifact.path ? '已复制' : `${artifact.size_mb}MB`}
+                          </span>
+                          {artifact.kind === 'model' ? (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 shrink-0 px-2 text-[11px]"
+                              onClick={() => void renameArtifact(artifact, onChanged)}
+                            >
+                              改名
+                            </Button>
+                          ) : null}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+/** 训练记录的时间戳（毫秒）→ 本地时间简写 */
+function formatTime(ms: number): string {
+  if (!ms) return '—';
+  const date = new Date(ms);
+  return `${date.getMonth() + 1}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+}
+
+/**
+ * 给一个训练产出的模型改名。用 `window.prompt` 是刻意选择：
+ * 改名是一次低频、单字段的操作，为它引一整套弹窗组件不划算；
+ * 原生 prompt 在桌面端行为稳定，且天然带默认值。
+ */
+async function renameArtifact(artifact: VcTrainArtifact, onChanged: () => void): Promise<void> {
+  const current = artifact.path.split(/[\\/]/).pop()?.replace(/\.pth$/i, '') ?? '';
+  const next = window.prompt('新的音色名称（会同时重命名配套索引）', current);
+  if (next === null) return;
+  const trimmed = next.trim();
+  if (!trimmed || trimmed === current) return;
+  try {
+    const result = await vcApi.renameModel(current, trimmed);
+    toast.success(result.message ?? '已重命名');
+    onChanged();
+  } catch (cause) {
+    toast.error('重命名失败', { description: (cause as RequestError).fullMessage });
+  }
 }

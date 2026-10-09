@@ -203,7 +203,7 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
   {
     title: '本机',
     items: [
-      { key: 'history', label: '历史记录', icon: History, hint: 'IndexedDB 本地存储' },
+      { key: 'history', label: '产出记录', icon: History, hint: '服务端任务 + 本地模型 + 云端合成' },
       { key: 'settings', label: '设置', icon: KeyRound, hint: '服务地址与偏好' },
     ],
   },

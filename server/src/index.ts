@@ -10,6 +10,7 @@ import { indexttsProxyRouter } from './routes/indextts.js';
 import { neteaseProxyRouter } from './routes/netease.js';
 import { createRuntimeServiceRouter } from './routes/runtimeService.js';
 import { voicelibRouter } from './routes/voicelib.js';
+import { modelsRouter } from './routes/models.js';
 import { indexttsSupervisor, neteaseSupervisor, runtimeSupervisors } from './services/runtime.js';
 import { sovitsProxyRouter, sovitsServiceRouter } from './routes/sovits.js';
 import { preloadService } from './services/preload.js';
@@ -46,6 +47,10 @@ app.use('/api/indextts', indexttsProxyRouter);
 // 音色库是网关原生接口（数据在仓库根 voicelib/，不依赖任何 Python 服务）。
 // 它自己声明 raw/json body 解析器，所以必须挂在下面的全局 express.json() 之前。
 app.use('/api/voicelib', voicelibRouter);
+
+// 统一模型管理（数据在仓库根 models/，同样是网关原生）。
+// 与 voicelib 同理：自己声明 body 解析器，必须早于全局 express.json()。
+app.use('/api/models', modelsRouter);
 
 // 克隆样本经 base64 传输，需要放宽请求体上限
 app.use(express.json({ limit: config.jsonBodyLimit }));

@@ -1,17 +1,34 @@
-"""推理管线单例。
+"""推理管线的**进程内代理**。
 
-为什么是单例：官方 `TTS.__init__` 会一次性加载 4 个模型
-（GPT 语义模型、SoVITS 声学模型、RoBERTa、CNHuBERT，v3/v4 还有声码器），
-冷启动约 40~90 秒、占用 2~4 GB 显存。若每次请求都重建，本地体验会退化成不可用。
+为什么要改成代理：官方 GPT-SoVITS 在 import 期做了两件**进程级、不可恢复**的事 ——
 
-因此这里维持**一条常驻管线**，并复用官方提供的三组热切换接口：
+1. `GPT_SoVITS/AR/modules/activation.py` 执行
+   `F.multi_head_attention_forward = multi_head_attention_forward_patched`，
+   全局替换整个进程的 torch MHA。而补丁函数的 `__globals__` 里缺 `_in_projection`，
+   RVC 的 fairseq `MultiheadAttention`（走 `use_separate_proj_weight=True`）一调就
+   `NameError`。
+2. `sovits/bootstrap.py::install()` 执行 `os.chdir(home)` 且**不恢复**。
 
-* `init_t2s_weights()` —— 换 GPT 权重
-* `init_vits_weights()` —— 换 SoVITS 权重（同时更新版本号与 SV 模型）
-* `set_device()` / `enable_half_precision()` —— 换设备与精度
+唯一的根治办法是让它们只发生在一个可以随时丢弃的进程里。所以官方管线搬到了
+`worker/server.py`，本模块变成它在主进程里的代理。
 
-并发模型：**单卡串行**。所有推理走同一把 `_infer_lock`，
-避免两个请求同时抢显存导致 OOM —— 本地工具的正确性优先于吞吐。
+**设计约束：公开签名一个都不改。**
+`api.py` / `routers/*` / `inference.py` / `batch.py` 的调用点全部零改动 ——
+它们看到的还是同名同参同返回值的 `Pipeline`。
+
+哪些方法走 IPC、哪些留本地，依据是「是否碰官方模块」：
+
+| 留本地（纯文件系统 / 纯内存） | 走 IPC（碰官方管线） |
+| --- | --- |
+| `status` `configure` `resolve_defaults` | `warmup` `unload` `stop` |
+| `current_pair` `set_training_active` | `synthesize` `stream` `split_text` |
+| `version` `device` `is_half` | (`device`/`is_half` 的**兜底值**在 worker 侧算) |
+
+`resolve_defaults` 特别值得一提：它只扫 `GPT_weights*/SoVITS_weights*/pretrained_models`
+取最新产物，没有任何官方 import。留在主进程更快，也避免把「扫目录」这种
+无副作用的活也塞进迟早要被丢弃的进程里。
+
+完整设计论证见 `docs/ENGINE-ISOLATION.md`。
 """
 
 from __future__ import annotations
@@ -24,6 +41,7 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from ..errors import BusyError, EnvironmentError_, SynthesisError
 from . import bootstrap, catalog
+from .worker import client as worker_client
 
 #: 等待「推理闸门」的上限。超过就给用户一个明确的「忙」提示，
 #: 而不是让他对着一个永远转圈的进度条 —— 单卡串行是物理约束，
@@ -58,7 +76,11 @@ class WeightPair:
 
 @dataclass
 class PipelineState:
-    """可序列化的管线状态，`/health` 与 `/v1/pipeline` 直接返回它。"""
+    """可序列化的管线状态，`/health` 与 `/v1/pipeline` 直接返回它。
+
+    这是**主进程的镜像**：真值在 worker 侧，每次 RPC 回来后由 `_absorb()` 刷新。
+    worker 没起来（或已崩溃）时，字段保持最后一帧 + `worker_alive=False`。
+    """
 
     loaded: bool = False
     loading: bool = False
@@ -74,6 +96,13 @@ class PipelineState:
     last_error: Optional[str] = None
     last_error_at: float = 0.0
     warmup_error: Optional[str] = None
+
+    #: worker 进程是否存活。新增字段（只追加，不动已有契约）
+    worker_alive: bool = False
+    #: worker 崩溃 / 启动失败时的可读原因
+    worker_error: Optional[str] = None
+    #: 最近一次心跳看到的 worker PID，排查「是不是被重启了」用
+    worker_pid: Optional[int] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -91,33 +120,64 @@ class PipelineState:
             "last_error": self.last_error,
             "last_error_at": self.last_error_at,
             "warmup_error": self.warmup_error,
+            "worker_alive": self.worker_alive,
+            "worker_error": self.worker_error,
+            "worker_pid": self.worker_pid,
         }
+
+    def mark_worker_lost(self, reason: Optional[str] = None) -> None:
+        """worker 进程没了 —— 把它手里的东西从镜像里一并抹掉。
+
+        **这是本文件最重要的一条不变式**：`loaded=True` 的唯一合法前提是
+        「有一个活着的 worker 持有模型」。worker 一死，模型必然随之消失；
+        镜像若还留着 `loaded=True`，`/health` 就会谎报「已就绪」，前端据此
+        显示绿色状态，用户一点合成却立刻 503 —— 这就是设计文档 §4.8 里
+        点名的「服务撒谎」失效模式。
+
+        必须写成方法而不是散在各处手改字段：`status()`、`_raise_worker_gone()`、
+        `unload()` 三处都要维持这条不变式，漏一处就退化成 bug。
+        """
+        self.loaded = False
+        self.loading = False
+        self.device = "cpu"
+        self.loaded_at = 0.0
+        self.gpt = None
+        self.sovits = None
+        self.worker_alive = False
+        self.worker_pid = None
+        if reason is not None:
+            self.worker_error = reason
 
 
 # --------------------------------------------------------------------------
 
 
 class Pipeline:
-    """官方推理管线的常驻封装。"""
+    """官方推理管线的跨进程代理。对外契约与重构前的单进程版本完全一致。"""
 
-    def __init__(self, data_dir: Path) -> None:
+    def __init__(self, data_dir: Path, home: Optional[Path] = None) -> None:
         self._data_dir = data_dir
-        self._pipeline: Any = None
-        self._config: Any = None
         self._build_lock = threading.RLock()
+        #: 本地串行闸门。
+        #:
+        #: worker 内部也有一把 `_infer_lock`，但那把是「同一张卡只能一条推理」的
+        #: 物理约束；这一把的职责不同 —— 它保证**主进程不会同时发两条请求**，
+        #: 免得两条请求在 worker 里排队、第二条白等 300 秒才拿到「忙」。
         self._infer_lock = threading.Lock()
         self.state = PipelineState()
-        # 用户意图（可能与已加载状态不一致，由 _ensure 收敛）
+        # 用户意图（可能与已加载状态不一致，由 worker 的 _ensure 收敛）
         self._target_device: Optional[str] = None
         self._target_half: Optional[bool] = None
         self._target_version: str = catalog.DEFAULT_VERSION
         self._target_gpt: Optional[Path] = None
         self._target_sovits: Optional[Path] = None
-        # 记住「最近一次成功的权重加载」，供 _ensure 判断是否需要切换
-        self._applied_gpt: Optional[str] = None
-        self._applied_sovits: Optional[str] = None
-        #: 训练是否正在独占显卡
+        #: 训练是否正在独占显卡（纯内存标志，不需要跨进程）
         self._training_active = False
+
+        self._client = worker_client.WorkerClient(
+            home=home or _resolve_home(),
+            log=_default_log,
+        )
 
     # ------------------------------------------------------------------
     # 训练与推理的显存互斥
@@ -134,6 +194,9 @@ class Pipeline:
         必然抢显存 —— 8GB 级别的消费级显卡几乎一定会 OOM。
         因此训练开始前释放推理管线，训练期间拒绝新的合成请求（并给出明确的等待提示），
         训练结束后由下一次合成按需重新加载。
+
+        纯主进程标志：worker 那份模型已经被 `unload()` 掉了，
+        worker 不需要知道「为什么」。
         """
         self._training_active = bool(active)
 
@@ -159,15 +222,21 @@ class Pipeline:
 
     @property
     def device(self) -> str:
+        """目标设备。
+
+        兜底值（用户未显式设置时）**不回查 worker** —— 那会让一个属性访问
+        变成一次 RPC，而它在 `/health` 里被高频读取。worker 起来后会通过
+        `status()` 把真实设备同步进 `state.device`，那里才是权威值。
+        """
         if self._target_device:
             return self._target_device
-        return str(bootstrap.device_defaults()["device"])
+        return self.state.device or "cpu"
 
     @property
     def is_half(self) -> bool:
         if self._target_half is not None:
             return self._target_half
-        return bool(bootstrap.device_defaults()["is_half"])
+        return bool(self.state.is_half)
 
     def configure(
         self,
@@ -177,7 +246,13 @@ class Pipeline:
         gpt: Optional[str] = None,
         sovits: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """登记用户意图。真正的加载发生在下一次合成（或显式 warmup）。"""
+        """登记用户意图。真正的加载发生在下一次合成（或显式 warmup）。
+
+        意图先记在本地，同时**顺手同步给 worker**（如果它还活着）。
+        这样做的原因是 `configure` 是同步 HTTP 端点，用户点完「加载权重」
+        期望立刻看到状态变化；等下一次合成才同步会让 `/v1/pipeline` 显示滞后。
+        worker 不在时静默跳过 —— 意图已经记下了，`warmup` 会补上。
+        """
         with self._build_lock:
             if version:
                 # 大小写不敏感地归一化一次：前端 model id 是小写，版本名是混合大小写
@@ -202,7 +277,31 @@ class Pipeline:
                 self._target_gpt = self._absolute(gpt)
             if sovits is not None:
                 self._target_sovits = self._absolute(sovits)
-        return self.status()
+
+        status = self.status()
+        self._push_intent()
+        return status
+
+    def _push_intent(self) -> None:
+        """把当前意图推给 worker。失败只记日志 —— 它不是关键路径。"""
+        if not self._client.alive:
+            return
+        try:
+            result = self._client.call(
+                "configure", self._intent_payload(), timeout=10.0
+            )
+            self._absorb(result.get("state"))
+        except Exception as exc:  # noqa: BLE001
+            _default_log("同步配置意图失败（下次 warmup 会重试）：%s: %s" % (type(exc).__name__, exc))
+
+    def _intent_payload(self) -> Dict[str, Any]:
+        return {
+            "version": self._target_version,
+            "device": self._target_device,
+            "is_half": self._target_half,
+            "gpt": str(self._target_gpt) if self._target_gpt else None,
+            "sovits": str(self._target_sovits) if self._target_sovits else None,
+        }
 
     def _absolute(self, raw: str) -> Path:
         path = Path(raw).expanduser()
@@ -213,11 +312,15 @@ class Pipeline:
         return (installation.home / path).resolve()
 
     # ------------------------------------------------------------------
-    # 权重解析
+    # 权重解析（纯文件系统，留主进程）
     # ------------------------------------------------------------------
 
     def resolve_defaults(self, version: Optional[str] = None) -> WeightPair:
-        """为指定版本挑一对默认权重：优先最近训练的产物，否则用官方预训练权重。"""
+        """为指定版本挑一对默认权重：优先最近训练的产物，否则用官方预训练权重。
+
+        不碰官方模块，所以留在主进程。好处是：worker 崩了、或者还没起来时，
+        `/v1/weights` 依然能正常回答「默认会选哪个」。
+        """
         version = version or self._target_version
         installation = bootstrap.require()
 
@@ -261,17 +364,11 @@ class Pipeline:
             sovits_source=sovits_source,
         )
 
-    def current_pair(self) -> WeightPair:
-        """当前目标权重（未显式指定时按版本默认解析）。"""
-        if self._target_gpt is not None and self._target_sovits is not None:
-            return WeightPair(
-                gpt=self._target_gpt,
-                sovits=self._target_sovits,
-                version=self._target_version,
-                gpt_source="explicit",
-                sovits_source="explicit",
-            )
-        pair = self.resolve_defaults(self._target_version)
+    def current_pair(self, version: Optional[str] = None) -> WeightPair:
+        """解析当前实际会用的权重组合。"""
+        version = version or self._target_version
+        pair = self.resolve_defaults(version)
+        # 显式指定的权重覆盖默认选择
         if self._target_gpt is not None:
             pair.gpt = self._target_gpt
             pair.gpt_source = "explicit"
@@ -285,6 +382,24 @@ class Pipeline:
     # ------------------------------------------------------------------
 
     def status(self) -> Dict[str, Any]:
+        # 顺序要紧：**先**刷新 worker 存活状态，**再**取 `to_dict()`。
+        # 反过来的话（早期版本的写法）拿到的是一帧已经过期的快照 ——
+        # worker 刚猝死时 `loaded` 还是 True，`/health` 照样谎报「已就绪」。
+        #
+        # 刷新走的是进程表（`poll()`），不是 RPC，代价可忽略，所以每次
+        # `/health` 轮询都刷新是安全的。见 docs/ENGINE-ISOLATION.md §4.8。
+        if self._client.alive:
+            self.state.worker_alive = True
+            # PID 会随崩溃重启而变，每次读一下最省事（hello 是内存里的快照）
+            self.state.worker_pid = (self._client.hello or {}).get("pid")
+        else:
+            # worker 不在 = 它手里的模型也没了。这里**必须**把镜像打回未加载，
+            # 否则 `/health` 与 `/v1/pipeline` 会一直谎报 `loaded=True`。
+            # 注意不能只依赖 `_raise_worker_gone()`：那条路径只有在**主动发请求**
+            # 时才走到；worker 是自己猝死（OOM 被 kill、官方代码崩）时，主进程
+            # 只从读线程那里看到 EOF，没人会去纠正镜像。
+            self.state.mark_worker_lost(self._client.error)
+
         payload = self.state.to_dict()
         payload["target_version"] = self._target_version
         payload["target_device"] = self.device
@@ -295,159 +410,104 @@ class Pipeline:
         payload["training_active"] = self._training_active
         return payload
 
+    def refresh(self, timeout: float = 5.0) -> Dict[str, Any]:
+        """主动拉一次 worker 真实状态并合并进镜像。"""
+        if not self._client.alive:
+            self.state.worker_alive = False
+            self.state.worker_error = self._client.error
+            return self.status()
+        try:
+            result = self._client.call("status", {}, timeout=timeout)
+            self._absorb(result.get("state"))
+        except Exception as exc:  # noqa: BLE001
+            self.state.worker_error = "%s: %s" % (type(exc).__name__, exc)
+        return self.status()
+
     def warmup(self, blocking: bool = False) -> None:
         """预热。非阻塞时在后台线程里加载，失败记录到状态而不是抛出。"""
         if blocking:
-            self._ensure()
+            self._warmup_blocking()
             return
 
         def _run() -> None:
             try:
-                self._ensure()
+                self._warmup_blocking()
             except Exception as exc:  # noqa: BLE001 - 预热失败不该影响服务可用性
                 self.state.warmup_error = "%s: %s" % (type(exc).__name__, exc)
 
         threading.Thread(target=_run, name="sovits-warmup", daemon=True).start()
 
-    def _ensure(self) -> Any:
-        """把当前意图落到实际管线上。返回官方 `TTS` 实例。"""
-        with self._build_lock:
-            official = bootstrap.official()
-            if self._pipeline is None:
-                self._build(official)
-            else:
-                self._reconfigure(official)
-            return self._pipeline
-
-    def _build(self, official: Any) -> None:
-        pair = self.current_pair()
-        device = self.device
-        is_half = self.is_half
-        installation = bootstrap.require()
-
+    def _warmup_blocking(self) -> None:
         self.state.loading = True
-        started = time.monotonic()
         try:
-            config = official.TTS_Config(
-                {
-                    "custom": {
-                        "device": device,
-                        "is_half": bool(is_half),
-                        "version": pair.version,
-                        "t2s_weights_path": str(pair.gpt),
-                        "vits_weights_path": str(pair.sovits),
-                        "bert_base_path": str(installation.path(catalog.BERT_DIR)),
-                        "cnhuhbert_base_path": str(installation.path(catalog.HUBERT_DIR)),
-                    }
-                }
+            result = self._client.call(
+                "warmup",
+                {"blocking": True},
+                timeout=worker_client.WARMUP_TIMEOUT_S,
             )
-            pipeline = official.TTS(config)
-        except Exception as exc:  # noqa: BLE001
+        except worker_client.WorkerGone as exc:
             self.state.loading = False
-            self.state.last_error = "%s: %s" % (type(exc).__name__, exc)
-            self.state.last_error_at = time.time()
+            self.state.worker_alive = False
+            self.state.worker_error = str(exc)
             raise EnvironmentError_(
-                "加载 GPT-SoVITS 推理管线失败",
+                "推理 worker 进程不可用",
                 hint=(
-                    "常见原因：预训练权重缺失、显存不足、torch/CUDA 版本不匹配。\n"
-                    "原始错误：%s: %s" % (type(exc).__name__, exc)
+                    "worker 负责加载官方 GPT-SoVITS 管线（它是官方代码 import 期副作用的隔离容器）。\n"
+                    "详情：%s" % exc
                 ),
-                code="PIPELINE_LOAD_FAILED",
+                code="WORKER_UNAVAILABLE",
+                status=503,
             ) from exc
-
-        self._config = config
-        self._pipeline = pipeline
-        self._applied_gpt = str(pair.gpt)
-        self._applied_sovits = str(pair.sovits)
-        self.state.loaded = True
+        except worker_client.WorkerTimeout as exc:
+            self.state.loading = False
+            raise EnvironmentError_(
+                "推理 worker 响应超时",
+                hint="模型加载可能仍在进行，稍后重试；若反复超时请查看服务端日志。\n详情：%s" % exc,
+                code="WORKER_TIMEOUT",
+                status=503,
+            ) from exc
+        self._absorb(result.get("state"))
         self.state.loading = False
-        self.state.load_seconds = time.monotonic() - started
-        self.state.loaded_at = time.time()
-        self.state.version = pair.version
-        self.state.device = device
-        self.state.is_half = bool(is_half)
-        self.state.gpt = pair.gpt.name
-        self.state.sovits = pair.sovits.name
-        self.state.last_error = None
-
-    def _reconfigure(self, official: Any) -> None:
-        """已加载过管线时的增量调整：先设备/精度，再权重。"""
-        device = self.device
-        is_half = self.is_half
-        pair = self.current_pair()
-
-        try:
-            import torch  # noqa: PLC0415
-
-            want_device = torch.device(device)
-        except Exception:  # noqa: BLE001
-            want_device = device
-
-        if str(getattr(self._config, "device", "")) != str(want_device):
-            self._pipeline.set_device(want_device)
-            self.state.device = str(want_device)
-
-        if bool(getattr(self._config, "is_half", False)) != bool(is_half):
-            self._pipeline.enable_half_precision(bool(is_half))
-            self.state.is_half = bool(is_half)
-
-        if self._applied_gpt != str(pair.gpt):
-            self._pipeline.init_t2s_weights(str(pair.gpt))
-            self._applied_gpt = str(pair.gpt)
-            self.state.gpt = pair.gpt.name
-
-        if self._applied_sovits != str(pair.sovits):
-            self._pipeline.init_vits_weights(str(pair.sovits))
-            self._applied_sovits = str(pair.sovits)
-            self.state.sovits = pair.sovits.name
-
-        self.state.version = pair.version
+        self.state.warmup_error = None
 
     def unload(self, wait_for_inference: bool = True) -> None:
         """释放管线。切换设备、排查显存问题，以及**训练开始前让出显卡**时使用。
 
         默认会先等正在进行的推理结束再释放 —— 否则刚释放完、旧推理还在跑，
         训练脚本会立刻撞上「显存被占」的假象，排查起来非常费劲。
-        调用方若已确认没有推理在跑（例如服务关停），可以传 False 立即返回。
         """
-        if wait_for_inference and not self._infer_lock.acquire(timeout=SYNC_LOCK_WAIT_S):
-            raise BusyError(
-                "有合成任务长时间未结束，无法释放显存",
-                hint="请稍后重试，或先用 /v1/pipeline/stop 中断当前推理。",
-            )
+        if not self._client.alive:
+            # worker 不在，显存本来就没被它占着
+            self.state.mark_worker_lost(self._client.error)
+            return
         try:
-            with self._build_lock:
-                self._pipeline = None
-                self._config = None
-                self._applied_gpt = None
-                self._applied_sovits = None
-                self.state.loaded = False
-                self.state.device = "cpu"
-                self.state.loaded_at = 0.0
-            try:
-                import gc  # noqa: PLC0415
-
-                import torch  # noqa: PLC0415
-
-                gc.collect()
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:  # noqa: BLE001
-                pass
-        finally:
-            if wait_for_inference:
-                self._infer_lock.release()
+            result = self._client.call(
+                "unload",
+                {"wait_for_inference": bool(wait_for_inference)},
+                # IPC 超时必须晚于 worker 内部的锁等待上限（300 s），
+                # 否则会在 worker 还健康排队时被误判成超时。
+                timeout=SYNC_LOCK_WAIT_S + 30.0,
+            )
+            self._absorb(result.get("state"))
+        except worker_client.WorkerGone as exc:
+            self.state.mark_worker_lost(str(exc))
 
     def stop(self) -> bool:
-        """请求中断当前推理（官方 `stop_flag`）。"""
-        pipeline = self._pipeline
-        if pipeline is None:
+        """请求中断当前推理（官方 `stop_flag`）。
+
+        走 worker 的 `interrupt` 方法 —— 它由 worker 侧的专用读线程处理，
+        所以能**插进**正在跑的 `synthesize` / `stream` 里，不必排队。
+        """
+        if not self._client.alive:
             return False
+        return self._client.interrupt()
+
+    def shutdown(self) -> None:
+        """服务关停时调用：优雅结束 worker 进程。"""
         try:
-            pipeline.stop()
-            return True
+            self._client.terminate(graceful=True, timeout=5.0)
         except Exception:  # noqa: BLE001
-            return False
+            pass
 
     # ------------------------------------------------------------------
     # 推理
@@ -457,7 +517,6 @@ class Pipeline:
         """一次性拿到完整音频。返回 (采样率, int16 numpy 数组)。"""
         # 先拒绝，再谈加载模型 —— 否则「拒绝」本身就把显存吃掉了
         self._reject_if_training()
-        pipeline = self._ensure()
         if not self._infer_lock.acquire(timeout=SYNC_LOCK_WAIT_S):
             raise BusyError(
                 "有另一个合成任务正在占用显卡",
@@ -466,13 +525,8 @@ class Pipeline:
             )
         try:
             started = time.monotonic()
-            try:
-                generator = pipeline.run(inputs)
-                sample_rate, audio = _last_chunk(generator)
-            except Exception as exc:  # noqa: BLE001
-                self._record_error(exc)
-                raise _as_synthesis_error(exc) from exc
-
+            result = self._call_inference("synthesize", {"inputs": inputs})
+            sample_rate, audio = _decode_audio(result)
             self.state.synth_count += 1
             if sample_rate:
                 self.state.total_audio_seconds += len(audio) / float(sample_rate)
@@ -493,7 +547,6 @@ class Pipeline:
         而不是让他等 5 分钟再听到第一声。
         """
         self._reject_if_training()
-        pipeline = self._ensure()
         if not self._infer_lock.acquire(timeout=STREAM_LOCK_WAIT_S):
             raise BusyError(
                 "已有另一条流式合成正在进行",
@@ -501,18 +554,47 @@ class Pipeline:
             )
         started = time.monotonic()
         completed = False
+        handle = None
         try:
-            for sample_rate, chunk in pipeline.run(inputs):
-                yield sample_rate, chunk
-            completed = True
-        except Exception as exc:  # noqa: BLE001
-            self._record_error(exc)
-            raise _as_synthesis_error(exc) from exc
+            self._ensure_worker()
+            try:
+                handle = self._client.open_stream("stream", {"inputs": inputs})
+                for sample_rate, chunk in handle:
+                    yield sample_rate, chunk
+                completed = True
+            except worker_client.WorkerGone as exc:
+                self._raise_worker_gone(exc)
         finally:
+            if handle is not None:
+                try:
+                    handle.close()
+                except Exception:  # noqa: BLE001
+                    pass
             if completed:
                 self.state.synth_count += 1
             self._last_elapsed = time.monotonic() - started
             self._infer_lock.release()
+
+    def split_text(self, text: str, text_lang: str, method: str) -> Dict[str, Any]:
+        """复用官方的切分实现（`preprocessor.pre_seg_text`）。
+
+        这是重构时新开的**唯一**新方法：原先 `inference.py::split_text` 直接摸
+        `pipeline._pipeline.text_preprocessor` —— 跨进程后那个私有属性不存在了。
+        """
+        if method not in catalog.TEXT_SPLIT_METHODS:
+            from ..errors import BadRequestError  # noqa: PLC0415
+
+            raise BadRequestError(
+                "未知的文本切分方式：%s" % method,
+                hint="可用值：%s" % "、".join(catalog.TEXT_SPLIT_METHODS),
+            )
+        self._ensure_worker()
+        result = self._call_inference(
+            "split_text",
+            {"text": text, "text_lang": text_lang, "method": method},
+            timeout=60.0,
+        )
+        return result
 
     # ------------------------------------------------------------------
     # 观测
@@ -524,14 +606,144 @@ class Pipeline:
     def last_elapsed(self) -> float:
         return self._last_elapsed
 
-    def _record_error(self, exc: Exception) -> None:
-        self.state.last_error = "%s: %s" % (type(exc).__name__, exc)
-        self.state.last_error_at = time.time()
+    # ------------------------------------------------------------------
+    # 内部
+    # ------------------------------------------------------------------
+
+    def _ensure_worker(self) -> None:
+        """确保 worker 起来。失败时翻译成可读的业务异常（503）。"""
+        if self._client.alive:
+            # 即使已经活着也要刷新 PID：worker 崩溃重启后会换一个进程号，
+            # 不刷新的话 `/health` 会一直显示那个已经死掉的 PID。
+            self.state.worker_pid = (self._client.hello or {}).get("pid")
+            return
+        try:
+            self._client.ensure_started()
+            self.state.worker_alive = True
+            self.state.worker_error = None
+            hello = self._client.hello or {}
+            self.state.worker_pid = hello.get("pid")
+        except worker_client.WorkerGone as exc:
+            self.state.worker_alive = False
+            self.state.worker_error = str(exc)
+            raise EnvironmentError_(
+                "推理 worker 进程不可用",
+                hint=(
+                    "worker 负责承载官方 GPT-SoVITS 管线。"
+                    "它启动失败通常意味着整合包缺失或 torch 环境不对。\n详情：%s" % exc
+                ),
+                code="WORKER_UNAVAILABLE",
+                status=503,
+            ) from exc
+
+    def _call_inference(
+        self,
+        method: str,
+        params: Dict[str, Any],
+        timeout: Optional[float] = None,
+    ) -> Dict[str, Any]:
+        """发一条会碰官方管线的请求，并把两类基础设施故障翻译成业务异常。
+
+        业务异常（`SovitsError` 家族）由 `client.call()` 直接抛出，
+        这里不拦 —— 它的 `code` / `http_status` 已经是对外契约的一部分。
+        """
+        self._ensure_worker()
+        try:
+            result = self._client.call(
+                method,
+                params,
+                timeout=timeout or (SYNC_LOCK_WAIT_S + 30.0),
+            )
+        except worker_client.WorkerGone as exc:
+            self._raise_worker_gone(exc)
+        except worker_client.WorkerTimeout as exc:
+            raise SynthesisError(
+                "推理超时，worker 未在期限内返回",
+                hint="长文本可调小 batch_size 或改用更细的切分方式；也可以先中断再重试。\n详情：%s" % exc,
+                code="WORKER_TIMEOUT",
+                retryable=True,
+            ) from exc
+        self.state.worker_alive = True
+        self.state.worker_error = None
+        return result
+
+    def _raise_worker_gone(self, exc: BaseException) -> None:
+        # 进程没了 = 模型没了。镜像必须跟着改，否则 `/v1/pipeline` 会谎报「已加载」。
+        # 与 `status()` 里那处走同一条不变式，避免两处各改一半。
+        with self._build_lock:
+            self.state.mark_worker_lost(str(exc))
+        raise EnvironmentError_(
+            "推理 worker 进程已退出",
+            hint=(
+                "worker 通常因显存不足或官方代码异常而退出，重启后会自动恢复。\n"
+                "请重试；若反复出现，请查看服务端日志里 worker 的最后几行输出。\n"
+                "详情：%s" % exc
+            ),
+            code="WORKER_GONE",
+            status=503,
+        ) from exc
+
+    def _absorb(self, snapshot: Optional[Dict[str, Any]]) -> None:
+        """把 worker 上报的状态合并进主进程镜像。"""
+        if not snapshot:
+            return
+        with self._build_lock:
+            self.state.loaded = bool(snapshot.get("loaded", self.state.loaded))
+            self.state.loading = bool(snapshot.get("loading", False))
+            self.state.device = str(snapshot.get("device") or self.state.device)
+            self.state.is_half = bool(snapshot.get("is_half", self.state.is_half))
+            version = snapshot.get("version")
+            if version:
+                self.state.version = str(version)
+            self.state.gpt = snapshot.get("gpt")
+            self.state.sovits = snapshot.get("sovits")
+            self.state.load_seconds = float(snapshot.get("load_seconds") or 0.0)
+            self.state.loaded_at = float(snapshot.get("loaded_at") or 0.0)
+            # 计数以 worker 为准：那边才是真正跑推理的地方
+            self.state.synth_count = int(snapshot.get("synth_count") or 0)
+            self.state.total_audio_seconds = float(snapshot.get("total_audio_seconds") or 0.0)
+            self.state.last_error = snapshot.get("last_error")
+            self.state.last_error_at = float(snapshot.get("last_error_at") or 0.0)
+        self.state.worker_alive = True
 
 
 # --------------------------------------------------------------------------
 # 工具函数
 # --------------------------------------------------------------------------
+
+
+def _resolve_home() -> Optional[Path]:
+    """给 worker 一个整合包根目录提示。定位失败就返回 None，交给 worker 自己找。"""
+    try:
+        installation = bootstrap.current() or bootstrap.locate()
+    except Exception:  # noqa: BLE001
+        return None
+    return installation.home if installation else None
+
+
+def _default_log(text: str) -> None:
+    import sys  # noqa: PLC0415
+
+    try:
+        sys.stderr.write("[sovits] %s\n" % text)
+        sys.stderr.flush()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _decode_audio(result: Dict[str, Any]) -> Tuple[int, Any]:
+    """把 worker 回传的 base64 int16 解回 numpy 数组。
+
+    音频 dtype 恒为 `int16`（官方 `TTS.run()` 的所有 yield 路径都是它，
+    含异常兜底那条），所以这里可以硬编码 dtype。
+    """
+    import base64  # noqa: PLC0415
+
+    import numpy as np  # noqa: PLC0415
+
+    raw = base64.b64decode(result.get("audio") or "")
+    sample_rate = int(result.get("sample_rate") or 0)
+    return sample_rate, np.frombuffer(raw, dtype=np.int16)
 
 
 def _newest(directory: Path, pattern: str) -> Optional[Path]:
@@ -541,62 +753,6 @@ def _newest(directory: Path, pattern: str) -> Optional[Path]:
     if not hits:
         return None
     return max(hits, key=lambda path: path.stat().st_mtime)
-
-
-def _last_chunk(generator: Iterator[Tuple[int, Any]]) -> Tuple[int, Any]:
-    """官方 `run()` 在多段场景下会 yield 多次，非流式调用应取最后一块完整音频。
-
-    官方 `api_v2.py` 用的是 `next(tts_generator)`，但那在 `size` 较小时
-    会丢掉后续片段。这里改为取最后一帧，语义等价且不会截断。
-    """
-    last: Optional[Tuple[int, Any]] = None
-    for sample_rate, audio in generator:
-        last = (sample_rate, audio)
-    if last is None:
-        raise SynthesisError(
-            "推理未产出任何音频",
-            hint="文本可能为空，或已被文本清洗阶段全部过滤。",
-            code="EMPTY_AUDIO",
-        )
-    return last
-
-
-def _as_synthesis_error(exc: Exception) -> SynthesisError:
-    """把官方零散异常翻译成带修复建议的业务错误。"""
-    text = "%s: %s" % (type(exc).__name__, exc)
-    lower = text.lower()
-
-    if "3~10秒" in text or "3~10" in text:
-        return SynthesisError(
-            "参考音频时长不在 3~10 秒范围内",
-            hint="这是官方硬约束。请重新裁剪参考音频到 3~10 秒后重试。",
-            code="REF_AUDIO_DURATION",
-        )
-    if "not exists" in lower or "no such file" in lower:
-        return SynthesisError(
-            "参考音频文件不存在",
-            hint="音色库中的音频可能已被移动或删除，请重新上传。",
-            code="REF_AUDIO_MISSING",
-        )
-    if "out of memory" in lower or "cuda error" in lower:
-        return SynthesisError(
-            "显存不足，推理中断",
-            hint="可尝试：降低批大小（batch_size=1）、关闭并行推理、改用更小的版本（v2ProPlus → v2），或停止其它占用显卡的程序。",
-            code="CUDA_OOM",
-        )
-    if "prompt_text cannot be empty" in lower:
-        return SynthesisError(
-            "当前模型要求提供参考音频的转写文本",
-            hint="v3/v4 声码器模型不支持空参考文本，请在音色库中补全提示文本。",
-            code="PROMPT_TEXT_REQUIRED",
-        )
-    if "repetition" in lower or "复读" in text:
-        return SynthesisError(
-            "模型出现复读（重复输出），已中断",
-            hint="可调低 temperature 或提高 repetition_penalty，或改用更细的文本切分方式（cut4 / cut5）。",
-            code="REPETITION",
-        )
-    return SynthesisError("推理失败：" + text, hint="完整堆栈见服务端控制台输出。", code="SYNTHESIS_FAILED")
 
 
 __all__ = ["Pipeline", "PipelineState", "WeightPair"]

@@ -90,10 +90,19 @@ def model_dirs(settings: Settings) -> List[Path]:
 
 
 def describe_model(path: Path) -> Dict[str, Any]:
-    """读取模型同目录的 config.yaml，抽出界面需要的字段。"""
+    """读取模型同目录的 config.yaml，抽出界面需要的字段。
+
+    `id` 的取值有个坑：DDSP-SVC 官方导出的权重几乎都叫 `model.pt`，
+    真正区分音色的是**所在目录名**（`<expdir>/model.pt`）。所以只要模型
+    位于自己的子目录里，就用目录名当 id / name，否则同名模型会在下拉框里
+    挤成一堆 `model`、`model`、`model`。落回文件名是为了照顾
+    「一堆 .pt 平铺在 models/ 下」这种非标准摆法。
+    """
+    in_own_dir = path.parent != path.parent.parent and path.parent.name
+    label = path.parent.name if in_own_dir else path.stem
     entry: Dict[str, Any] = {
-        "id": path.stem,
-        "name": path.stem,
+        "id": label,
+        "name": label,
         "path": str(path),
         "size_mb": round(path.stat().st_size / 1024 / 1024, 1),
         "has_config": False,
@@ -114,10 +123,71 @@ def describe_model(path: Path) -> Dict[str, Any]:
                     "block_size": data.get("block_size"),
                 }
             )
-            entry["name"] = path.parent.name if path.parent.name else path.stem
         except (OSError, ValueError, yaml.YAMLError) as exc:
             entry["config_error"] = str(exc)
     return entry
+
+
+def find_model(settings: Settings, key: str) -> Path | None:
+    """按 id / 名称 / 路径找一个音色模型。
+
+    先当路径处理（前端可能直接传 `catalog` 里原样带回来的 `path`），
+    再退回按 id 匹配 —— 与 `/v1/svc/models/load` 的解析口径保持一致。
+    """
+    wanted = (key or "").strip()
+    if not wanted:
+        return None
+    # 路径形态：盘符 / UNC / 已存在的文件
+    if _looks_like_path(wanted):
+        candidate = Path(wanted)
+        if candidate.is_file() and candidate.suffix.lower() == ".pt":
+            return candidate
+    for entry in list_models(settings):
+        if entry.get("id") == wanted or entry.get("name") == wanted:
+            path = entry.get("path")
+            if path and Path(path).is_file():
+                return Path(path)
+    return None
+
+
+def _looks_like_path(value: str) -> bool:
+    if len(value) > 1 and value[1] == ":":
+        return True
+    return value.startswith("\\\\") or "/" in value or "\\" in value
+
+
+def delete_model(settings: Settings, key: str) -> Dict[str, Any]:
+    """删除一个音色模型（.pt 与同目录 config.yaml 一起）。
+
+    config.yaml 与 .pt 是一个整体（没有它模型不可加载），所以必须一起删，
+    否则会留下一堆「看得见、选不了」的幽灵条目。只删我们管辖的两个目录内的
+    文件 —— 直接传外部路径进来时拒绝，避免把用户别处的模型误删。
+    """
+    path = find_model(settings, key)
+    if path is None:
+        return {"ok": False, "message": "未找到模型：%s" % key}
+
+    resolved = path.resolve()
+    allowed = False
+    for directory in model_dirs(settings):
+        if not directory.is_dir():
+            continue
+        try:
+            resolved.relative_to(directory.resolve())
+            allowed = True
+            break
+        except ValueError:
+            continue
+    if not allowed:
+        return {"ok": False, "message": "该模型不在音色库目录内，未删除：%s" % resolved}
+
+    removed = [str(resolved)]
+    config = resolved.parent / "config.yaml"
+    if config.is_file():
+        config.unlink()
+        removed.append(str(config))
+    resolved.unlink()
+    return {"ok": True, "removed": removed, "message": "已删除 %s" % resolved.stem}
 
 
 def list_models(settings: Settings) -> List[Dict[str, Any]]:

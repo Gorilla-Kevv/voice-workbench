@@ -58,6 +58,8 @@ export interface NeteaseHealth {
   torch: boolean;
   cuda: boolean;
   device: string | null;
+  /** 服务自身进程号（网关用它确证端口归属，比从命令行反推可靠） */
+  pid?: number | null;
   /**
    * 显存读数。`free_mb` 取 nvidia-smi（跨进程真实值），
    * `torch_free_mb` 是本进程视图 —— 两者差很多说明显存被**别的程序**占着（见 HANDOFF 坑 17）。

@@ -13,7 +13,7 @@ import { ResultStack, type ResultStackEntry } from '@/components/features/Result
 import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
 import { indexttsApi } from '@/lib/indextts';
-import { runtimeServiceApi } from '@/lib/localService';
+import { notifyServiceEnabledChanged, runtimeServiceApi } from '@/lib/localService';
 import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
 import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
@@ -114,6 +114,7 @@ export function IndexttsTtsPage() {
     void (async () => {
       try {
         const result = await runtimeServiceApi.toggle('indextts', true);
+        notifyServiceEnabledChanged();
         if (!result.reachable) {
           throw new RequestError(503, {
             code: 'INDEXTTS_START_FAILED',

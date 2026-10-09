@@ -80,6 +80,24 @@ fairseq==0.12.2 / pyworld==0.3.2 / numba==0.56.4` 与已装版本一一对应。
 引擎切换时把本次新进入 `sys.modules` 的顶层模块名摘掉，配合显存互斥即可。
 （若后续引入 RVC 实时链路用到 `tools`，再退化为独立 worker 进程。）
 
+> **⚠️ 后续修正（见 `docs/ENGINE-ISOLATION.md`）**
+>
+> 上面这段结论**只考虑了「顶层模块名冲突」这一种耦合**，漏掉了另一种更隐蔽的：
+> **import 期副作用**。
+>
+> `GPT_SoVITS/AR/modules/activation.py` 在 import 期就执行
+> `F.multi_head_attention_forward = multi_head_attention_forward_patched`，
+> 把 `torch.nn.functional` 上那个**模块级单例**换掉了。这不是模块名冲突，
+> 摘 `sys.modules` 也救不了 —— 补丁已经打在 torch 自己身上了，效果持续到进程结束。
+> RVC 的 HuBERT（fairseq `MultiheadAttention`）正好走到被补丁函数缺了名字的分支，
+> 于是报 `NameError: name '_in_projection' is not defined`。
+> 同类的还有 `bootstrap.install()` 里那次**永久** `os.chdir(home)`。
+>
+> 所以：**「不需要进程隔离」这个结论对 GPT-SoVITS 不成立**。
+> 现已按 `ENGINE-ISOLATION.md` 的方案 B 把 GPT-SoVITS 移入独立 worker 进程。
+> RVC 与 DDSP-SVC 仍留在主进程内 —— 截至目前它们没有暴露 import 期副作用；
+> 若将来出现，同样按方案 C 扩展即可（协议与客户端可直接复用）。
+
 ## 5. 权重来源与可达性
 
 全部实测 HTTP 200（HEAD 请求）：

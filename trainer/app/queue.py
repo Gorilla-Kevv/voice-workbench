@@ -28,12 +28,21 @@ Runner = Callable[[Job, asyncio.Event], Awaitable[dict]]
 class AdmissionError(Exception):
     """准入失败。携带可直接返回给前端的结构化信息。"""
 
-    def __init__(self, code: str, message: str, retryable: bool = True, retry_after_s: int = 5) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        retryable: bool = True,
+        retry_after_s: int = 5,
+        hint: Optional[str] = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
         self.retry_after_s = retry_after_s
+        #: 「下一步该做什么」。前端错误卡片会把它显示在 message 下方。
+        self.hint = hint
 
     def to_dict(self) -> dict:
         return {
@@ -41,6 +50,7 @@ class AdmissionError(Exception):
             "message": self.message,
             "retryable": self.retryable,
             "retry_after_s": self.retry_after_s,
+            "hint": self.hint,
         }
 
 
@@ -142,6 +152,9 @@ class Scheduler:
         self._cancel: dict[str, asyncio.Event] = {}
         self._usage: dict[tuple[str, str, str], int] = {}  # (owner, kind, date) -> count
         self._started = False
+        #: 调度器所在的事件循环。`submit()` 可能被同步端点从 anyio 工作线程调用，
+        #: 那里没有「当前事件循环」，只能靠启动时记下来的这个引用。
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
 
     # ---------- 注册执行体 ----------
     def register(self, kind: JobKind, runner: Runner) -> None:
@@ -152,6 +165,7 @@ class Scheduler:
         """必须在事件循环内调用（见 `Pool` 的注释）。幂等。"""
         if self._started:
             return
+        self._loop = asyncio.get_running_loop()
         for pool in self.pools.values():
             pool.prepare()
             for index in range(pool.concurrency):
@@ -224,13 +238,42 @@ class Scheduler:
             )
         item = QueueItem(neg_priority=-job.priority, created_at=job.created_at, job=job)
         try:
+            self._cancel[job.id] = self._make_cancel_event()
+        except RuntimeError as exc:
+            raise AdmissionError(
+                "NO_EVENT_LOOP",
+                "任务调度器尚未绑定事件循环，无法接收任务",
+                retryable=True,
+                retry_after_s=3,
+            ) from exc
+        try:
             pool.queue.put_nowait(item)
         except asyncio.QueueFull as exc:
+            self._cancel.pop(job.id, None)
             raise queue_full(job.kind.value, pool.max_queue) from exc
         self._bump_quota(job)
-        self._cancel[job.id] = asyncio.Event()
         self.store.log(job, f"已入队，前方等待 {pool.queued} 个任务")
         return job
+
+    def _make_cancel_event(self) -> asyncio.Event:
+        """建取消事件，**必须绑在调度器的 loop 上**。
+
+        坑（2026-10 实测）：`asyncio.Event()` 无参构造会去要「当前事件循环」。同步端点
+        （如 `POST /v1/vc/train`）被 FastAPI 丢进 anyio 工作线程执行，那里**没有当前事件
+        循环**，于是抛 `RuntimeError: There is no current event loop in thread ...`，
+        整个提交直接 500。任务队列本身是绑在调度器 loop 上的，取消事件也必须待在同一个
+        loop 里 —— 否则将来在别的线程 `set()` 还会跨线程踩状态。
+        """
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            raise RuntimeError("调度器尚未绑定事件循环")
+        # 3.10+ 才有 `Event(loop=...)`；3.9 只能构造后重新绑定。
+        event = asyncio.Event()
+        try:
+            event._loop = loop  # type: ignore[attr-defined]
+        except Exception:  # pragma: no cover - 属性只读时才走到
+            pass
+        return event
 
     def cancel(self, job: Job) -> None:
         event = self._cancel.get(job.id)

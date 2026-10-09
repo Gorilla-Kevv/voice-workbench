@@ -6,7 +6,7 @@
  */
 
 import { appendForm, localRequest } from '@/lib/local';
-import { resolveAudioUrl } from '@/lib/sovits';
+import { pickArtifactUrl, resolveAudioUrl } from '@/lib/sovits';
 import type {
   SvcCatalog,
   SvcConvertPayload,
@@ -63,6 +63,12 @@ export const vcApi = {
       baseUrl,
     ),
 
+  renameModel: (model: string, name: string, baseUrl?: string): Promise<{ ok: boolean; name: string; message: string }> => {
+    const form = new FormData();
+    appendForm(form, { model, name });
+    return localRequest('/v1/vc/models/rename', { method: 'POST', body: form }, baseUrl);
+  },
+
   convert: (payload: VcConvertPayload, baseUrl?: string): Promise<VcConvertAsyncResponse | VcConvertSyncResponse> => {
     const form = new FormData();
     if (payload.file) form.append('file', payload.file, payload.file.name);
@@ -115,6 +121,13 @@ export const svcApi = {
     form.append('name', name);
     return localRequest('/v1/svc/models/upload', { method: 'POST', body: form, timeoutMs: 0 }, baseUrl);
   },
+
+  deleteModel: (model: string, baseUrl?: string) =>
+    localRequest<{ ok: boolean; message: string; removed?: string[] }>(
+      `/v1/svc/models?model=${encodeURIComponent(model)}`,
+      { method: 'DELETE' },
+      baseUrl,
+    ),
 
   cover: (payload: SvcCoverPayload, baseUrl?: string): Promise<SvcCoverAsyncResponse | SvcCoverSyncResponse> => {
     const form = new FormData();
@@ -203,4 +216,4 @@ export const uvrApi = {
   },
 };
 
-export { resolveAudioUrl };
+export { pickArtifactUrl, resolveAudioUrl };

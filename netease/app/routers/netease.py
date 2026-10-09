@@ -7,6 +7,7 @@ ready / incomplete（服务通但没装权重）/ offline（服务没起）。
 
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any
 
@@ -39,6 +40,8 @@ def health(request: Request) -> dict[str, Any]:
         "torch": info["torch"],
         "cuda": info["cuda"],
         "device": info["device"],
+        # 自报 PID：网关据此确证端口归属（见 lib/processOwnership.ts 判据 ⓪）
+        "pid": os.getpid(),
         "vram": vram,
         "engines": {
             "confucius_tts": {**ctx.tts.probe_install(), **ctx.tts.status()},

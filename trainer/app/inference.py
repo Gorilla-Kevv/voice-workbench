@@ -184,27 +184,24 @@ class SynthesisEngine:
     # ------------------------------------------------------------------
 
     def split_text(self, text: str, text_lang: str, method: str) -> Dict[str, Any]:
-        """复用官方的切分实现，让用户在下单前就看到实际会被送去合成的句子。"""
+        """复用官方的切分实现，让用户在下单前就看到实际会被送去合成的句子。
+
+        重构要点见 `docs/ENGINE-ISOLATION.md`：原先是直接摸
+        `self.pipeline._pipeline.text_preprocessor` 这个私有属性，
+        而官方管线已经搬进 worker 进程 —— 现在走 `pipeline.split_text()`，
+        由它把请求转发过去。这里不再有任何私有穿透。
+        """
         if method not in catalog.TEXT_SPLIT_METHODS:
             raise BadRequestError(
                 "未知的文本切分方式：%s" % method,
                 hint="可用值：%s" % "、".join(catalog.TEXT_SPLIT_METHODS),
             )
-        from .sovits import bootstrap  # noqa: PLC0415
-
-        official = bootstrap.official()
+        # 切分是纯 CPU 的预处理，但需要官方已加载（preprocessor 挂在 TTS 实例上）
         self.pipeline.warmup(blocking=True)
-        preprocessor = self.pipeline._pipeline.text_preprocessor  # noqa: SLF001 - 复用官方实例
-        try:
-            pieces = preprocessor.pre_seg_text(text, text_lang, method)
-        except Exception as exc:  # noqa: BLE001
-            raise BadRequestError(
-                "文本切分失败：%s: %s" % (type(exc).__name__, exc),
-                hint="请检查语种设置与文本内容。",
-            ) from exc
-        _ = official
+        result = self.pipeline.split_text(text, text_lang, method)
         segments = [
-            {"index": index, "text": piece, "chars": len(piece)} for index, piece in enumerate(pieces)
+            {"index": index, "text": piece, "chars": len(piece)}
+            for index, piece in enumerate(result.get("pieces") or [])
         ]
         return {
             "segments": segments,

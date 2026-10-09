@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import time
 import uuid
 from pathlib import Path
@@ -47,6 +48,8 @@ def create_app(settings: Settings) -> FastAPI:
             'service': 'indextts',
             'version': '0.1.0',
             'cuda': __import__('torch').cuda.is_available() if _torch_ok() else False,
+            # 自报 PID：网关据此确证端口归属（见 lib/processOwnership.ts 判据 ⓪）
+            'pid': os.getpid(),
             'vram': vram_mb(),
             'engine': engine.status(),
         }

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Music2, Scissors } from 'lucide-react';
+import { Loader2, Music2, Scissors, Upload, Waves } from 'lucide-react';
+import { toast } from 'sonner';
+import { RequestError } from '@/lib/errors';
 import { ABPlayer } from '@/components/features/ABPlayer';
 import { JobPanel } from '@/components/features/JobPanel';
 import { Badge } from '@/components/ui/badge';
@@ -15,11 +17,13 @@ import { SourceNote } from '@/components/features/SourceNote';
 import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { RunResultCard } from '@/components/features/RunResultCard';
 import { useResultStack } from '@/hooks/useResultStack';
-import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
+import { notifyVcRunChanged } from '@/hooks/useVcRunHistory';
+import { dropHighlight, applyFilesToInput, useFileDrop } from '@/hooks/useFileDrop';
 import { cn } from '@/lib/utils';
-import { resolveAudioUrl, svcApi, uvrApi } from '@/lib/vc';
-import type { SovitsJob, SvcCatalog } from '@/types';
+import { pickArtifactUrl, svcApi, uvrApi } from '@/lib/vc';
+import type { SovitsJob, SvcCatalog, SvcModel, SvcPipelineStatus } from '@/types';
 
 /** 一次翻唱的产物组合：多轨 + 当时的歌名与音色，够独立回听 */
 interface CoverResultItem {
@@ -51,6 +55,7 @@ const ACCENT_SOLID = 'bg-rose-600 text-white hover:bg-rose-600/90 active:scale-[
  */
 export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => void } = {}) {
   const [catalog, setCatalog] = useState<SvcCatalog | null>(null);
+  const [pipeline, setPipeline] = useState<(SvcPipelineStatus & { ok: boolean }) | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const refresh = useCallback(() => {
@@ -58,6 +63,9 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
       .catalog()
       .then(setCatalog)
       .catch((error: Error) => setLoadError(error.message));
+    // 音色库里要标出「当前音色」，所以顺带取一次引擎状态；
+    // 这一路失败不该把整页打成错误态，静默即可。
+    svcApi.pipeline().then(setPipeline).catch(() => setPipeline(null));
   }, []);
 
   useEffect(() => {
@@ -88,7 +96,20 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
       <div className="flex items-center gap-2">
         <EngineBadge catalog={catalog} />
       </div>
+      {/* 音色库放在向导之前：没有音色就没法翻唱，先让用户把「料」备齐 */}
+      <SvcModelLibrary catalog={catalog} pipeline={pipeline} onChanged={refresh} />
       <CoverWizard catalog={catalog} onChanged={refresh} />
+      {/* 运行产物面板与变声页共用同一个组件：用户要求「训练**和运行**之后的产物
+          都要在网站全部显示，同时给出本地路径」。翻唱一次产 1~3 轨，
+          所以这里按 track 逐条渲染，不会只显示混音而漏掉新人声与伴奏。 */}
+      <RunResultCard
+        kind="svc_infer"
+        title="翻唱结果"
+        description="历次翻唱产出的新人声 / 伴奏 / 混音。记录来自本地服务（重启后仍在），可逐轨回听，点路径文字可复制。"
+        icon={<Music2 className="size-4" />}
+        accentText={ACCENT_TEXT}
+        emptyHint="上面跑一次翻唱"
+      />
       <SeparateOnlyCard />
     </div>
   );
@@ -107,6 +128,227 @@ function EngineBadge({ catalog }: { catalog: SvcCatalog | null }) {
         UVR5 分离已就绪，产物按内容指纹缓存复用
       </Badge>
     </>
+  );
+}
+
+/**
+ * 音色模型库（DDSP-SVC）。
+ *
+ * 与 RVC 页的 `ModelLibrary` 是同一套交互契约，但**多一个必填的 config.yaml** ——
+ * DDSP-SVC 的 .pt 是纯权重，采样率 / 编码器 / F0 提取器全在同目录的 config.yaml 里，
+ * 少一个都加载不了。所以这个组件接受 `.pt + .yaml/.yml` 成对导入，且拖拽时
+ * 两个文件要一起给（只给 .pt 会明确提示还缺配置，而不是静默失败）。
+ */
+function SvcModelLibrary({
+  catalog,
+  pipeline,
+  onChanged,
+}: {
+  catalog: SvcCatalog | null;
+  pipeline: (SvcPipelineStatus & { ok: boolean }) | null;
+  onChanged: () => void;
+}) {
+  const modelRef = useRef<HTMLInputElement | null>(null);
+  const configRef = useRef<HTMLInputElement | null>(null);
+  const [pending, setPending] = useState(false);
+  const models = catalog?.models ?? [];
+  const loadedPath = pipeline?.loaded ? pipeline.model : null;
+
+  const load = async (model: SvcModel) => {
+    try {
+      await svcApi.loadModel(model.path, model.id);
+      toast.success(`已加载 ${model.name}`, {
+        description: `${model.sample_rate ?? '?'}Hz · ${model.encoder ?? '未知编码器'}`,
+      });
+      onChanged();
+    } catch (err) {
+      toast.error('加载失败', { description: (err as RequestError).fullMessage });
+    }
+  };
+
+  const upload = async () => {
+    const weight = modelRef.current?.files?.[0];
+    if (!weight) return;
+    const config = configRef.current?.files?.[0] ?? null;
+    if (!config) {
+      // 后端也会拦，但在这里拦一下能给出更具体的指引
+      toast.warning('还需要一个 config.yaml', {
+        description: 'DDSP-SVC 的 .pt 权重必须配同目录的 config.yaml 才能加载，请把它一起选上。',
+      });
+      return;
+    }
+    setPending(true);
+    try {
+      const name = weight.name.replace(/\.pt$/i, '');
+      const result = await svcApi.uploadModel(weight, config, name);
+      if (!result.has_config) {
+        toast.warning(result.message);
+        return;
+      }
+      toast.success(result.message);
+      // 导入即热加载，省掉「导入完还要再点一次加载」的往返
+      await load({ id: name, name, path: result.path, size_mb: 0, has_config: true, available: true });
+    } catch (err) {
+      toast.error('音色导入失败', { description: (err as RequestError).fullMessage });
+    } finally {
+      setPending(false);
+      if (modelRef.current) modelRef.current.value = '';
+      if (configRef.current) configRef.current.value = '';
+      // 上传后目录已变，无论成功失败都刷新一次列表（成功要看到新条目，失败要看到真实状态）
+      onChanged();
+    }
+  };
+
+  const remove = async (model: SvcModel) => {
+    try {
+      await svcApi.deleteModel(model.id);
+      toast.success(`已删除 ${model.name}`);
+      onChanged();
+    } catch (err) {
+      toast.error('删除失败', { description: (err as RequestError).fullMessage });
+    }
+  };
+
+  // 卡片整块可拖：.pt 是主体，配套 config.yaml 一起给。只拖来 .pt 时给明确提示。
+  const { dragging, rootProps } = useFileDrop({
+    accept: '.pt,.yaml,.yml',
+    multiple: true,
+    disabled: pending,
+    onFiles: (files) => {
+      const weight = files.find((item) => /\.pt$/i.test(item.name));
+      const config = files.find((item) => /\.ya?ml$/i.test(item.name));
+      if (weight && config) {
+        if (modelRef.current) applyFilesToInput(modelRef.current, [weight]);
+        if (configRef.current) applyFilesToInput(configRef.current, [config]);
+        void upload();
+      } else if (weight) {
+        if (modelRef.current) applyFilesToInput(modelRef.current, [weight]);
+        toast.warning('还缺一个 config.yaml', {
+          description: '把模型同目录的 config.yaml 也拖进来，才能一起导入并加载。',
+        });
+      } else if (config) {
+        if (configRef.current) applyFilesToInput(configRef.current, [config]);
+        toast.info('已拿到 config.yaml', { description: '再把配套的 .pt 拖进来就会一起导入。' });
+      }
+    },
+  });
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2 text-base">
+          <Waves className={`size-4 ${ACCENT_TEXT}`} /> 音色模型库
+        </CardTitle>
+        <CardDescription>
+          一个音色 = 一个 .pt + 同目录的 config.yaml（采样率 / 编码器 / F0 提取器都在里面）。
+          放在 {catalog?.model_dirs?.[0] ?? '.data/svc/models'}，或直接把两个文件拖进来导入。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className={cn('space-y-3 rounded-lg transition', dropHighlight(dragging))} {...rootProps}>
+        {models.length === 0 ? (
+          <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
+            还没有音色。把一个 .pt 与它的 config.yaml 一起拖进来，或点下面的「导入 .pt + config.yaml」。
+          </p>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {models.map((model) => (
+              <SvcModelCard
+                key={model.id}
+                model={model}
+                loaded={loadedPath === model.path}
+                onLoad={() => void load(model)}
+                onRemove={() => void remove(model)}
+              />
+            ))}
+          </div>
+        )}
+
+        <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+          {/* .yaml 之外也接受 .yml —— DDSP-SVC 上下游两种写法都有 */}
+          <input ref={modelRef} type="file" accept=".pt" className="hidden" onChange={() => void upload()} />
+          <input ref={configRef} type="file" accept=".yaml,.yml" className="hidden" onChange={() => void upload()} />
+          <Button variant="outline" size="sm" className="gap-1.5 text-xs" disabled={pending} onClick={() => modelRef.current?.click()}>
+            {pending ? <Loader2 className="size-3.5 animate-spin" /> : <Upload className="size-3.5" />} 导入 .pt + config.yaml
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="text-xs text-muted-foreground"
+            disabled={pending}
+            onClick={() => configRef.current?.click()}
+          >
+            只补 config.yaml
+          </Button>
+          {catalog?.model_dirs?.length ? (
+            <span className="ml-auto truncate font-mono text-[11px] text-muted-foreground" title={catalog.model_dirs.join('\n')}>
+              {catalog.model_dirs.length} 个搜索目录
+            </span>
+          ) : null}
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function SvcModelCard({
+  model,
+  loaded,
+  onLoad,
+  onRemove,
+}: {
+  model: SvcModel;
+  loaded: boolean;
+  onLoad: () => void;
+  onRemove: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const runLoad = async () => {
+    setLoading(true);
+    try {
+      onLoad();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      className={cn(
+        'group flex items-center justify-between gap-2 rounded-lg border p-3 transition hover:-translate-y-0.5 hover:shadow-md',
+        loaded ? 'border-rose-400/60 bg-rose-500/5' : '',
+      )}
+    >
+      <div className="min-w-0">
+        <p className="truncate text-sm font-medium">
+          {model.name}
+          {loaded ? <span className="ml-1.5 text-[11px] text-rose-500 dark:text-rose-400">· 当前音色</span> : null}
+        </p>
+        <p className="truncate text-xs text-muted-foreground">
+          {model.available
+            ? `${model.sample_rate ?? '?'}Hz · ${model.encoder ?? '?'} · F0 ${model.f0_extractor ?? '?'} · ${model.size_mb}MB`
+            : (model.hint ?? '缺少同目录的 config.yaml，无法加载')}
+        </p>
+      </div>
+      <div className="flex shrink-0 items-center gap-1">
+        <Button
+          size="sm"
+          variant={loaded ? 'outline' : 'default'}
+          className={cn('h-7 text-xs', !loaded && 'bg-rose-600 text-white hover:bg-rose-600/90')}
+          disabled={loading || !model.available || loaded}
+          onClick={() => void runLoad()}
+        >
+          {loading ? <Loader2 className="size-3 animate-spin" /> : loaded ? '已加载' : '热加载'}
+        </Button>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="h-7 px-2 text-xs text-muted-foreground"
+          onClick={onRemove}
+        >
+          删除
+        </Button>
+      </div>
+    </div>
   );
 }
 
@@ -209,6 +451,7 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
   const onJobDone = (job: SovitsJob) => {
     const produced = (job.artifacts as { artifacts?: Record<string, string>; urls?: Record<string, string> } | null) ?? {};
     pushCover(collectArtifacts(produced.artifacts ?? produced.urls ?? {}));
+    notifyVcRunChanged();
     onChanged();
   };
 
@@ -381,6 +624,15 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
   );
 }
 
+/**
+ * 把任务产物整理成可播放的轨道列表。
+ *
+ * `raw` 是 `artifacts.artifacts` 与 `artifacts.urls` 合并后的对象；这里改成
+ * 逐键调 `pickArtifactUrl`，而不是 `resolveAudioUrl(raw[key]) ?? raw[key]` ——
+ * 后者在拿到服务端绝对路径（`F:\...`）时会把无效地址**原样透传**出去，
+ * 产生一个必然 404 的音频源（播放器显示灰色禁用）。`pickArtifactUrl`
+ * 会拦住盘符路径并优先用 `urls` 里的 Web 路径。
+ */
 function collectArtifacts(raw: Record<string, string>): { label: string; url: string }[] {
   const labels: Array<[string, string]> = [
     ['vocal', '新人声'],
@@ -388,9 +640,25 @@ function collectArtifacts(raw: Record<string, string>): { label: string; url: st
     ['mix', '混音'],
     ['output', '转换结果'],
   ];
-  return labels
-    .filter(([key]) => raw[key])
-    .map(([key, label]) => ({ label, url: resolveAudioUrl(raw[key]) ?? raw[key] }));
+  const result: { label: string; url: string }[] = [];
+  for (const [key, label] of labels) {
+    if (!raw[key]) continue;
+    const url = pickArtifactUrl({ [key]: raw[key] });
+    if (url) result.push({ label, url });
+  }
+  return result;
+}
+
+/**
+ * 把单个产物路径转成 ABPlayer 的轨道数组；地址不可用时返回**空数组**。
+ *
+ * 不要写成 `[{ label, url: resolveAudioUrl(x) ?? '' }]` —— 空字符串 src 会让
+ * `<audio>` 处于无源状态，控件变成灰色不可点，看起来像「功能坏了」。
+ * 宁可少一条轨道，也不给一个假装能播的播放器。
+ */
+function toTrack(label: string, path: string | undefined | null): { label: string; url: string }[] {
+  const url = pickArtifactUrl(path ? { output: path } : null);
+  return url ? [{ label, url }] : [];
 }
 
 /** 独立分离卡片：只要人声 / 伴奏，产物进缓存，翻唱向导可直接复用 */
@@ -488,10 +756,11 @@ function SeparateOnlyCard() {
                   <ABPlayer
                     accentClass={ACCENT_SOLID}
                     tracks={[
-                      ...(entry.item.vocal ? [{ label: '人声', url: resolveAudioUrl(entry.item.vocal) ?? '' }] : []),
-                      ...(entry.item.instrumental
-                        ? [{ label: '伴奏', url: resolveAudioUrl(entry.item.instrumental) ?? '' }]
-                        : []),
+                      // 逐条过 `pickArtifactUrl`：不可用的地址（比如服务端绝对路径）
+                      // 返回 null 直接不展示该轨，而不是塞一个空 `url` 进去 ——
+                      // 空 src 会让 `<audio>` 处于无源状态，控件渲染成灰色禁用。
+                      ...toTrack('人声', entry.item.vocal),
+                      ...toTrack('伴奏', entry.item.instrumental),
                     ]}
                   />
                 </div>

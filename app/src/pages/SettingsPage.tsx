@@ -31,7 +31,13 @@ import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/lib/api';
 import { RequestError } from '@/lib/errors';
-import { localServiceApi, runtimeServiceApi, type LocalServiceState, type RuntimeServiceState } from '@/lib/localService';
+import {
+  localServiceApi,
+  notifyServiceEnabledChanged,
+  runtimeServiceApi,
+  type LocalServiceState,
+  type RuntimeServiceState,
+} from '@/lib/localService';
 import { preloadApi, type PreloadCatalog, type PreloadPreference } from '@/lib/preload';
 import { DEFAULT_SETTINGS } from '@/lib/constants';
 import { PROVIDERS, getProvider, languageLabel, resolveLanguages } from '@/lib/providers/registry';
@@ -293,10 +299,12 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
   /** 给被锚点命中的区块加一圈临时高亮 */
   const flashRing = (id: string) => (flashId === id ? 'ring-2 ring-violet-500/70 transition-shadow' : '');
 
-  const toggleRuntimeService = async (id: 'netease' | 'indextts', enabled: boolean) => {    setRuntimeToggling(id);
+  const toggleRuntimeService = async (id: 'netease' | 'indextts', enabled: boolean) => {
+    setRuntimeToggling(id);
     try {
       const result = await runtimeServiceApi.toggle(id, enabled);
       toast.success(result.enabled ? '已启用服务' : '已关闭服务', { description: result.hint });
+      notifyServiceEnabledChanged();
       refreshRuntimeStates();
       if (id === 'netease') void probeSovits(readBaseUrl());
     } catch (requestError) {
@@ -319,6 +327,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
       toast.success(enabled ? '已启用 GPT-SoVITS 本地服务' : '已关闭 GPT-SoVITS 本地服务', {
         description: result.hint,
       });
+      notifyServiceEnabledChanged();
       refreshServiceState();
       void probeSovits(sovitsUrl);
     } catch (requestError) {
@@ -460,16 +469,33 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
                 主服务（免转写克隆 / 14 语种）。默认随 <code className="rounded bg-muted px-1">npm run dev</code> 启动；
                 这里的开关由网关托管：开 = 拉起进程，关 = 卸掉常驻模型并收掉进程。
               </p>
+              {/* 「开关关着但端口上还有进程」要说清楚：多半是 npm run dev 的 concurrently 或
+                  终端手动起的，网关没托管它。用户看到侧栏与这里不一致往往就是这个态。 */}
+              {runtimeStates.netease && !runtimeStates.netease.enabled && runtimeStates.netease.reachable ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  检测到未托管的进程仍在 :9882 上运行（多由 <code className="rounded bg-muted px-1">npm run dev</code>
+                  或终端手动启动）。打开右侧开关可由网关接管；关闭开关则会把它收掉并归还显存。
+                </p>
+              ) : null}
               {runtimeStates.netease && !runtimeStates.netease.reachable && runtimeStates.netease.lastError ? (
                 <p className="text-xs text-amber-600 dark:text-amber-400">{runtimeStates.netease.lastError}</p>
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-3 pt-1">
               <Badge
-                variant={runtimeStates.netease?.reachable ? 'default' : 'secondary'}
-                className={cn('h-6 text-[11px]', runtimeStates.netease?.reachable && 'bg-emerald-600 hover:bg-emerald-600')}
+                variant={runtimeStates.netease?.enabled && runtimeStates.netease?.reachable ? 'default' : 'secondary'}
+                className={cn(
+                  'h-6 text-[11px]',
+                  runtimeStates.netease?.enabled && runtimeStates.netease?.reachable && 'bg-emerald-600 hover:bg-emerald-600',
+                )}
               >
-                {runtimeStates.netease?.reachable ? '运行中' : runtimeStates.netease?.starting ? '启动中…' : '未启动'}
+                {runtimeStates.netease?.starting
+                  ? '启动中…'
+                  : runtimeStates.netease?.enabled && runtimeStates.netease?.reachable
+                    ? '运行中'
+                    : runtimeStates.netease?.enabled
+                      ? '未就绪'
+                      : '未启动'}
               </Badge>
               <Switch
                 aria-label="启用网易模块服务"
@@ -491,16 +517,33 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
                 情感可控（8 维向量 / 语速倍率 / 5 语种）。默认<strong>关闭</strong>按需启动；
                 环境体检：<code className="mx-1 rounded bg-muted px-1">npm run indextts:check</code>
               </p>
+              {runtimeStates.indextts && !runtimeStates.indextts.enabled && runtimeStates.indextts.reachable ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  检测到未托管的进程仍在 :9883 上运行（多为终端手动启动）。打开右侧开关可由网关接管；
+                  关闭开关则会把它收掉并归还显存。
+                </p>
+              ) : null}
               {runtimeStates.indextts && !runtimeStates.indextts.reachable && runtimeStates.indextts.lastError ? (
                 <p className="text-xs text-amber-600 dark:text-amber-400">{runtimeStates.indextts.lastError}</p>
               ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-3 pt-1">
               <Badge
-                variant={runtimeStates.indextts?.reachable ? 'default' : 'secondary'}
-                className={cn('h-6 text-[11px]', runtimeStates.indextts?.reachable && 'bg-emerald-600 hover:bg-emerald-600')}
+                variant={runtimeStates.indextts?.enabled && runtimeStates.indextts?.reachable ? 'default' : 'secondary'}
+                className={cn(
+                  'h-6 text-[11px]',
+                  runtimeStates.indextts?.enabled &&
+                    runtimeStates.indextts?.reachable &&
+                    'bg-emerald-600 hover:bg-emerald-600',
+                )}
               >
-                {runtimeStates.indextts?.reachable ? '运行中' : runtimeStates.indextts?.starting ? '启动中…' : '未启动'}
+                {runtimeStates.indextts?.starting
+                  ? '启动中…'
+                  : runtimeStates.indextts?.enabled && runtimeStates.indextts?.reachable
+                    ? '运行中'
+                    : runtimeStates.indextts?.enabled
+                      ? '未就绪'
+                      : '未启动'}
               </Badge>
               <Switch
                 aria-label="启用 IndexTTS 服务"

@@ -18,8 +18,9 @@ import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import Body, FastAPI, File, Form, UploadFile
 
+from .. import torch_compat
 from ..audio.io import AUDIO_SUFFIXES
 from ..jobs import Job, JobKind
 from ..vc import bootstrap, merge as merge_module, models as model_store, training
@@ -145,6 +146,8 @@ def register(app: FastAPI, ctx) -> None:
             "f0_methods": F0_METHODS,
             "models_dir": str(bootstrap.models_dir(ctx.settings)),
             "engine": ctx.vc.status(),
+            # 排障用：GPT-SoVITS 的 MHA 补丁是否已就位且完整（缺 _in_projection 会让变声必崩）
+            "mha_patch": torch_compat.mha_patch_status(),
         }
 
     @app.get("/v1/vc/pipeline", tags=["vc"])
@@ -196,6 +199,18 @@ def register(app: FastAPI, ctx) -> None:
     def vc_delete_model(model: str = "") -> Any:
         return {"ok": True, **model_store.delete_model(ctx.settings, model)}
 
+    @app.post("/v1/vc/models/rename", tags=["vc"])
+    def vc_rename_model(model: str = Form(""), name: str = Form("")) -> Any:
+        """给一个音色改名（.pth 与配套 .index 一起改）。"""
+        if not model.strip():
+            raise VcError("请指定要改名的音色", code="MISSING_INPUT")
+        if not name.strip():
+            raise VcError("请提供新的名称", code="MISSING_INPUT")
+        result = model_store.rename_model(ctx.settings, model, name)
+        if not result.get("ok"):
+            raise VcError(result.get("message", "重命名失败"), code="RENAME_FAILED")
+        return {"ok": True, **result}
+
     @app.post("/v1/vc/convert", tags=["vc"])
     async def vc_convert(
         file: UploadFile = File(None),
@@ -228,7 +243,8 @@ def register(app: FastAPI, ctx) -> None:
         }
 
         if wait:
-            out_dir = ctx.settings.outputs_dir / "vc" / uuid.uuid4().hex[:12]
+            token = uuid.uuid4().hex[:12]
+            out_dir = ctx.settings.outputs_dir / "vc" / token
             out_dir.mkdir(parents=True, exist_ok=True)
             target = out_dir / "converted.wav"
             handle = ctx.engines.acquire("rvc", reason="语音变声（同步）")
@@ -238,7 +254,15 @@ def register(app: FastAPI, ctx) -> None:
                 })
             finally:
                 handle.release()
-            return {"ok": True, "output": str(target), **info}
+            # 同时给绝对路径与 Web 路径：前者供服务端自身/排障使用，
+            # 后者才是浏览器能取的（相对 `outputs_dir` 的静态挂载点）。
+            # 只给 `output` 会让前端把 Windows 绝对路径直接拼进 URL → 404。
+            return {
+                "ok": True,
+                "output": str(target),
+                "urls": {"output": "/files/vc/%s/%s" % (token, target.name)},
+                **info,
+            }
 
         job = ctx.store.create(
             JobKind.VC_INFER,
@@ -250,7 +274,7 @@ def register(app: FastAPI, ctx) -> None:
         return {"ok": True, "job_id": job.id, "message": "任务已入队，请轮询 /v1/jobs/%s" % job.id}
 
     @app.post("/v1/vc/merge", tags=["vc"])
-    def vc_merge(payload: Any) -> Any:
+    def vc_merge(payload: Any = Body(default=None)) -> Any:
         """多权重融合。`models` 至少两个，`weights` 会自动归一化。"""
         data = payload if isinstance(payload, dict) else {}
         names = list(data.get("models") or [])
@@ -270,22 +294,33 @@ def register(app: FastAPI, ctx) -> None:
         return {"ok": True, **result}
 
     @app.post("/v1/vc/train/plan", tags=["vc"])
-    def vc_train_plan(payload: Any) -> Any:
-        """只列出每一步会跑什么，不执行。"""
+    def vc_train_plan(payload: Any = Body(default=None)) -> Any:
+        """只列出每一步会跑什么，不执行。
+
+        `Body(...)` 不能省：裸 `payload: Any` 会被 FastAPI 当成**必需 query 参数**
+        （报 `query.payload Field required`），而前端与调用方一律发 JSON body。
+        """
         data = payload if isinstance(payload, dict) else {}
         request = TrainRequest(**data)
         return {"ok": True, "stages": training.plan(ctx.settings, request), "request": request.to_dict()}
 
     @app.post("/v1/vc/train", tags=["vc"])
-    def vc_train(payload: Any) -> Any:
-        """提交训练任务。"""
+    async def vc_train(payload: Any = Body(default=None)) -> Any:
+        """提交训练任务。（同样必须显式 `Body`，原因见上）
+
+        这里刻意用 `async def`：之前的同步写法会被 FastAPI 丢进 anyio 工作线程，
+        而 `scheduler.submit()` 里建取消事件需要事件循环 —— 同步端点必然 500。
+        """
         data = payload if isinstance(payload, dict) else {}
         request = TrainRequest(**data)
         if not request.corpus_dir:
             raise VcError("请先提供语料目录", hint="录音或收集 10~30 分钟干净干声后放到一个目录里。", code="MISSING_INPUT")
         job = ctx.store.create(
             JobKind.VC_TRAIN,
-            name="变声训练：%s" % request.name,
+            # 用 clean_name 而不是原始 name：这个字段会显示在「训练结果」列表里，
+            # 必须和最终落盘的文件名一致，否则用户看到 `a/b` 却在磁盘上找到 `a_b`，
+            # 对不上（2026-10 验收发现）。原始输入仍在 request 里，需要时可回溯。
+            name="变声训练：%s" % request.clean_name,
             request=data,
             owner="local",
             priority=1,

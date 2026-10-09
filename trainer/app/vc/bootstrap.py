@@ -19,6 +19,12 @@ RVC（`vendor/rvc`，20240604 分支）对路径的要求比另两个上游更�
 3. **不用上游的 `Config`**，改用一个鸭子类型的配置对象：
    `VC` 只用到 `device / is_half / x_pad / x_query / x_center / x_max` 六个字段，
    自己给既能避开 argparse，也不会往 vendor 里写 `configs/inuse/`。
+
+另外一条**隐性依赖**：RVC 的内容编码器是 fairseq 的 HuBERT，而 GPT-SoVITS 在 import 期
+把 `F.multi_head_attention_forward` 换成了自己的 KV-cache 版本，那个补丁漏了
+`_in_projection`，fairseq 正好走漏掉的分支 → 变声必崩
+（详见 `app/torch_compat.py`）。所以每次进入 RVC 上下文前都要调一次
+`torch_compat.ensure_mha_patch_complete()` 把名字补回去。
 """
 
 from __future__ import annotations
@@ -28,15 +34,16 @@ import shutil
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, List, Optional
 
-from .. import vendor_paths
+from .. import torch_compat, vendor_paths
 from ..config import Settings
 
 __all__ = [
     "vendor_root",
     "assets_dir",
     "models_dir",
+    "models_dirs",
     "ensure_ffmpeg",
     "prepare_env",
     "make_config",
@@ -72,10 +79,29 @@ def assets_dir(settings: Settings) -> Path:
 
 
 def models_dir(settings: Settings) -> Path:
-    """我们自己的模型库：`.pth` 与它对应的 `.index`。"""
-    path = settings.vc_dir / "models"
+    """RVC 音色模型的**写入根**：`models/rvc/`。
+
+    P0 起从 `trainer/.data/vc/models/` 迁到这里，与网关 `modelRegistry` 的
+    类别表（`rvc` → `models/rvc/`）保持一致 —— 这样「本地拖文件进文件夹」
+    与「网页导入」才落在同一个地方。
+
+    读取请用 `models_dirs()`（多根，兼容旧位置），不要用本函数。
+    """
+    path = settings.rvc_models_dir
     path.mkdir(parents=True, exist_ok=True)
     return path
+
+
+def models_dirs(settings: Settings) -> List[Path]:
+    """RVC 音色模型的**读取搜索目录**（新根优先 + 旧位置兼容）。
+
+    返回的目录里可能有重复或不存在项，调用方自行去重与存在性判断。
+    """
+    seen: List[Path] = []
+    for candidate in settings.rvc_model_search_dirs:
+        if candidate not in seen:
+            seen.append(candidate)
+    return seen
 
 
 def ensure_ffmpeg(settings: Settings) -> Optional[str]:
@@ -128,6 +154,8 @@ def prepare_env(settings: Settings) -> dict:
     把索引和模型放在一起，这个匹配天然成立。
     """
     root = vendor_root(settings)
+    # 补上 GPT-SoVITS 的 MHA 补丁缺失的 `_in_projection`（fairseq HuBERT 要用）
+    torch_compat.ensure_mha_patch_complete()
     env = {
         "weight_root": str(models_dir(settings)),
         "index_root": str(models_dir(settings)),

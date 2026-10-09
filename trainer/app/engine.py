@@ -183,6 +183,11 @@ class EngineRegistry:
             raise AdmissionError(
                 "VRAM_INSUFFICIENT",
                 "可用显存 %d MB 不足以加载%s（需要约 %d MB）。" % (free, info.label, need),
+                hint=(
+                    "显存被别的进程占着（常见是浏览器/游戏/桌面美化工具，或本项目已加载的其它模型）。"
+                    "先试试：① 关掉占用显卡的程序；② 在本页面点「卸载模型」释放本项目占用的显存；"
+                    "③ 若仍不够，用任务管理器的「性能 → GPU」看是谁在占。"
+                ),
                 retryable=True,
                 retry_after_s=10,
             )

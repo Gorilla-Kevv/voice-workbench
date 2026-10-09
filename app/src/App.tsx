@@ -16,12 +16,13 @@ import { getProvider } from '@/lib/providers/registry';
 import { neteaseApi } from '@/lib/netease';
 import { indexttsApi } from '@/lib/indextts';
 import { sovitsApi } from '@/lib/sovits';
+import { localServiceApi, runtimeServiceApi } from '@/lib/localService';
 import { AsrPage } from '@/pages/AsrPage';
 import { BatchPage } from '@/pages/BatchPage';
-import { HistoryPage } from '@/pages/HistoryPage';
 import { IndexttsTtsPage } from '@/pages/IndexttsTtsPage';
 import { NeteaseAsrPage } from '@/pages/NeteaseAsrPage';
 import { NeteaseTtsPage } from '@/pages/NeteaseTtsPage';
+import { OutputsPage } from '@/pages/OutputsPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { SingingConversionPage } from '@/pages/SingingConversionPage';
 import { TrainingPage } from '@/pages/TrainingPage';
@@ -71,7 +72,11 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: '音色库管理',
     description: '跨模型共享的参考音频与提示文本：网易 / IndexTTS / GPT-SoVITS 都从这里取音色（voicelib/，网关托管）',
   },
-  history: { title: '历史记录', description: '所有合成结果保存在浏览器本地，可随时回听、下载与清理' },
+  history: {
+    title: '产出记录',
+    description:
+      '三源合并：服务端任务（推理 / 训练，全引擎）+ 本地模型文件 + 云端合成记录，可回听、复制本机路径与清理',
+  },
   training: {
     title: '音色微调训练',
     description: '用本地 GPU 跑 GPT-SoVITS 全流程：降噪、切分、标注、GPT 与 SoVITS 微调',
@@ -169,6 +174,9 @@ function App() {
   const [health, setHealth] = useState<HealthInfo | null>(null);
   const [presets, setPresets] = useState<PresetVoice[]>(FALLBACK_PRESET_VOICES);
   const [sovitsState, setSovitsState] = useState<SovitsLinkState>('checking');
+  // 任何「本地服务 enabled 切换」都通过 service-enabled-changed 事件通知下面两个探活 effect。
+  // 不直接写死 state —— 仅 bump，让下面的 effect 在 deps 里捕获这个值后立即重跑探活。
+  const [serviceChangedTick, setServiceChangedTick] = useState(0);
   // 各板块的侧栏状态：与 GPT-SoVITS 同一次探活里顺带得出，不再单独轮询
   const [moduleStates, setModuleStates] = useState<ModuleStates>({
     rvc: 'checking',
@@ -239,24 +247,35 @@ function App() {
       // netease 两态由独立的探活循环维护，这里只占位（false 路径同样要给全字段）
       let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline', asr: 'offline', neteaseTts: 'offline', neteaseAsr: 'offline', indexttsTts: 'offline' };
       try {
-        const result = await sovitsApi.health();
+        // 1. 先问 supervisor：用户到底要不要这个服务（这里三块卡 rvc/svc/asr 共享）
+        const supervisor = await localServiceApi.state();
         if (cancelled) return;
-        // 环境就绪即视为可用；权重缺失之类的阻断项由各页面自己提示
-        healthy = result.ok;
-        if (healthy) {
-          // 各板块的判定来自同一次 /health：vendor 与必需权重都齐才算就绪。
-          // ASR 的语义稍有不同：它没有权重清单，两条通道（常驻依赖 / 整合包脚本）
-          // 至少一条可用即算就绪。
-          const caps = result.capabilities;
-          nextModules = {
-            rvc: caps?.voice_conversion ? 'ready' : 'incomplete',
-            svc: caps?.singing_conversion ? 'ready' : 'incomplete',
-            asr: caps?.speech_recognition ? 'ready' : 'incomplete',
-            // 保留网易模块自己的探活结果，不要被这轮覆盖
-            neteaseTts: 'checking',
-            neteaseAsr: 'checking',
-            indexttsTts: 'checking',
-          };
+        if (!supervisor.enabled) {
+          // 用户在设置里关了 GPT-SoVITS —— trainer 关停会有短暂的过程，
+          // 但设置开关是用户意图的最终源。即便 trainer 还活着（race 或外部实例），
+          // 也不能让侧栏继续报「已就绪」。
+          setSovitsState('offline');
+          nextModules = { ...nextModules, rvc: 'offline', svc: 'offline', asr: 'offline' };
+        } else {
+          // 2. supervisor 同意 → 探真实健康
+          const result = await sovitsApi.health();
+          if (cancelled) return;
+          healthy = result.ok;
+          if (healthy) {
+            // 各板块的判定来自同一次 /health：vendor 与必需权重都齐才算就绪。
+            // ASR 的语义稍有不同：它没有权重清单，两条通道（常驻依赖 / 整合包脚本）
+            // 至少一条可用即算就绪。
+            const caps = result.capabilities;
+            nextModules = {
+              rvc: caps?.voice_conversion ? 'ready' : 'incomplete',
+              svc: caps?.singing_conversion ? 'ready' : 'incomplete',
+              asr: caps?.speech_recognition ? 'ready' : 'incomplete',
+              // 保留网易模块自己的探活结果，不要被这轮覆盖
+              neteaseTts: 'checking',
+              neteaseAsr: 'checking',
+              indexttsTts: 'checking',
+            };
+          }
         }
       } catch {
         // 连不上就是「还没起来」，与「起来了但没就绪」在这里无需区分
@@ -292,11 +311,16 @@ function App() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, []);
+    // GPT-SoVITS 探活的依赖：服务变更广播进来时立即重探
+  }, [serviceChangedTick]);
 
   // 网易模块的探活：独立服务（opt-in，:9882），不随 GPT-SoVITS 的探活走。
-  // 节奏策略沿用同一套常数；「offline」在这里是常态而非故障 ——
-  // 侧栏文案会说明它是可选模块，运行 npm run dev:netease 即可启动。
+  // 节奏策略沿用同一套常数；「offline」在这里是常态而非故障 —— 侧栏文案会说明
+  // 它是可选模块，运行 npm run dev:netease 即可启动。
+  //
+  // 「用户开关」优先于「端口有人接」：supervisor 的 `enabled=false` 才是用户的真实意图，
+  // 否则端口上残留一个外部实例（手动起的、关停漏掉的）侧栏就会误报"已就绪"，
+  // 与设置页的「未启动」产生矛盾（2026-10 用户实测：左侧卡是绿的、设置开关是灰的）。
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
@@ -307,13 +331,27 @@ function App() {
       let nextAsr: ModuleState = 'offline';
       let allReady = false;
       try {
-        const health = await neteaseApi.health();
+        // 1. 先问 supervisor：用户到底要不要这个服务
+        const supervisor = await runtimeServiceApi.state('netease');
         if (cancelled) return;
-        nextTts = health.engines.confucius_tts.installed && health.engines.confucius_tts.package.importable ? 'ready' : 'incomplete';
-        nextAsr = health.engines.r2t2.installed ? 'ready' : 'incomplete';
-        allReady = nextTts === 'ready' && nextAsr === 'ready';
+        if (supervisor.enabled) {
+          // 2. supervisor 同意 → 探真实健康
+          const health = await neteaseApi.health();
+          if (cancelled) return;
+          nextTts =
+            health.engines.confucius_tts.installed && health.engines.confucius_tts.package.importable
+              ? 'ready'
+              : 'incomplete';
+          nextAsr = health.engines.r2t2.installed ? 'ready' : 'incomplete';
+          allReady = nextTts === 'ready' && nextAsr === 'ready';
+        } else {
+          // enabled=false：用户在设置里关了。即便端口上还有外部实例残留，
+          // 也不能让侧栏骗人。下次设置 toggle 会通过 service-enabled-changed 事件立刻通知这里重探。
+          nextTts = 'offline';
+          nextAsr = 'offline';
+        }
       } catch {
-        // 服务没启动：保持 offline，文案是「未启动（可选模块）」
+        // 服务没启动或 supervisor 也够不到：保持 offline
       }
       if (cancelled) return;
       setModuleStates((prev) => ({ ...prev, neteaseTts: nextTts, neteaseAsr: nextAsr }));
@@ -332,10 +370,13 @@ function App() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
-  }, []);
+    // 网易探活的依赖：服务变更广播进来时立即重探（细节见下方的 broadcast 监听）
+  }, [serviceChangedTick]);
 
   // IndexTTS 的探活：第三个独立运行时（按需启动，:9883），策略与网易一轮相同。
   // 「offline」是常态（它不随 dev 自动起），侧栏文案会说明怎么启动。
+  // 同样的修复：以 supervisor 的 `enabled` 为主，端口可达次之
+  // —— 否则外部实例残留会让侧栏误报"已就绪"。
   useEffect(() => {
     let cancelled = false;
     let timer: number | undefined;
@@ -344,12 +385,17 @@ function App() {
     const probe = async () => {
       let nextState: ModuleState = 'offline';
       try {
-        const indexttsHealth = await indexttsApi.health();
+        const supervisor = await runtimeServiceApi.state('indextts');
         if (cancelled) return;
-        // 服务活着但没 CUDA：环境装错了，「待补齐」指向体检命令
-        nextState = indexttsHealth.cuda ? 'ready' : 'incomplete';
+        if (supervisor.enabled) {
+          const indexttsHealth = await indexttsApi.health();
+          if (cancelled) return;
+          // 服务活着但没 CUDA：环境装错了，「待补齐」指向体检命令
+          nextState = indexttsHealth.cuda ? 'ready' : 'incomplete';
+        }
+        // else: enabled=false，与设置页保持一致显示 offline
       } catch {
-        // 服务没启动：保持 offline
+        // supervisor 也拿不到：保持 offline
       }
       if (cancelled) return;
       setModuleStates((prev) => ({ ...prev, indexttsTts: nextState }));
@@ -367,6 +413,16 @@ function App() {
       cancelled = true;
       if (timer !== undefined) window.clearTimeout(timer);
     };
+    // IndexTTS 探活的依赖：服务变更广播进来时立即重探（见下方的 broadcast 监听）
+  }, [serviceChangedTick]);
+
+  // 设置页 toggle 任何本地服务（GPT-SoVITS / 网易 / IndexTTS）→ 广播 service-enabled-changed。
+  // 上面两个探活 effect 都通过 serviceChangedTick 订阅，看到值变了立刻重启、不必等定时器窗。
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const handler = (): void => setServiceChangedTick((tick) => tick + 1);
+    window.addEventListener('service-enabled-changed', handler as EventListener);
+    return () => window.removeEventListener('service-enabled-changed', handler as EventListener);
   }, []);
 
   // 合成失败时给出全局提示，避免用户切到后台时错过错误。
@@ -393,7 +449,7 @@ function App() {
         ? MODE_META[mode].model
         : `${provider.name} · ${provider.defaultModel}`
       : active === 'history'
-        ? 'IndexedDB 本地存储'
+        ? '/v1/jobs + /api/models + IndexedDB'
         : active === 'training'
           ? '本地 GPU 训练'
           : active === 'batch' || active === 'voices'
@@ -485,13 +541,14 @@ function App() {
         ) : null}
         {active === 'voices' ? <VoiceLibraryPage /> : null}
         {active === 'history' ? (
-          <HistoryPage
-            records={records}
-            loading={loading}
+          <OutputsPage
+            cloudRecords={records}
+            cloudLoading={loading}
             settings={settings}
             onRemove={remove}
             onClear={clear}
             onLoadAudio={loadAudio}
+            onGoSettings={goSettings}
           />
         ) : null}
         {active === 'training' ? <TrainingPage onGoSettings={goSettings} /> : null}

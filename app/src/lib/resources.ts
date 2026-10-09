@@ -82,6 +82,12 @@ export interface ResourceSnapshot {
   indextts_required_mb: number | null;
   /** 当前谁在占着本地引擎（null = 空闲） */
   active_engine: string | null;
+  /** 各常驻引擎的加载状态（true = 已加载，其显存已计入「已用」） */
+  loaded_engines: {
+    'netease-tts': boolean;
+    'netease-asr': boolean;
+    'indextts-tts': boolean;
+  };
   /** GPT-SoVITS 本地服务是否被启用（默认关闭；它占着显存时才有「关掉它」这一说） */
   sovits_enabled: boolean;
   fetched_at: number;
@@ -97,6 +103,15 @@ export interface ResourceEstimate {
   verdict: 'ok' | 'tight' | 'insufficient' | 'unknown';
   /** 不够时差多少（MB） */
   gap_mb: number;
+  /**
+   * 该任务对应的引擎是否**已经加载**。
+   *
+   * 已加载时不能再用「空闲 − 需求」判定 —— 引擎自己的显存已经算在「已用」里了，
+   * 再扣一次需求就会得出「自己把自己检测成占用者」的荒谬结论
+   * （2026-10 用户实测：网易 TTS 预热成功、常驻 4.9 GB，界面却报「还差约 4.8 GB，
+   * 直接跑大概率中途 OOM」，读数没错，是算式错了）。
+   */
+  engineLoaded: boolean;
   /** 建议：降配置 / 释放资源 / 升硬件，按可执行程度排序 */
   suggestions: Suggestion[];
 }
@@ -164,9 +179,28 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
     netease_tts_required_mb: netease?.configuration?.tts_required_vram_mb ?? null,
     indextts_required_mb: indexttsCatalog?.required_vram_mb ?? null,
     active_engine: engines?.active ?? null,
+    // 三个常驻引擎的加载态来自各自 /health（字段名各不相同，别想当然）：
+    //   * 网易 TTS  —— `engines.confucius_tts.loaded`
+    //   * 网易 ASR  —— `engines.r2t2.model_loaded`（worker 子进程里的模型）
+    //   * IndexTTS  —— `engine.loaded`
+    // 任一服务没起就视为未加载 —— 未加载时显存肯定不在账上，
+    // 这个方向的误判只会让门槛更严格，是安全的。
+    loaded_engines: {
+      'netease-tts': netease?.engines?.confucius_tts?.loaded === true,
+      'netease-asr': netease?.engines?.r2t2?.model_loaded === true,
+      'indextts-tts': indextts?.engine?.loaded === true,
+    },
     sovits_enabled: (health as HealthInfo | null)?.sovits?.enabled === true || engines != null,
     fetched_at: Date.now(),
   };
+}
+
+/** 某个任务对应的常驻引擎是否已加载（只有这三个是「常驻多 GB」的量级） */
+function isEngineLoaded(task: ResourceTask, snapshot: ResourceSnapshot): boolean {
+  if (task === 'netease-tts') return snapshot.loaded_engines['netease-tts'];
+  if (task === 'netease-asr') return snapshot.loaded_engines['netease-asr'];
+  if (task === 'indextts-tts') return snapshot.loaded_engines['indextts-tts'];
+  return false;
 }
 
 /** 某个任务需要多少显存（服务端优先） */
@@ -183,11 +217,24 @@ export function estimateTask(task: ResourceTask, snapshot: ResourceSnapshot): Re
   const ram_need_mb = FALLBACK_RAM_MB[task];
   const vram_free = snapshot.vram_free_mb;
   const ram_free = snapshot.ram_free_mb;
+  const engineLoaded = isEngineLoaded(task, snapshot);
 
   let verdict: ResourceEstimate['verdict'] = 'ok';
   let gap_mb = 0;
   if (vram_free == null) {
     verdict = 'unknown';
+  } else if (engineLoaded) {
+    /*
+     * 引擎已经在显存里了 —— 这时**不能再按「空闲 − 需求」判定**。
+     *
+     * 引擎自己占掉的那几 GB 已经反映在 `vram_free` 里了，再减一次需求就是重复扣账：
+     * 网易 TTS 常驻 4.9 GB、卡上只剩 0.2 GB，于是算出「还差 4.8 GB」——
+     * 把自己检测成了占用者（2026-10 用户实测，读数正确但结论荒谬）。
+     *
+     * 已加载后真正要让用户知道的是「现在能不能直接跑」：模型在显存里，答案是能。
+     * 只在余量极小时提示一句「同时跑别的会挤掉它」，而不是拦着不让跑。
+     */
+    verdict = vram_free < 512 ? 'tight' : 'ok';
   } else {
     const margin = vram_free - vram_need_mb;
     if (margin < 0) {
@@ -216,6 +263,7 @@ export function estimateTask(task: ResourceTask, snapshot: ResourceSnapshot): Re
     ram_free_mb: ram_free,
     verdict,
     gap_mb,
+    engineLoaded,
     suggestions,
   };
 }

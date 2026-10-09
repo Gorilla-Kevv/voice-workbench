@@ -71,6 +71,45 @@ export function resolveAudioUrl(path: string | null | undefined, baseUrl?: strin
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
 }
 
+/** 本地绝对路径的形状：`C:\...` / `C:/...` / `\\server\share` */
+const ABSOLUTE_PATH_RE = /^[a-zA-Z]:[\\/]|^\\\\/;
+
+/**
+ * 从任务产物里取出**浏览器可用**的音频地址。
+ *
+ * 为什么必须有这个函数：后端很多端点会同时回两个字段 ——
+ * `output` 是**服务端本地绝对路径**（`F:\...\trainer\.data\outputs\vc\<job>\x.wav`），
+ * `urls.output` 才是相对 `outputs_dir` 静态挂载点的 Web 路径
+ * （`/files/vc/<job>/x.wav`）。绝对路径交给 `resolveAudioUrl` 会拼出
+ * `/api/sovits/F:/...` 这种无效地址 → 404 → 浏览器拿到零时长音频，
+ * 把播放控件渲染成**灰色禁用**（"听不了" 的典型症状）。
+ *
+ * 取值优先级（先 Web 路径，再退回绝对路径），并且会拦住明显是本地盘符的
+ * 绝对路径 —— 与其产出一个必然 404 的地址，不如返回 null 让 UI 走降级分支。
+ *
+ * @param artifacts 任务产物对象，形如 `{ output, urls: { output } }`
+ * @param keys 候选键名，默认 `['output']`；翻唱等场景可传多轨键
+ */
+export function pickArtifactUrl(
+  artifacts: Record<string, unknown> | null | undefined,
+  keys: string[] = ['output'],
+): string | null {
+  if (!artifacts) return null;
+  const urls = (artifacts.urls ?? {}) as Record<string, string | undefined>;
+  for (const key of keys) {
+    const web = urls[key];
+    if (web) return resolveAudioUrl(web);
+  }
+  for (const key of keys) {
+    const raw = artifacts[key];
+    if (typeof raw !== 'string' || !raw) continue;
+    // 本地绝对路径不是可用的 Web 地址，宁可返回 null 也不产出 404 地址
+    if (ABSOLUTE_PATH_RE.test(raw)) continue;
+    return resolveAudioUrl(raw);
+  }
+  return null;
+}
+
 // --------------------------------------------------------------------------
 // 请求封装
 // --------------------------------------------------------------------------

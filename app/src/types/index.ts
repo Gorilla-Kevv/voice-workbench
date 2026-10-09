@@ -23,6 +23,9 @@ export * from './netease';
 // IndexTTS 模块（indextts/，第三个 Python 运行时）
 export * from './indextts';
 
+/** 产出记录页（三源合并：服务端任务 / 本地模型 / 云端合成） */
+export * from './outputs';
+
 /** 三种 MiMo 语音模型对应的功能模式 */
 export type TtsMode = 'preset' | 'design' | 'clone';
 

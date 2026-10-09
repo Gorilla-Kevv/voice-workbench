@@ -101,8 +101,25 @@ def locate(explicit: Optional[str] = None, auto_discover: bool = True) -> Option
     )
 
 
-def install(installation: Installation) -> Installation:
-    """把安装目录登记为全局状态，并摆好 sys.path / cwd。幂等。"""
+def install(installation: Installation, chdir: bool = False) -> Installation:
+    """把安装目录登记为全局状态，并摆好 sys.path。
+
+    幂等。
+
+    **`chdir` 默认 False —— 这是 worker 化重构的核心改动之一。**
+
+    原先这里无条件 `os.chdir(home)` 且不恢复，理由是官方代码要求 cwd 必须是
+    整合包根目录（`TTS.py` 用 `now_dir = os.getcwd()` 拼声码器路径；
+    `1-get-text.py` 依赖 cwd 下的 `text/`）。但那是一个**只增不减的进程状态**：
+    主进程一旦被 chdir 过，所有相对路径的解释口径就永久改变了。
+
+    现在官方管线跑在 worker 里（见 `docs/ENGINE-ISOLATION.md`），
+    主进程不需要 cwd —— 所以 `chdir` 变成显式传入的参数，只有 worker 会传 True。
+
+    `sys.path` 注入**必须留在主进程**：UVR5 与 ASR 的脚本通道要能
+    `from tools.uvr5.vr import ...`、`from tools.asr... import ...`，
+    它们是子进程，但 `bootstrap.current()` 拿到的 `Installation` 提供了这些路径。
+    """
     global _bootstrapped
     with _lock:
         _bootstrapped = installation
@@ -115,12 +132,12 @@ def install(installation: Installation) -> Installation:
             if entry in sys.path:
                 sys.path.remove(entry)
             sys.path.insert(0, entry)
-        # 官方 prepare_datasets 脚本会用 `f"{now_dir}/GPT_SoVITS/..."`，
-        # 而 `1-get-text.py` 还依赖 cwd 下的 `text/`，两者只能靠 cwd 同时满足。
-        try:
-            os.chdir(home)
-        except OSError:
-            pass
+        if chdir:
+            # 只有 worker 进程才需要，也只有 worker 进程才承担得起这个副作用
+            try:
+                os.chdir(home)
+            except OSError:
+                pass
     return installation
 
 

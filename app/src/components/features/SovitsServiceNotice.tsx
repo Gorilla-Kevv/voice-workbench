@@ -3,7 +3,7 @@ import { AlertTriangle, Loader2, Power } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
-import { localServiceApi, type LocalServiceState } from '@/lib/localService';
+import { localServiceApi, notifyServiceEnabledChanged, type LocalServiceState } from '@/lib/localService';
 import { cn } from '@/lib/utils';
 
 /**
@@ -95,6 +95,7 @@ export function SovitsServiceNotice({
 
     try {
       await localServiceApi.toggle(true);
+      notifyServiceEnabledChanged();
       setState(await localServiceApi.state());
     } catch {
       // 失败也把状态刷新一次：可能是地址不对 / 整合包缺失，交给页面上的通用报错

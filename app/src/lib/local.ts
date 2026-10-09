@@ -81,6 +81,21 @@ export function fetchJob(jobId: string, baseUrl?: string): Promise<{ ok: boolean
   return localRequest(`/v1/jobs/${jobId}`, { method: 'GET', timeoutMs: 20_000 }, baseUrl);
 }
 
+/**
+ * 拉取历史任务列表。服务端会把任务持久化到磁盘（`trainer/.data/jobs/*.json`），
+ * 所以**服务重启后仍然能取到**——这是「训练结果不再随刷新丢失」的数据来源。
+ */
+export function fetchJobs(
+  options: { kind?: string; limit?: number } = {},
+  baseUrl?: string,
+): Promise<{ ok: boolean; jobs: SovitsJob[]; total: number }> {
+  const params = new URLSearchParams();
+  if (options.kind) params.set('kind', options.kind);
+  if (options.limit) params.set('limit', String(options.limit));
+  const query = params.toString();
+  return localRequest(`/v1/jobs${query ? `?${query}` : ''}`, { method: 'GET', timeoutMs: 20_000 }, baseUrl);
+}
+
 export function cancelJob(jobId: string, baseUrl?: string): Promise<{ ok: boolean; message: string }> {
   return localRequest(
     `/v1/jobs/${jobId}/cancel`,

@@ -117,3 +117,16 @@ export const runtimeServiceApi = {
       timeoutMs: enabled ? 0 : 90_000,
     }),
 };
+
+/**
+ * 通知「本地服务的 enabled 状态变了」 ——
+ * App 根组件里的侧栏探活 effect 订阅这个事件，收到后立即重读 supervisor。
+ * 否则用户点了设置页的开关，要等下一轮 30s/10s 定时器才能看到侧栏翻转，体验不好。
+ *
+ * 三个开关（GPT-SoVITS / 网易 / IndexTTS）共用同一个事件名 —— 探活里都会重读自己的 supervisor。
+ */
+export const SERVICE_ENABLED_CHANGED_EVENT = 'service-enabled-changed';
+
+export function notifyServiceEnabledChanged(): void {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(SERVICE_ENABLED_CHANGED_EVENT));
+}

@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 
 import { config } from '../config/index.js';
 import { logger } from '../lib/logger.js';
+import { findServiceProcesses, killTree as killTreeShared } from '../lib/processOwnership.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 /** server/src/services → 项目根目录（dev 与 dist 两种布局的层级相同） */
@@ -139,6 +140,8 @@ class SovitsSupervisor {
   private reachable = false;
   private starting: Promise<void> | null = null;
   private lastError: string | null = null;
+  /** 主动关闭标记：stop() 强杀自己拉起的进程是预期行为，不能记成「意外退出」 */
+  private stopping = false;
   private lastCheckAt = 0;
   private exitCode: number | null = null;
   private home: string | null = null;
@@ -347,6 +350,11 @@ class SovitsSupervisor {
       this.exitCode = code;
       this.reachable = false;
       this.child = null;
+      if (this.stopping) {
+        // stop()/shutdown() 主动 taskkill：退出码非 0 是强杀的正常表现，不记错误
+        this.stopping = false;
+        return;
+      }
       if (code !== 0 && code !== null) {
         this.lastError = `Python 服务意外退出（退出码 ${code}），最后输出：${
           this.logs.slice(-3).join(' / ') || '(无)'
@@ -422,8 +430,11 @@ class SovitsSupervisor {
    * 与「只关自己拉起的」旧行为不同：现在**网关拥有生命周期**，
    * 用户在设置里关掉 GPT-SoVITS，期望的就是显存立刻还回来 ——
    * 所以先让 Python 侧把常驻引擎卸掉（释放显存），再杀进程。
-   * 外部实例（`npm run dev:sovits` 单独起的）杀不掉，那就只卸引擎，
-   * 并把「谁在管」如实返回给调用方，让界面说清楚。
+   *
+   * **外部实例也要能关掉**：服务的启动方式有三条（网关 spawn / `npm run dev`
+   * 的 concurrently / 用户手动起），后两条让 `this.child === null`，旧的
+   * 「`!child` 就放弃」会让显存一直被占着。所以这里补一路**按端口反查**
+   * —— 只认命令行能确认归属本项目的进程（见 `lib/processOwnership.ts`）。
    */
   async shutdown(): Promise<{ stopped: boolean; releasedVram: boolean; managed: boolean; reachable: boolean }> {
     let releasedVram = false;
@@ -437,14 +448,52 @@ class SovitsSupervisor {
       // 服务不在或不支持：无所谓，下一步直接杀进程
     }
 
+    // ---- 第一路：本进程 spawn 的那个 ----
     const child = this.child;
+    this.stopping = true;
     await this.stop();
-    if (!child) {
-      // 不是我们拉起的：进程杀不掉，但常驻引擎已经卸了（releasedVram 说明做到哪一步）
-      return { stopped: false, releasedVram, managed: false, reachable: await this.probe() };
+
+    // ---- 第二路：端口上还活着的（外部实例 / 孤儿孙进程）----
+    const port = this.probeTargetPort();
+    if (port !== null) {
+      const owners = await findServiceProcesses(port, SOVITS_HINTS, config.sovits.baseUrl);
+      const ours = owners.filter((item) => item.ours);
+      for (const owner of ours) {
+        logger.info('正在关闭 GPT-SoVITS 本地服务（端口反查命中）', {
+          pid: owner.pid,
+          name: owner.name,
+          reason: owner.reason,
+        });
+        killTreeShared(owner.pid);
+      }
+      if (ours.length > 0) {
+        // 给 taskkill 一点时间落地，再复核端口
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const left = await findServiceProcesses(port, SOVITS_HINTS, config.sovits.baseUrl);
+        if (left.some((item) => item.ours)) {
+          this.reachable = await this.probe();
+          logger.warn('GPT-SoVITS 服务仍未完全结束', {
+            port,
+            pids: left.filter((item) => item.ours).map((item) => item.pid),
+          });
+          return { stopped: false, releasedVram, managed: child !== null, reachable: this.reachable };
+        }
+      }
     }
+
+    // 兜底：强杀后恢复错误上报，避免吞掉下一次真实崩溃
+    setTimeout(() => {
+      this.stopping = false;
+    }, 10_000);
+
     this.reachable = false;
     return { stopped: true, releasedVram, managed: true, reachable: false };
+  }
+
+  /** 由 baseUrl 推出端口（拿不到就返回 null） */
+  private probeTargetPort(): number | null {
+    const port = this.targetPort();
+    return Number.isInteger(port) && port > 0 ? port : null;
   }
 
   // ------------------------------------------------------------------
@@ -470,13 +519,14 @@ class SovitsSupervisor {
     return { enabled: false, ...result };
   }
 
-  /** 只关闭由本进程拉起的服务；外部实例不动。 */
+  /** 只关闭由本进程拉起的服务；外部实例由 `shutdown()` 的端口反查那一路处理。 */
   async stop(): Promise<void> {
     const child = this.child;
     this.child = null;
     if (!child || child.pid === undefined) return;
     logger.info('正在关闭 GPT-SoVITS 本地服务', { pid: child.pid });
-    killTree(child.pid);
+    this.stopping = true;
+    killTreeShared(child.pid);
     await new Promise((resolve) => setTimeout(resolve, 300));
   }
 
@@ -510,22 +560,8 @@ class SovitsSupervisor {
   }
 }
 
-/** 结束进程树。Windows 上 `child.kill()` 常常杀不掉 Python 拉起的子进程。 */
-function killTree(pid: number): void {
-  if (process.platform === 'win32') {
-    try {
-      spawn('taskkill', ['/pid', String(pid), '/t', '/f'], { windowsHide: true, stdio: 'ignore' });
-      return;
-    } catch {
-      // 落回默认实现
-    }
-  }
-  try {
-    process.kill(pid, 'SIGTERM');
-  } catch {
-    // 进程可能已经退出
-  }
-}
+/** 识别「这个端口上的进程是不是 GPT-SoVITS 服务」用的标识词 */
+const SOVITS_HINTS = ['sovits', 'gpt-sovits', 'gpt_sovits', 'trainer'];
 
 export const sovitsSupervisor = new SovitsSupervisor();
 export { PROJECT_ROOT, TRAINER_DIR };
