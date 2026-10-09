@@ -645,6 +645,18 @@
     一律落在服务端 `trainer/.data/jobs/*.json`。**不是没记录，只是没有页面去读它。**
     `GET /v1/jobs` 不带 `kind` 就返回全部类型（`limit` 上限 200），产出记录页的数据源一直是现成的。
 
+57. **注册表 id 与引擎 id 是两套，不能直接混用（阶段 33 / P3）**
+    注册表用「按目录派生的稳定 id」，而 RVC 引擎 `find_model()` 认的是**主权重文件名的茎**。
+    实测比对：`/v1/vc/catalog` 的 13 个 id 与注册表主权重茎集合**完全一致（diff=0）**，
+    所以变声页用 `engineKeyOf()` 派生回引擎 key 即可 —— **不要**把注册表 id 直接传给引擎端点。
+    DDSP-SVC 反过来：它的 load 收**绝对路径**，直接用 `files[role=primary].abs`。
+
+58. **换数据源之前先确认「旧位置」已被注册表读到，否则模型会凭空消失（阶段 33 / P3）**
+    DDSP-SVC 的模型一直放在 `trainer/.data/svc/models` 与 `models/checkpoints/ddsp`
+    （引擎侧 `svc/bootstrap.py::model_dirs()`），而注册表只扫 `models/ddsp-svc/` ——
+    直接换源的话 `total` 从 1 变 0。已给该类别补两根兼容根（RVC 在 P0 踩过同一个坑，坑 51）。
+    **下一个要接数据源的类别，先跑一遍 `GET /api/models?category=<key>` 与引擎目录比对数量。**
+
 ## 命令
 
 | 用途 | 命令 |
@@ -740,6 +752,12 @@
   本地服务停着时只丢第一源，另两源照常显示。侧栏「历史记录」→「产出记录」
   （NavKey 仍是 `history`，`guides.ts` 的 FlowGuide 引用它）。
   **遗留**：浏览器人工走查未做（要跑一次变声 / 翻唱 / 训练各验一条）
+- **体验收尾已做到一半（阶段 33 / P3）**：① 类别目录里**不构成模型的散文件**不再被静默丢弃 ——
+  注册表新增 `listStrays()`，`GET /api/models?category=` 带出 `strays`，音色库面板列出路径 +
+  大小 + 按类别规则生成的修复提示（实测 `no-primary` / `not-recognized` 两条分支都对）；
+  ② **变声页 / 翻唱页的模型库**改走 `/api/models`（改名、删除走注册表，卡片补「旧位置 / 疑似重复」徽标）；
+  ③ 顺带给 `ddsp-svc` 补了两个兼容旧根（否则换源会让已有音色消失，新坑 58）。
+  **遗留**：GPT-SoVITS 的「零样本 / 微调权重」两段式选择器（阶段 34），以及换源后的真机加载验证
 
 ### 验收标准
 
@@ -755,7 +773,9 @@
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
 | 高 | **产出记录页的浏览器人工走查（阶段 32 遗留验收）** | 跑一次 RVC 变声 + 一次翻唱 + 一次训练，三条记录都要出现在「产出记录」，且能内联播放、能复制本机路径。数据源已实测可用（`total=45`，音频地址加前缀 200），只差用户在浏览器点一遍 |
-| 中 | **P3 体验收尾（音色模型统一管理）** | 各引擎页接 `/api/models` 新数据源（含 GPT-SoVITS 的「零样本 / 微调模型」两段式选择器）、「未识别文件」提示与缺配套文件引导。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` |
+| 高 | **阶段 34：GPT-SoVITS 两段式选择器 + 合成下拉接注册表** | `SovitsVoicePicker` 加 Tabs「参考音频（零样本）」/「微调权重（`/v1/weights`）」，选中即 `loadWeights`；再把变声 / 翻唱的**合成下拉**也接到 `/api/models`（现在只有模型库接了）。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
+| 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
+| 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
 | 高 | 端到端实测阶段 6 的新 UI | **走查已做完一半**（阶段 23）：训练页 s2→s1 顺序 / 官方 hint / 完成卡 E-S 解释、设置页权重下拉（**实测出下拉显示空白，已修**，见坑 22）均浏览器验过；仍缺 ① 带 `slice` 阶段的任务来验切分结果面板（现有历史任务无一含切分），② 权重「加载所选权重」联动（本机 `GPT/SoVITS_weights_v2ProPlus/` 为空，没有训练产物可选） |
 | 高 | **用实际合成对比网易 vs IndexTTS，决定主力** | **IndexTTS 已接入**（阶段 26），两套都可跑：网易稳态 RTF 2.0~2.5 / 常驻 4.9 GB；IndexTTS 暖态 RTF ≈ 2.2、显存被抢时 5~14 / 常驻实测 ≈ 5.3 GB。主力由**用户听感 + 使用测试**拍板；定完回填 preload 账本门槛与默认项 |
@@ -791,5 +811,6 @@
 > 本次文档更新时间：10.09 08:10 [BY Qoder]（阶段 27补6：用户主诉两个严重 bug —— ①显存预估「自己把自己检测成占用者」的重复扣账；②服务进程关不掉（只杀 child 导致外部实例漏网）。新增 `server/src/lib/processOwnership.ts`，`runtime.ts` / `sovits.ts` 的 `shutdown()` 均补端口反查一路；netease / indextts 的 `/health` 新增 `pid` 自报。新增坑 42–45）
 > 本次文档更新时间：10.09 19:56 [BY Qoder]（阶段 31 / P1：音色模型统一管理「管得住」。新增 `/api/models` 的 import（流式落盘）/ rename（联动配套）/ update（sidecar 元数据）/ migrate（默认 dry-run）；前端加导入、批量重命名（带预览）、编辑弹窗、迁移确认；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`，两个旧根清空，迁移后加载正常。修掉两个真 bug：路径边界检查把「根本身」判成越界、迁移按目录搬会卷走别的模型。新增坑 52–54）
 > 本次文档更新时间：10.09 19:20 [BY Qoder]（阶段 30 / P0：音色模型统一管理「看得见」。新增网关 `modelRegistry.ts` + `/api/models/*`；RVC 改为「规范根 + 两个兼容旧根」的多根递归扫描，可见模型 5 → 18；`weight_root` 改指模型自身目录使**嵌套模型可加载**（改前 10/10 拼不出路径）；音色库页改多 Tab。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md`。新增坑 49–51）
+> 本次文档更新时间：10.10 01:17 [BY CodeBuddy]（阶段 33 / P3：未识别文件不再静默丢弃 —— 注册表新增 `listStrays()` + 面板新区块与修复提示；变声页 / 翻唱页模型库改走 `/api/models`（改名、删除走注册表）；`ddsp-svc` 补两个兼容旧根避免换源后模型消失。新增坑 57/58）
 > 本次文档更新时间：10.09 23:41 [BY CodeBuddy]（阶段 32 / P2：产出记录页取代历史记录，三源合并 —— 服务端任务 + 本地模型 + 云端 IndexedDB；`collectTracks()` 提到 `@/lib/jobArtifacts.ts` 共用；产物 url 统一补网关前缀。新增坑 55/56）
 > 本次文档更新时间：10.09 17:20 [BY Qoder]（阶段 27补7：用户主诉「左侧状态栏显示网易已就绪，但设置页显示未启动」。根因是**两套独立探活各自缓存**：侧栏只探 `/health` 不读 `enabled`，而 `npm run dev` 无条件起 netease、`enabled` 默认 false，导致「进程在跑 + 开关关着」成为开发模式常态。侧栏判定改为以 `enabled` 为唯一事实源；网关状态接口补「读时现探」；开关切换加 `service-enabled-changed` 广播。新增坑 46–48）

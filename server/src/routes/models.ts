@@ -25,6 +25,7 @@ import {
   importModel,
   listCategories,
   listModels,
+  listStrays,
   modelsSummary,
   planMigration,
   renameModel,
@@ -84,7 +85,8 @@ modelsRouter.get('/', (req: Request, res: Response) => {
     const category = typeof req.query.category === 'string' ? req.query.category.trim() : '';
     if (category) {
       const models = listModels(category);
-      res.json({ ok: true, category, models, total: models.length });
+      // `strays` 只在指定类别时算：全量合并时「散文件属于哪个类别」没有意义
+      res.json({ ok: true, category, models, total: models.length, strays: listStrays(category) });
       return;
     }
     const all = listCategories().flatMap((item) => (item.reserved ? [] : listModels(item.key)));

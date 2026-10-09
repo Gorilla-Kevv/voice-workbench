@@ -50,6 +50,22 @@ export interface ModelEntry {
   duplicate_of?: string;
 }
 
+/**
+ * 未识别文件：在类别目录里，但不属于任何模型的散文件。
+ *
+ * 改前这些文件是被**静默丢弃**的 —— 用户拖一个没有配套权重的 `.index` 进去，
+ * 界面上什么都不出现，只会以为「没放进去」。现在列出来并说清缺什么。
+ */
+export interface ModelStrayFile {
+  name: string;
+  rel: string;
+  abs: string;
+  bytes: number;
+  reason: 'no-primary' | 'not-recognized' | 'reserved';
+  /** 服务端按类别规则生成的修复提示（可执行，不是空话） */
+  hint: string;
+}
+
 export interface ModelCategoryView {
   key: ModelCategoryKey;
   label: string;
@@ -121,8 +137,15 @@ export const modelsApi = {
   catalog: (): Promise<{ ok: boolean; root: string; categories: ModelCategoryView[] }> =>
     request('/catalog', { method: 'GET' }),
 
-  /** 单类模型列表（每次都实时扫盘，所以本地拖入文件后重新调用即可看到） */
-  list: (category: ModelCategoryKey): Promise<{ ok: boolean; models: ModelEntry[]; total: number }> =>
+  /**
+   * 单类模型列表（每次都实时扫盘，所以本地拖入文件后重新调用即可看到）。
+   *
+   * 顺带回 `strays`：该类别目录里**不构成模型**的散文件 ——
+   * 界面要列出来并给出「缺什么」的提示（方案 P3 第 17 项）。
+   */
+  list: (
+    category: ModelCategoryKey,
+  ): Promise<{ ok: boolean; models: ModelEntry[]; total: number; strays: ModelStrayFile[] }> =>
     request(`/?category=${encodeURIComponent(category)}`, { method: 'GET' }),
 
   /** 删除一个模型（含全部配套文件） */

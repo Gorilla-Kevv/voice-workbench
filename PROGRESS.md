@@ -3,7 +3,8 @@
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
 ## 进度看板
-- 当前正在开发任务：**阶段 30（P0）+ 31（P1）+ 32（P2）已完成**（音色模型统一管理「看得见 + 管得住 + 产出可查」。网关 `modelRegistry.ts` + `/api/models/*` 全套读写；RVC 多根递归扫描使可见模型 5 → 18；`weight_root` 改指模型自身目录让**嵌套模型可加载**；音色库页改多 Tab 并加导入 / 批量重命名 / 元数据 / 迁移；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`，两个旧根清空；**产出记录页取代历史记录**，三源合并：服务端任务 `GET /v1/jobs` + 本地模型 `/api/models/*` + 云端 IndexedDB）。下一阶段：**P3 体验收尾**（各引擎页接新数据源 + 未识别文件提示），方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md`
+- 当前正在开发任务：**阶段 30（P0）+ 31（P1）+ 32（P2）+ 33（P3·部分）已完成** —— 音色模型统一管理「看得见 + 管得住 + 产出可查 + 体验收尾」：网关 `modelRegistry.ts` + `/api/models/*` 全套读写；RVC 多根递归扫描使可见模型 5 → 18；`weight_root` 改指模型自身目录让**嵌套模型可加载**；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`；**产出记录页取代历史记录**（三源合并：`GET /v1/jobs` + `/api/models/*` + 云端 IndexedDB）；阶段 33 补了**未识别文件提示**（散文件不再被静默丢弃）与**变声 / 翻唱两页模型库接统一数据源**，并给 ddsp-svc 补了两个兼容旧根避免模型消失
+- 下一阶段：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本参考音频 vs 微调权重）+ 合成下拉接注册表，方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
   ① 训练集格式化 ✅（11 阶段流水线：语料导入→UVR5→降噪→切分→ASR 转写→**生成训练清单**→BERT→HuBERT→说话人向量→语义 Token）；
@@ -13,7 +14,7 @@
 - **下一阶段任务（已立项，待排期）：阶段 29 = RVC 训练对齐官方 RVC WebUI**，详见下方「阶段 29（计划）」条目。用户 10.09 明确要求「模型训练要与官方一致，需要修改前端增加入口之类的也必须做」
 - **再下一阶段（已立项，待用户答 4 个拍板问题）：阶段 30 = Irodori-TTS 接入（克隆 + 音色固化训练）**，方案见 `docs/IRODORI-INTEGRATION-PLAN.md`，详见下方「阶段 30（计划）」条目。用户 10.09 裁决「做克隆和训练」
 - 可提前进行的任务：R2T2 离线转写接入（HANDOFF 坑 12）；阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理；主力拍板后回填 preload 账本与门槛值
-- 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）；RVC / DDSP-SVC 的进程隔离（方案 C，目前无必要）；Irodori 的听感验收（样本在 `_bench/out/irodori/`）；**DDSP-SVC 训练入口**（阶段 27补4 只解决了「加载」，「训练」仍缺；上游是两段式契约，需单独立项）；**P2 的浏览器人工走查**（三条真实记录：变声 / 翻唱 / 训练，要能播、能复制本机路径，见阶段 32）
+- 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）；RVC / DDSP-SVC 的进程隔离（方案 C，目前无必要）；Irodori 的听感验收（样本在 `_bench/out/irodori/`）；**DDSP-SVC 训练入口**（阶段 27补4 只解决了「加载」，「训练」仍缺；上游是两段式契约，需单独立项）；**P2 的浏览器人工走查**（三条真实记录：变声 / 翻唱 / 训练，要能播、能复制本机路径，见阶段 32）；**变声 / 翻唱页换源后的真机加载验证**（见阶段 33）；**GPT-SoVITS 两段式选择器 + 合成下拉接注册表**（阶段 34）
 - 已否决的路线：**GPT-SoVITS 整体迁移到 Genie-TTS**（阶段 27 实测+源码核查）；**dots.tts 试点**（用户 10.08 明确"弃用，不考虑了"，看板旧条目已撤）
 
 ## 编号说明（2026-10-06 合规整理时补记）
@@ -2448,3 +2449,60 @@ P0 的导入仍走各引擎页原有的上传入口。
 阶段 33（P3）—— 体验收尾：各引擎页接 `/api/models` 新数据源 + 未识别文件提示 + `HANDOFF.md` / `PROGRESS.md` 收尾。
 
 - 本次文档更新时间：10.09 23:41
+
+## 阶段 33（P3·部分）—— 体验收尾：未识别文件提示 + 变声 / 翻唱两页接统一数据源 [计划时间：10.10 00:15 BY CodeBuddy][完成时间：10.10 01:17 BY CodeBuddy]
+
+- 分支：feature/vc-svc
+- 方案 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 的 16/17/18 三项。
+  本轮做完 **17（未识别文件）** 与 **16 的 RVC / DDSP-SVC 两页模型库**；
+  16 里的「**GPT-SoVITS 两段式选择器**」留到阶段 34（它要动 `/v1/weights` 加载链路，需单独立项）。
+
+### 已完成
+
+| 文件 | 内容 |
+| --- | --- |
+| `server/src/services/modelRegistry.ts` | 新增 `listStrays()` + `ModelStrayFile`：把类别目录里**不构成模型**的散文件列出来（改前被 `scanDir()` 静默丢弃），并按类别规则生成修复提示（`no-primary` / `not-recognized` / `reserved`）；`ddsp-svc` 类别补两个兼容旧根 |
+| `server/src/routes/models.ts` | `GET /api/models?category=` 带出 `strays`（全量合并时不算，散文件归属无意义） |
+| `app/src/lib/models.ts` | `ModelStrayFile` 类型 + `list()` 响应带 strays |
+| `app/src/components/features/ModelCategoryPanel.tsx` | 新增「未识别文件」区块（相对路径 + 大小 + 修复提示 + 可点击复制本机路径）与顶部提示条 |
+| `app/src/pages/VoiceConversionPage.tsx` | 模型库改走 `/api/models?category=rvc`：改名 / 删除改走统一注册表（联动配套 + 二次确认），卡片补「旧位置 / 疑似重复」徽标，底部给未识别文件提示行 |
+| `app/src/pages/SingingConversionPage.tsx` | 音色库改走 `/api/models?category=ddsp-svc`：加载传**主权重绝对路径**、删除走注册表、缺 `config.yaml` 时明确禁用加载并说明缺什么 |
+
+**两处关键发现（都属于「换源会让模型消失 / 加载不到」一类风险）**
+
+1. **两套 id 不能混用**：RVC 引擎认的是**文件茎**，注册表用的是按目录派生的稳定 id。
+   实测比对 —— `/v1/vc/catalog` 的 13 个 id 与注册表主权重茎集合**完全一致（diff=0）**，
+   所以 `engineKeyOf()` 派生即可，加载 / 变声 / 融合 / LoRA 全部保持原行为。
+2. **DDSP-SVC 的模型压根不在 `models/ddsp-svc/`**：引擎侧 `model_dirs()` 用的是
+   `trainer/.data/svc/models` 与 `models/checkpoints/ddsp`。不补兼容旧根就换源，
+   已有音色（`smoke`）会**凭空消失**（RVC 在 P0 踩过同一个坑，坑 51）。
+   已补两根，实测注册表从 `total=0` 变 `total=1`（`smoke`，`model.pt` + `config.yaml` 齐全）。
+
+### 测试结果
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck`（app + server） | 零报错 |
+| `npx eslint`（6 个改动文件） | 零告警 |
+| 未识别文件（造两个假文件实测） | 孤立 `.index` + `readme.txt` → `no-primary`；已有主权重目录下的 `.txt` → `not-recognized`；提示按类别规则生成（**测试文件已清理**） |
+| `/api/models?category=ddsp-svc` | 补兼容根后 0 → 1（`smoke`，`legacy=true`、`incomplete=false`） |
+| vite dev 转译冒烟 | 4 个改动模块均 200 |
+
+### 未完成（阶段 34）
+
+- GPT-SoVITS 的「零样本（参考音频）/ 微调模型（权重）」**两段式选择器**；
+- 各页的**合成选择器**（变声下拉、翻唱向导下拉、音色工坊）仍用引擎目录 —— 本轮只换了「模型库」这一块。
+
+### 风险
+
+- 变声 / 翻唱页的**真实加载链路需用户真机验一遍**：本轮只验证了「id 集合一致 + 数据源可用」，
+  没有真跑 GPU 加载（跑一次要占显存）。
+- `ddsp-svc` 的两个旧根是**只读兼容**，P1 的迁移脚本当时只做了 `rvc`，这一类别尚未收口。
+- 未识别文件**只提示不代劳**（不给删除/移动按钮）—— 避免「帮用户删文件」这种不可逆操作。
+
+### 下一阶段入口
+
+阶段 34 —— GPT-SoVITS 两段式选择器：`SovitsVoicePicker` 加 Tabs「参考音频（零样本）」/「微调权重（`/v1/weights`）」，
+选中即 `loadWeights`；顺带把变声 / 翻唱的**合成下拉**也接到注册表（与模型库共用同一份列表）。
+
+- 本次文档更新时间：10.10 01:17

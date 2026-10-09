@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  Check,
   Copy,
+  FileWarning,
   FolderOpen,
   FolderUp,
   HardDrive,
@@ -39,6 +41,7 @@ import {
   type ModelCategoryKey,
   type ModelCategoryView,
   type ModelEntry,
+  type ModelStrayFile,
   type MigrationPlan,
 } from '@/lib/models';
 import { cn } from '@/lib/utils';
@@ -71,6 +74,8 @@ interface ImportProgress {
 
 export function ModelCategoryPanel({ category, info, onChanged }: ModelCategoryPanelProps) {
   const [models, setModels] = useState<ModelEntry[]>([]);
+  /** 目录里「不构成模型」的散文件 —— 不能静默丢弃，否则用户以为没放进去 */
+  const [strays, setStrays] = useState<ModelStrayFile[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -86,6 +91,18 @@ export function ModelCategoryPanel({ category, info, onChanged }: ModelCategoryP
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
+  /** 刚复制成功的路径（本机路径给用户拿去资源管理器定位用） */
+  const [copied, setCopied] = useState<string | null>(null);
+
+  const copyText = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(text);
+      window.setTimeout(() => setCopied((prev) => (prev === text ? null : prev)), 1500);
+    } catch {
+      toast.error('复制失败', { description: '浏览器拒绝了剪贴板访问，请手动选中路径复制。' });
+    }
+  }, []);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -93,6 +110,7 @@ export function ModelCategoryPanel({ category, info, onChanged }: ModelCategoryP
     try {
       const payload = await modelsApi.list(category);
       setModels(payload.models);
+      setStrays(payload.strays ?? []);
       setSelected((prev) => new Set([...prev].filter((id) => payload.models.some((m) => m.id === id))));
     } catch (err) {
       setError((err as RequestError).fullMessage ?? (err as Error).message);
@@ -421,6 +439,13 @@ export function ModelCategoryPanel({ category, info, onChanged }: ModelCategoryP
             </div>
           ) : null}
 
+          {strays.length > 0 ? (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/5 px-2.5 py-1.5 text-[11px] text-amber-700 dark:text-amber-400">
+              <FileWarning className="mt-0.5 size-3 shrink-0" />
+              <p>目录里还有 {strays.length} 个文件不构成模型（已单列在下方，附修复提示）。</p>
+            </div>
+          ) : null}
+
           {selected.size > 0 ? (
             <div className="flex items-center gap-2 rounded-md bg-muted/60 px-2.5 py-1.5 text-[11px]">
               <span>已选 {selected.size} 个</span>
@@ -456,6 +481,46 @@ export function ModelCategoryPanel({ category, info, onChanged }: ModelCategoryP
               点「导入文件 / 导入文件夹」，或把文件放进{' '}
               <code className="rounded bg-muted px-1">{info?.dir ?? 'models/'}</code> 后点「重新扫描」。
             </p>
+          </CardContent>
+        </Card>
+      ) : null}
+
+      {strays.length > 0 ? (
+        <Card className="border-amber-500/30">
+          <CardHeader className="p-3.5 pb-2">
+            <CardTitle className="flex items-center gap-1.5 text-xs">
+              <FileWarning className="size-3.5" /> 未识别文件（{strays.length}）
+            </CardTitle>
+            <CardDescription className="text-[11px]">
+              这些文件确实在类别目录里，但不构成模型 —— 列出来是为了不让你以为「放进去了却没生效」。
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-1.5 p-3.5 pt-0">
+            {strays.map((stray) => (
+              <div key={stray.abs} className="rounded-md bg-muted/40 px-2 py-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="truncate font-mono text-[11px]">{stray.rel}</span>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">{formatBytes(stray.bytes)}</span>
+                </div>
+                <p className="mt-0.5 text-[11px] text-amber-700 dark:text-amber-400">{stray.hint}</p>
+                <button
+                  type="button"
+                  className="mt-0.5 block w-full truncate text-left font-mono text-[11px] text-muted-foreground transition hover:text-foreground"
+                  title="点击复制完整路径"
+                  onClick={() => void copyText(stray.abs)}
+                >
+                  {copied === stray.abs ? (
+                    <span className="inline-flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+                      <Check className="size-3" /> 已复制
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1">
+                      <Copy className="size-3 shrink-0" /> {stray.abs}
+                    </span>
+                  )}
+                </button>
+              </div>
+            ))}
           </CardContent>
         </Card>
       ) : null}

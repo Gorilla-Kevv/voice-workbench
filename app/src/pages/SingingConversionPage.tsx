@@ -23,6 +23,7 @@ import { notifyVcRunChanged } from '@/hooks/useVcRunHistory';
 import { dropHighlight, applyFilesToInput, useFileDrop } from '@/hooks/useFileDrop';
 import { cn } from '@/lib/utils';
 import { pickArtifactUrl, svcApi, uvrApi } from '@/lib/vc';
+import { formatBytes, modelsApi, type ModelEntry, type ModelStrayFile } from '@/lib/models';
 import type { SovitsJob, SvcCatalog, SvcModel, SvcPipelineStatus } from '@/types';
 
 /** 一次翻唱的产物组合：多轨 + 当时的歌名与音色，够独立回听 */
@@ -57,8 +58,11 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
   const [catalog, setCatalog] = useState<SvcCatalog | null>(null);
   const [pipeline, setPipeline] = useState<(SvcPipelineStatus & { ok: boolean }) | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /** 刷新计数器：音色库的数据源是网关统一注册表，不在 `svcApi.catalog()` 里 */
+  const [tick, setTick] = useState(0);
 
   const refresh = useCallback(() => {
+    setTick((n) => n + 1);
     svcApi
       .catalog()
       .then(setCatalog)
@@ -69,7 +73,8 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
   }, []);
 
   useEffect(() => {
-    void refresh();
+    // 微任务里再发请求：避免在 effect 体内同步 setState 触发级联渲染（与变声页同一修法）
+    void Promise.resolve().then(refresh);
   }, [refresh]);
 
   // 目录拉取失败**不替换整页**（与 RVC 页同一修法，2026-10 反馈）：
@@ -97,7 +102,7 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
         <EngineBadge catalog={catalog} />
       </div>
       {/* 音色库放在向导之前：没有音色就没法翻唱，先让用户把「料」备齐 */}
-      <SvcModelLibrary catalog={catalog} pipeline={pipeline} onChanged={refresh} />
+      <SvcModelLibrary catalog={catalog} pipeline={pipeline} onChanged={refresh} refreshKey={tick} />
       <CoverWizard catalog={catalog} onChanged={refresh} />
       {/* 运行产物面板与变声页共用同一个组件：用户要求「训练**和运行**之后的产物
           都要在网站全部显示，同时给出本地路径」。翻唱一次产 1~3 轨，
@@ -143,23 +148,67 @@ function SvcModelLibrary({
   catalog,
   pipeline,
   onChanged,
+  refreshKey,
 }: {
   catalog: SvcCatalog | null;
   pipeline: (SvcPipelineStatus & { ok: boolean }) | null;
   onChanged: () => void;
+  /** 父级每次刷新 +1 —— 触发统一注册表重新扫盘 */
+  refreshKey: number;
 }) {
   const modelRef = useRef<HTMLInputElement | null>(null);
   const configRef = useRef<HTMLInputElement | null>(null);
   const [pending, setPending] = useState(false);
-  const models = catalog?.models ?? [];
   const loadedPath = pipeline?.loaded ? pipeline.model : null;
 
-  const load = async (model: SvcModel) => {
+  /**
+   * 列表来自网关统一注册表（`/api/models?category=ddsp-svc`）而不是引擎目录接口。
+   *
+   * 阶段 33 顺带给这个类别补了**两个兼容旧根**（引擎一直在用的
+   * `trainer/.data/svc/models` 与 `models/checkpoints/ddsp`）——
+   * 不补的话一换数据源，已有音色就会凭空消失（RVC 在 P0 踩过同一个坑）。
+   */
+  const [entries, setEntries] = useState<ModelEntry[]>([]);
+  const [strays, setStrays] = useState<ModelStrayFile[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+
+  /** 采样率 / 编码器 / F0 只有引擎侧读得出来，按 id 回查补上（不因换源丢信息） */
+  const metaById = useMemo(() => new Map((catalog?.models ?? []).map((item) => [item.id, item])), [catalog]);
+  const metaOf = (entry: ModelEntry): SvcModel | null =>
+    metaById.get(entry.raw_name) ?? metaById.get(entry.name) ?? null;
+
+  useEffect(() => {
+    let cancelled = false;
+    const scan = async () => {
+      try {
+        const payload = await modelsApi.list('ddsp-svc');
+        if (cancelled) return;
+        setEntries(payload.models);
+        setStrays(payload.strays ?? []);
+        setListError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setListError((err as RequestError).fullMessage ?? (err as Error).message);
+      }
+    };
+    void scan();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
+
+  /** 主权重绝对路径 —— 引擎的 load 要的是这个，不是注册表的稳定 id */
+  const primaryPathOf = (entry: ModelEntry): string => entry.files.find((file) => file.role === 'primary')?.abs ?? '';
+
+  const load = async (entry: ModelEntry) => {
+    const path = primaryPathOf(entry);
+    if (!path) {
+      toast.error('加载失败', { description: '这个条目没有主权重文件（.pt）。' });
+      return;
+    }
     try {
-      await svcApi.loadModel(model.path, model.id);
-      toast.success(`已加载 ${model.name}`, {
-        description: `${model.sample_rate ?? '?'}Hz · ${model.encoder ?? '未知编码器'}`,
-      });
+      await svcApi.loadModel(path, entry.raw_name);
+      toast.success(`已加载 ${entry.name}`);
       onChanged();
     } catch (err) {
       toast.error('加载失败', { description: (err as RequestError).fullMessage });
@@ -187,7 +236,7 @@ function SvcModelLibrary({
       }
       toast.success(result.message);
       // 导入即热加载，省掉「导入完还要再点一次加载」的往返
-      await load({ id: name, name, path: result.path, size_mb: 0, has_config: true, available: true });
+      await svcApi.loadModel(result.path, name);
     } catch (err) {
       toast.error('音色导入失败', { description: (err as RequestError).fullMessage });
     } finally {
@@ -199,10 +248,11 @@ function SvcModelLibrary({
     }
   };
 
-  const remove = async (model: SvcModel) => {
+  const remove = async (entry: ModelEntry) => {
+    if (!window.confirm(`删除音色「${entry.name}」？同目录的 config.yaml 会一起删除，且不可恢复。`)) return;
     try {
-      await svcApi.deleteModel(model.id);
-      toast.success(`已删除 ${model.name}`);
+      await modelsApi.remove(entry.id);
+      toast.success(`已删除 ${entry.name}`);
       onChanged();
     } catch (err) {
       toast.error('删除失败', { description: (err as RequestError).fullMessage });
@@ -245,23 +295,36 @@ function SvcModelLibrary({
         </CardDescription>
       </CardHeader>
       <CardContent className={cn('space-y-3 rounded-lg transition', dropHighlight(dragging))} {...rootProps}>
-        {models.length === 0 ? (
+        {listError ? (
+          <p className="text-xs text-destructive">统一模型列表读取失败：{listError}</p>
+        ) : null}
+
+        {entries.length === 0 && !listError ? (
           <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
             还没有音色。把一个 .pt 与它的 config.yaml 一起拖进来，或点下面的「导入 .pt + config.yaml」。
           </p>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
-            {models.map((model) => (
+            {entries.map((entry) => (
               <SvcModelCard
-                key={model.id}
-                model={model}
-                loaded={loadedPath === model.path}
-                onLoad={() => void load(model)}
-                onRemove={() => void remove(model)}
+                key={entry.id}
+                entry={entry}
+                meta={metaOf(entry)}
+                loaded={loadedPath === primaryPathOf(entry)}
+                onLoad={() => void load(entry)}
+                onRemove={() => void remove(entry)}
               />
             ))}
           </div>
         )}
+
+        {strays.length > 0 ? (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+            目录里还有 {strays.length} 个文件不构成模型（如{' '}
+            {strays.slice(0, 2).map((item) => item.name).join('、')}
+            {strays.length > 2 ? ' 等' : ''}）—— 完整清单与修复提示见「音色库管理」页。
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-2 border-t pt-3">
           {/* .yaml 之外也接受 .yml —— DDSP-SVC 上下游两种写法都有 */}
@@ -291,12 +354,15 @@ function SvcModelLibrary({
 }
 
 function SvcModelCard({
-  model,
+  entry,
+  meta,
   loaded,
   onLoad,
   onRemove,
 }: {
-  model: SvcModel;
+  entry: ModelEntry;
+  /** 引擎侧读得出来的补充信息（采样率 / 编码器 / F0） */
+  meta: SvcModel | null;
   loaded: boolean;
   onLoad: () => void;
   onRemove: () => void;
@@ -319,14 +385,19 @@ function SvcModelCard({
       )}
     >
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">
-          {model.name}
-          {loaded ? <span className="ml-1.5 text-[11px] text-rose-500 dark:text-rose-400">· 当前音色</span> : null}
+        <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+          <span className="truncate">{entry.name}</span>
+          {loaded ? <span className="shrink-0 text-[11px] text-rose-500 dark:text-rose-400">· 当前音色</span> : null}
+          {entry.legacy ? (
+            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] text-amber-700 dark:text-amber-400">
+              旧位置
+            </Badge>
+          ) : null}
         </p>
         <p className="truncate text-xs text-muted-foreground">
-          {model.available
-            ? `${model.sample_rate ?? '?'}Hz · ${model.encoder ?? '?'} · F0 ${model.f0_extractor ?? '?'} · ${model.size_mb}MB`
-            : (model.hint ?? '缺少同目录的 config.yaml，无法加载')}
+          {entry.incomplete
+            ? `缺少 ${entry.missing.join('、')}，无法加载 —— 把文件补齐到同一目录后点「重新扫描」`
+            : `${meta ? `${meta.sample_rate ?? '?'}Hz · ${meta.encoder ?? '?'} · F0 ${meta.f0_extractor ?? '?'} · ` : ''}${formatBytes(entry.bytes)}`}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
@@ -334,7 +405,7 @@ function SvcModelCard({
           size="sm"
           variant={loaded ? 'outline' : 'default'}
           className={cn('h-7 text-xs', !loaded && 'bg-rose-600 text-white hover:bg-rose-600/90')}
-          disabled={loading || !model.available || loaded}
+          disabled={loading || entry.incomplete || loaded}
           onClick={() => void runLoad()}
         >
           {loading ? <Loader2 className="size-3 animate-spin" /> : loaded ? '已加载' : '热加载'}

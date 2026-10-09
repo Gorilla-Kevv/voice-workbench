@@ -112,6 +112,16 @@ export const MODEL_CATEGORIES: ModelCategorySpec[] = [
     required: ['config.yaml'],
     companions: [/^config\.ya?ml$/i],
     allowed: ['.pt', '.yaml', '.yml'],
+    /**
+     * 兼容读取的旧位置（阶段 33 / P3 补）：
+     * 引擎侧 `svc/bootstrap.py::model_dirs()` 一直是这两个根，而注册表只扫 `models/ddsp-svc`
+     * —— 不补这两根，翻唱页一换数据源，已有的音色（如 `smoke`）就会**凭空消失**。
+     * （RVC 在 P0 就吃过同一个亏，见坑 51。）
+     */
+    legacy_dirs: [
+      path.join(REPO_ROOT, 'trainer', '.data', 'svc', 'models'),
+      'checkpoints/ddsp',
+    ],
   },
   {
     key: 'gpt-sovits',
@@ -184,6 +194,23 @@ export interface ModelFile {
   bytes: number;
   /** 角色：主权重 / 配套 / 必需 */
   role: 'primary' | 'companion' | 'required';
+}
+
+/**
+ * 未识别文件：在类别目录里，但不属于任何模型。
+ *
+ * 存在的意义是「用户拖了文件进来却看不到」——
+ * 与其静默丢弃，不如列出来并说清缺什么（方案 P3 第 17 项）。
+ */
+export interface ModelStrayFile {
+  name: string;
+  rel: string;
+  abs: string;
+  bytes: number;
+  /** 为什么不算模型 */
+  reason: 'no-primary' | 'not-recognized' | 'reserved';
+  /** 按类别规则生成的、可执行的修复提示 */
+  hint: string;
 }
 
 export interface ModelMeta {
@@ -382,6 +409,14 @@ function walk(dir: string, depth: number, out: string[]): void {
   }
 }
 
+function fileSize(abs: string): number {
+  try {
+    return fs.statSync(abs).size;
+  } catch {
+    return 0;
+  }
+}
+
 function fileEntry(abs: string, role: ModelFile['role']): ModelFile {
   return {
     name: path.basename(abs),
@@ -532,6 +567,81 @@ export function listModels(categoryKey: string): ModelEntry[] {
   }
 
   return models.sort((a, b) => b.updated_at - a.updated_at);
+}
+
+/**
+ * 「未识别文件」：在类别目录里，**不属于任何模型**的散文件。
+ *
+ * 为什么必须有这一路：改前散文件是被**静默丢弃**的 ——
+ * `scanDir()` 看到目录里没有主权重就整个 `return []`，
+ * 用户拖进去一个 `xxx.index`（没有配套的 `.pth`）或一个 `说明.txt`，
+ * 界面上什么都不会出现，用户只会觉得「我明明放进去了」。
+ *
+ * 现在把它们单列出来并**说明缺什么**，而不是假装不存在。
+ */
+export function listStrays(categoryKey: string): ModelStrayFile[] {
+  const spec = findCategory(categoryKey);
+
+  // 已被模型认领的文件（含 sidecar 元数据）不算散文件
+  const models = listModels(categoryKey);
+  const owned = new Set<string>();
+  for (const model of models) {
+    for (const file of model.files) owned.add(file.abs.toLowerCase());
+    owned.add(metaPathFor(model).toLowerCase());
+  }
+
+  // 给用户的「为什么不算模型」说明，按类别的实际规则生成，不写死
+  const recognized = spec.allowed.length > 0 ? spec.allowed.join(' / ') : '（该类别尚未定义可识别类型）';
+  const hintFor = (reason: ModelStrayFile['reason']): string =>
+    reason === 'no-primary'
+      ? `这个目录里没有主权重，所以整目录都没被识别 —— ${spec.label} 靠主权重认模型（可识别类型：${recognized}）`
+      : reason === 'reserved'
+        ? `${spec.label} 的加载代码还没接入，目录里的文件暂时无法使用`
+        : `不属于 ${spec.label} 的文件类型（可识别：${recognized}），或与主权重不同名 —— 改名/补齐后刷新即可`;
+
+  const strays: ModelStrayFile[] = [];
+  const seen = new Set<string>();
+
+  for (const root of resolveRoots(spec)) {
+    if (!isDir(root.dir)) continue;
+    const dirs: string[] = [];
+    walk(root.dir, 0, dirs);
+
+    for (const dir of dirs) {
+      let names: string[];
+      try {
+        names = fs.readdirSync(dir);
+      } catch {
+        continue;
+      }
+      const filesInDir = names.map((name) => path.join(dir, name)).filter((abs) => isFile(abs));
+      // 预留类别（primary 为 null）永远认不出模型；否则看目录里有没有主权重
+      const reason: ModelStrayFile['reason'] = !spec.primary
+        ? 'reserved'
+        : filesInDir.some((abs) => spec.primary!.test(path.basename(abs)))
+          ? 'not-recognized'
+          : 'no-primary';
+
+      for (const abs of filesInDir) {
+        const key = abs.toLowerCase();
+        if (owned.has(key) || seen.has(key)) continue;
+        const base = path.basename(abs);
+        // 隐藏文件与我们自己的 sidecar 不算「用户放错的东西」
+        if (base.startsWith('.') || base.endsWith(META_NAME)) continue;
+        seen.add(key);
+        strays.push({
+          name: base,
+          rel: toRel(MODELS_ROOT, abs),
+          abs,
+          bytes: fileSize(abs),
+          reason,
+          hint: hintFor(reason),
+        });
+      }
+    }
+  }
+
+  return strays.sort((a, b) => a.rel.localeCompare(b.rel));
 }
 
 /** 类别总览：给音色库页的 Tab 与「打开目录」用 */

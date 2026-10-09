@@ -25,6 +25,7 @@ import { useResultStack } from '@/hooks/useResultStack';
 import { useVcTrainHistory } from '@/hooks/useVcTrainHistory';
 import { notifyVcRunChanged } from '@/hooks/useVcRunHistory';
 import { pickArtifactUrl, vcApi } from '@/lib/vc';
+import { formatBytes, modelsApi, type ModelEntry, type ModelStrayFile } from '@/lib/models';
 import type { SovitsJob, VcCatalog, VcModel, VcTrainArtifact } from '@/types';
 
 /** 一条变声结果：输出（服务端地址）+ 当时的源音频快照，够独立回听 A·B 对比 */
@@ -50,9 +51,17 @@ const ACCENT_SOLID = 'bg-indigo-600 text-white hover:bg-indigo-600/90 active:sca
 export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => void } = {}) {
   const [catalog, setCatalog] = useState<VcCatalog | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * 刷新计数器。
+   *
+   * 模型库的数据源换成了网关统一注册表（`/api/models`），它**不在** `vcApi.catalog()` 里，
+   * 所以子组件需要另一个「该重新扫盘了」的信号 —— 用计数器广播比把 refresh 穿三层 props 干净。
+   */
+  const [tick, setTick] = useState(0);
 
   /** 拉取目录（模型库 + 引擎状态）。不在 effect 里同步 setState：先落微任务 */
   const refresh = useCallback(() => {
+    setTick((n) => n + 1);
     return vcApi
       .catalog()
       .then((data) => {
@@ -91,7 +100,7 @@ export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => voi
       ) : null}
       <SovitsServiceNotice onGoSettings={onGoSettings} />
       <EngineBadge catalog={catalog} onRefresh={refresh} accent={ACCENT_TEXT} />
-      <ModelLibrary catalog={catalog} onChanged={refresh} accent={ACCENT_SOLID} />
+      <ModelLibrary catalog={catalog} onChanged={refresh} accent={ACCENT_SOLID} refreshKey={tick} />
       <ConvertCard catalog={catalog} accentText={ACCENT_TEXT} accentSolid={ACCENT_SOLID} onChanged={refresh} />
       <RunResultCard
         kind="vc_infer"
@@ -129,11 +138,66 @@ function EngineBadge({ catalog, onRefresh, accent }: { catalog: VcCatalog | null
   );
 }
 
-function ModelLibrary({ catalog, onChanged, accent }: { catalog: VcCatalog | null; onChanged: () => void; accent: string }) {
+/**
+ * 注册表条目 → 引擎认的 key（主权重文件名的茎）。
+ *
+ * 为什么需要这一步：注册表换成了自己的稳定 id（按目录派生），而 RVC 引擎侧
+ * `find_model()` 认的是文件茎。**两套 id 不能直接混用** —— 实测比对过，
+ * `/v1/vc/catalog` 的 13 个 id 与注册表主权重茎的集合**完全一致**，所以这里派生即可。
+ */
+function engineKeyOf(entry: ModelEntry): string {
+  const primary = entry.files.find((file) => file.role === 'primary');
+  if (!primary) return entry.raw_name;
+  return primary.name.replace(/\.pth$/i, '') || entry.raw_name;
+}
+
+function ModelLibrary({
+  catalog,
+  onChanged,
+  accent,
+  refreshKey,
+}: {
+  catalog: VcCatalog | null;
+  onChanged: () => void;
+  accent: string;
+  /** 父级每次刷新都会 +1，用来触发这里的重新扫盘 */
+  refreshKey: number;
+}) {
   const weightRef = useRef<HTMLInputElement | null>(null);
   const indexRef = useRef<HTMLInputElement | null>(null);
   const [pending, setPending] = useState(false);
-  const models = catalog?.models ?? [];
+
+  /**
+   * 列表来自**网关统一注册表**（`/api/models?category=rvc`）而不是引擎自己的目录接口：
+   * 它一次扫全所有搜索根（规范位置 + 兼容旧位置），并带「旧位置 / 疑似重复 / 缺配套 /
+   * 未识别文件」四种提示 —— 这些引擎接口一个都不给。
+   */
+  const [entries, setEntries] = useState<ModelEntry[]>([]);
+  const [strays, setStrays] = useState<ModelStrayFile[]>([]);
+  const [listError, setListError] = useState<string | null>(null);
+
+  /** 采样率 / 版本 / F0 这些只有引擎侧读得出来，按 id 回查补上（不因为换源就丢信息） */
+  const metaById = useMemo(() => new Map((catalog?.models ?? []).map((item) => [item.id, item])), [catalog]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const payload = await modelsApi.list('rvc');
+        if (cancelled) return;
+        setEntries(payload.models);
+        setStrays(payload.strays ?? []);
+        setListError(null);
+      } catch (err) {
+        if (cancelled) return;
+        setListError((err as RequestError).fullMessage ?? (err as Error).message);
+      }
+    };
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshKey]);
 
   const upload = async () => {
     const weight = weightRef.current?.files?.[0];
@@ -186,17 +250,37 @@ function ModelLibrary({ catalog, onChanged, accent }: { catalog: VcCatalog | nul
         className={cn('space-y-3 rounded-lg transition', dropHighlight(libraryDragging))}
         {...libraryDropProps}
       >
-        {models.length === 0 ? (
+        {listError ? (
+          <p className="text-xs text-destructive">
+            统一模型列表读取失败：{listError}（引擎目录仍在用，下面的导入不受影响）
+          </p>
+        ) : null}
+
+        {entries.length === 0 && !listError ? (
           <p className="rounded-lg border border-dashed p-4 text-center text-sm text-muted-foreground">
             还没有音色。导入一个 .pth，或先用「音色工坊」训练一个。
           </p>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
-            {models.map((model) => (
-              <ModelCard key={model.id} model={model} accent={accent} onChanged={onChanged} />
+            {entries.map((entry) => (
+              <ModelCard
+                key={entry.id}
+                entry={entry}
+                meta={metaById.get(engineKeyOf(entry)) ?? null}
+                accent={accent}
+                onChanged={onChanged}
+              />
             ))}
           </div>
         )}
+
+        {strays.length > 0 ? (
+          <p className="text-[11px] text-amber-700 dark:text-amber-400">
+            目录里还有 {strays.length} 个文件不构成模型（如{' '}
+            {strays.slice(0, 2).map((item) => item.name).join('、')}
+            {strays.length > 2 ? ' 等' : ''}）—— 完整清单与修复提示见「音色库管理」页。
+          </p>
+        ) : null}
 
         <div className="flex flex-wrap items-center gap-2 border-t pt-3">
           <input ref={weightRef} type="file" accept=".pth" className="hidden" onChange={() => void upload()} />
@@ -213,12 +297,26 @@ function ModelLibrary({ catalog, onChanged, accent }: { catalog: VcCatalog | nul
   );
 }
 
-function ModelCard({ model, accent, onChanged }: { model: VcModel; accent: string; onChanged: () => void }) {
+function ModelCard({
+  entry,
+  meta,
+  accent,
+  onChanged,
+}: {
+  entry: ModelEntry;
+  /** 引擎侧读得出来的补充信息（采样率 / 版本 / F0），拿不到就只显示文件信息 */
+  meta: VcModel | null;
+  accent: string;
+  onChanged: () => void;
+}) {
   const [loading, setLoading] = useState(false);
+  const hasIndex = entry.files.some((file) => /\.index$/i.test(file.name));
+
   const load = async () => {
     setLoading(true);
     try {
-      await vcApi.loadModel(model.id);
+      // 引擎认的是文件茎，不是注册表的稳定 id —— 见 `engineKeyOf()`
+      await vcApi.loadModel(engineKeyOf(entry));
       onChanged();
     } finally {
       setLoading(false);
@@ -228,10 +326,23 @@ function ModelCard({ model, accent, onChanged }: { model: VcModel; accent: strin
   return (
     <div className="group flex items-center justify-between gap-2 rounded-lg border p-3 transition hover:-translate-y-0.5 hover:shadow-md">
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{model.name}</p>
+        <p className="flex items-center gap-1.5 truncate text-sm font-medium">
+          <span className="truncate">{entry.name}</span>
+          {entry.legacy ? (
+            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] text-amber-700 dark:text-amber-400">
+              旧位置
+            </Badge>
+          ) : null}
+          {entry.duplicate_of ? (
+            <Badge variant="outline" className="h-4 shrink-0 px-1 text-[10px] text-destructive">
+              疑似重复
+            </Badge>
+          ) : null}
+        </p>
         <p className="truncate text-xs text-muted-foreground">
-          {model.sample_rate ?? '?'}Hz · {model.version ?? 'v?'} {model.f0 ? '· 带F0' : ''} · {model.size_mb}MB
-          {model.has_index ? ' · 含索引' : ''}
+          {meta ? `${meta.sample_rate ?? '?'}Hz · ${meta.version ?? 'v?'}${meta.f0 ? ' · 带F0' : ''} · ` : ''}
+          {formatBytes(entry.bytes)}
+          {hasIndex ? ' · 含索引' : ''}
         </p>
       </div>
       <div className="flex shrink-0 items-center gap-1">
@@ -243,11 +354,14 @@ function ModelCard({ model, accent, onChanged }: { model: VcModel; accent: strin
           variant="ghost"
           className="h-7 px-2 text-xs text-muted-foreground"
           onClick={() => {
-            const next = window.prompt('新的音色名称（会同时重命名配套索引）', model.name);
-            if (next === null || !next.trim() || next.trim() === model.name) return;
-            void vcApi
-              .renameModel(model.id, next.trim())
-              .then(() => onChanged())
+            const next = window.prompt('新的音色名称（会同时重命名配套索引）', entry.raw_name);
+            if (next === null || !next.trim() || next.trim() === entry.raw_name) return;
+            void modelsApi
+              .rename(entry.id, next.trim())
+              .then(() => {
+                toast.success('已重命名', { description: '配套文件已一起改名' });
+                onChanged();
+              })
               .catch((cause: RequestError) => toast.error('重命名失败', { description: cause.fullMessage }));
           }}
         >
@@ -258,7 +372,14 @@ function ModelCard({ model, accent, onChanged }: { model: VcModel; accent: strin
           variant="ghost"
           className="h-7 px-2 text-xs text-muted-foreground"
           onClick={() => {
-            void vcApi.deleteModel(model.id).then(onChanged);
+            if (!window.confirm(`删除音色「${entry.name}」？它的配套文件会一起删除，且不可恢复。`)) return;
+            void modelsApi
+              .remove(entry.id)
+              .then(() => {
+                toast.success(`已删除 ${entry.name}`);
+                onChanged();
+              })
+              .catch((cause: RequestError) => toast.error('删除失败', { description: cause.fullMessage }));
           }}
         >
           删除
