@@ -651,7 +651,20 @@
     所以变声页用 `engineKeyOf()` 派生回引擎 key 即可 —— **不要**把注册表 id 直接传给引擎端点。
     DDSP-SVC 反过来：它的 load 收**绝对路径**，直接用 `files[role=primary].abs`。
 
-58. **换数据源之前先确认「旧位置」已被注册表读到，否则模型会凭空消失（阶段 33 / P3）**
+58. **RVC 全量训练（`mode=full`）改前是「必挂」的，三个独立失败点（阶段 29）**
+    ① `train.py::get_hparams()` 无条件读 `logs/<exp>/config.json`，而我们**从不生成**；
+    ② 底模写死 `assets/pretrained_v2/f0G32k.pth`，本机**只有 40k**（`f0G40k` 69.7MB / `f0D40k` 136.3MB）；
+    ③ 官方命令里的 `-sw` 我们没传，`-l` / `-c` 被写死。
+    现在：`write_train_config()` 按官方规则（`v1` 或 `40k` → `configs/v1/<sr>.json`）生成配置；
+    `resolve_pretrained()` 找不到底模就**不带 `-pg/-pd`**（官方做法，等于从零训）而不是拼不存在的路径。
+
+59. **采样率 × 版本不是任意组合：40k 必须配 v1（阶段 29）**
+    官方 `infer-web.py:555` 的硬性规则：`version=="v1" or sr=="40k"` → `configs/v1/<sr>.json`。
+    本机 `configs/` 实际只有 **v1: 32k/40k/48k、v2: 32k/48k** —— 所以 `v2 + 40k` 是非法组合。
+    预检 `training.preflight()` 会在**入队前**拦掉（`/v1/vc/train` 直接 400），plan 接口返回同样的结论。
+    另外：**本机现成可跑的只有 40k + v1**（32k / 48k 没底模，会从零训练）。
+
+60. **换数据源之前先确认「旧位置」已被注册表读到，否则模型会凭空消失（阶段 33 / P3）**
     DDSP-SVC 的模型一直放在 `trainer/.data/svc/models` 与 `models/checkpoints/ddsp`
     （引擎侧 `svc/bootstrap.py::model_dirs()`），而注册表只扫 `models/ddsp-svc/` ——
     直接换源的话 `total` 从 1 变 0。已给该类别补两根兼容根（RVC 在 P0 踩过同一个坑，坑 51）。
@@ -758,6 +771,14 @@
   ② **变声页 / 翻唱页的模型库**改走 `/api/models`（改名、删除走注册表，卡片补「旧位置 / 疑似重复」徽标）；
   ③ 顺带给 `ddsp-svc` 补了两个兼容旧根（否则换源会让已有音色消失，新坑 58）。
   **遗留**：GPT-SoVITS 的「零样本 / 微调权重」两段式选择器（阶段 34），以及换源后的真机加载验证
+- **RVC 训练已与官方 WebUI 对齐（后端部分，阶段 29）**：`full`（全量微调）改前是必挂的 ——
+  从不生成 `logs/<exp>/config.json`（`train.py` 无条件读）、底模写死本机没有的 32k、
+  官方的 `-sw` 没传且 `-l`/`-c` 被写死。现在：config.json 按官方规则生成（40k 强制 v1）、
+  底模按官方口径解析（**本机只有 40k**，32k/48k 按官方做法不带 `-pg/-pd` 并给警告）、
+  命令与 `infer-web.py:571` 同构；新增 `preflight()` 预检（`/v1/vc/train` 入队前拦截非法组合）；
+  filelist 补齐官方的两行静音样本（`logs/mute/` 本来就齐备）；训练过程逐 epoch + loss 上报。
+  验证脚本 `.tmp/verify_vc_train_official.py` **35/35 全绿**。
+  **遗留**：前端「RVC 训练」入口（T3）、MHA 排雷（T6）、真机冒烟
 
 ### 验收标准
 
@@ -773,7 +794,8 @@
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
 | 高 | **产出记录页的浏览器人工走查（阶段 32 遗留验收）** | 跑一次 RVC 变声 + 一次翻唱 + 一次训练，三条记录都要出现在「产出记录」，且能内联播放、能复制本机路径。数据源已实测可用（`total=45`，音频地址加前缀 200），只差用户在浏览器点一遍 |
-| 高 | **阶段 34：GPT-SoVITS 两段式选择器 + 合成下拉接注册表** | `SovitsVoicePicker` 加 Tabs「参考音频（零样本）」/「微调权重（`/v1/weights`）」，选中即 `loadWeights`；再把变声 / 翻唱的**合成下拉**也接到 `/api/models`（现在只有模型库接了）。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
+| 高 | **阶段 29补1：RVC 训练的前端入口（T3）+ 真机冒烟** | 现在 RVC 训练藏在变声页底部「音色工坊」折叠卡里，且 `mode: 'full'` 前端不可达。要给它独立区块/导航条目，表单补齐（训练模式 / 采样率 / 版本 / batch size / save_every / save_every_weights / if_latest / if_cache_gpu / 底模），并把 `/v1/vc/train/plan` 的 `preflight` 显示成就地提示。**后端已就绪，只差前端 + 一次小 epochs 真机冒烟** |
+| 中 | **阶段 34：GPT-SoVITS 两段式选择器 + 合成下拉接注册表** | `SovitsVoicePicker` 加 Tabs「参考音频（零样本）」/「微调权重（`/v1/weights`）」，选中即 `loadWeights`；再把变声 / 翻唱的**合成下拉**也接到 `/api/models`（现在只有模型库接了）。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
 | 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
 | 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
@@ -811,6 +833,7 @@
 > 本次文档更新时间：10.09 08:10 [BY Qoder]（阶段 27补6：用户主诉两个严重 bug —— ①显存预估「自己把自己检测成占用者」的重复扣账；②服务进程关不掉（只杀 child 导致外部实例漏网）。新增 `server/src/lib/processOwnership.ts`，`runtime.ts` / `sovits.ts` 的 `shutdown()` 均补端口反查一路；netease / indextts 的 `/health` 新增 `pid` 自报。新增坑 42–45）
 > 本次文档更新时间：10.09 19:56 [BY Qoder]（阶段 31 / P1：音色模型统一管理「管得住」。新增 `/api/models` 的 import（流式落盘）/ rename（联动配套）/ update（sidecar 元数据）/ migrate（默认 dry-run）；前端加导入、批量重命名（带预览）、编辑弹窗、迁移确认；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`，两个旧根清空，迁移后加载正常。修掉两个真 bug：路径边界检查把「根本身」判成越界、迁移按目录搬会卷走别的模型。新增坑 52–54）
 > 本次文档更新时间：10.09 19:20 [BY Qoder]（阶段 30 / P0：音色模型统一管理「看得见」。新增网关 `modelRegistry.ts` + `/api/models/*`；RVC 改为「规范根 + 两个兼容旧根」的多根递归扫描，可见模型 5 → 18；`weight_root` 改指模型自身目录使**嵌套模型可加载**（改前 10/10 拼不出路径）；音色库页改多 Tab。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md`。新增坑 49–51）
+> 本次文档更新时间：10.10 01:52 [BY CodeBuddy]（阶段 29：RVC 训练对齐官方 WebUI 的**后端部分** —— 生成 config.json（40k 强制 v1）、底模按官方口径解析（本机只有 40k，缺失则不带 -pg/-pd）、命令补 -sw 且 -l/-c 改为请求字段、preflight 预检在入队前拦截非法组合、filelist 补官方静音样本、训练逐 epoch + loss 上报。验证脚本 35/35 全绿。新增坑 58/59）
 > 本次文档更新时间：10.10 01:17 [BY CodeBuddy]（阶段 33 / P3：未识别文件不再静默丢弃 —— 注册表新增 `listStrays()` + 面板新区块与修复提示；变声页 / 翻唱页模型库改走 `/api/models`（改名、删除走注册表）；`ddsp-svc` 补两个兼容旧根避免换源后模型消失。新增坑 57/58）
 > 本次文档更新时间：10.09 23:41 [BY CodeBuddy]（阶段 32 / P2：产出记录页取代历史记录，三源合并 —— 服务端任务 + 本地模型 + 云端 IndexedDB；`collectTracks()` 提到 `@/lib/jobArtifacts.ts` 共用；产物 url 统一补网关前缀。新增坑 55/56）
 > 本次文档更新时间：10.09 17:20 [BY Qoder]（阶段 27补7：用户主诉「左侧状态栏显示网易已就绪，但设置页显示未启动」。根因是**两套独立探活各自缓存**：侧栏只探 `/health` 不读 `enabled`，而 `npm run dev` 无条件起 netease、`enabled` 默认 false，导致「进程在跑 + 开关关着」成为开发模式常态。侧栏判定改为以 `enabled` 为唯一事实源；网关状态接口补「读时现探」；开关切换加 `service-enabled-changed` 广播。新增坑 46–48）

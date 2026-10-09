@@ -302,7 +302,14 @@ def register(app: FastAPI, ctx) -> None:
         """
         data = payload if isinstance(payload, dict) else {}
         request = TrainRequest(**data)
-        return {"ok": True, "stages": training.plan(ctx.settings, request), "request": request.to_dict()}
+        # 预检（阶段 29 / T1+T2）：把「采样率 × 版本不合法」「缺官方配置模板」「缺底模」
+        # 这类**跑起来才会炸**的问题摆在提交之前 —— 前端拿它做就地提示。
+        return {
+            "ok": True,
+            "stages": training.plan(ctx.settings, request),
+            "request": request.to_dict(),
+            "preflight": training.preflight(ctx.settings, request),
+        }
 
     @app.post("/v1/vc/train", tags=["vc"])
     async def vc_train(payload: Any = Body(default=None)) -> Any:
@@ -315,6 +322,15 @@ def register(app: FastAPI, ctx) -> None:
         request = TrainRequest(**data)
         if not request.corpus_dir:
             raise VcError("请先提供语料目录", hint="录音或收集 10~30 分钟干净干声后放到一个目录里。", code="MISSING_INPUT")
+        # 阻塞项在入队前就拦掉：跑 20 分钟才报「配置模板不存在」太浪费用户时间（阶段 29）
+        check = training.preflight(ctx.settings, request)
+        if not check["ok"]:
+            raise VcError(
+                "训练参数不可用：%s" % "；".join(check["issues"]),
+                hint="回到训练面板按提示改采样率 / 版本即可（预检接口 /v1/vc/train/plan 会给出同样的结论）。",
+                code="BAD_PARAM",
+                status=400,
+            )
         job = ctx.store.create(
             JobKind.VC_TRAIN,
             # 用 clean_name 而不是原始 name：这个字段会显示在「训练结果」列表里，

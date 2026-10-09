@@ -89,9 +89,15 @@ class TrainRequest:
     epochs: int = 30
     save_every: int = 10
     batch_size: int = 4
-    #: 全量模式下的预训练底模（留空则用官方 assets/pretrained_v2）
+    #: 全量模式下的预训练底模（留空则按官方口径在 assets/ 下自动挑）
     pretrain_g: str = ""
     pretrain_d: str = ""
+    #: 官方 train.py 的 `-sw`：每个存档点都单独存一份权重（官方 WebUI 的可选项，默认开）
+    save_every_weights: bool = True
+    #: 官方 train.py 的 `-l`：只保留「最新」一份权重（官方 WebUI 的可选项，默认开）
+    if_latest: bool = True
+    #: 官方 train.py 的 `-c`：把数据集缓存进显存（快但吃显存，8GB 卡上默认关）
+    if_cache_gpu: bool = False
     #: 是否建检索索引
     build_index: bool = True
     rank: int = 8
@@ -122,6 +128,17 @@ class TrainRequest:
         """按采样率推出 RVC 的特征目录前缀（v1 是 256 维，v2 是 768 维）。"""
         return "v1" if str(self.version).strip().lower() == "v1" else "v2"
 
+    @property
+    def sample_rate_tag(self) -> str:
+        """采样率的 `32k` 写法。
+
+        官方脚本（`train.py` 的 `-sr`、底模文件名、config 文件名）一律认这种写法，
+        而调用方可能传 `40000` / `"40000"` / `"40k"` —— 直接把原值拼进命令会
+        找不到 `f0G40000.pth` 这种不存在的文件。统一从这里取。
+        """
+        hz = self.sample_rate_hz
+        return "%dk" % (hz // 1000) if hz % 1000 == 0 else str(hz)
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             # 回显 clean_name 而不是原始 name：前端拿这个字典直接展示「本次训练会落盘成什么」，
@@ -144,6 +161,9 @@ class TrainRequest:
             "rank": self.rank,
             "alpha": self.alpha,
             "learning_rate": self.learning_rate,
+            "save_every_weights": self.save_every_weights,
+            "if_latest": self.if_latest,
+            "if_cache_gpu": self.if_cache_gpu,
         }
 
 
@@ -180,10 +200,13 @@ def plan(settings: Settings, request: TrainRequest) -> List[Dict[str, Any]]:
     commands: List[Dict[str, Any]] = [
         {
             "key": "preprocess",
+
             "label": "预处理：切分与重采样",
             "command": " ".join(
                 [
                     str(script), "infer/modules/train/preprocess.py",
+                    # 这里必须是**赫兹整数**：官方 preprocess.py 直接 `int(sys.argv[2])`，
+                    # 传 `32k` 会 ValueError（plan 里此前就传的是原始字符串）。
                     '"%s"' % request.corpus_dir, str(sr), "8",
                     '"%s"' % exp_dir, "False", "3.7",
                 ]
@@ -214,24 +237,19 @@ def plan(settings: Settings, request: TrainRequest) -> List[Dict[str, Any]]:
         }
     )
     commands.append({"key": "filelist", "label": "生成训练清单", "command": "(内部实现，无子进程)"})
+    # 官方在训练前会写 `logs/<exp>/config.json`；`train.py::get_hparams()` 无条件读它，
+    # 缺了就是 FileNotFoundError。这一步改前完全没有 —— `full` 模式必挂（G3）。
+    commands.append(
+        {
+            "key": "config",
+            "label": "生成训练配置 config.json（configs/%s）"
+            % official_config_rel(request.version_tag, request.sample_rate_tag),
+            "command": "(内部实现，无子进程)",
+        }
+    )
     if request.mode == "full":
-        commands.append(
-            {
-                "key": "train",
-                "label": "全量微调（官方 train.py）",
-                "command": " ".join(
-                    [
-                        str(script), "infer/modules/train/train.py",
-                        "-e", request.clean_name, "-sr", request.sample_rate,
-                        "-f0", "1" if request.f0 else "0", "-bs", str(request.batch_size),
-                        "-g", "0", "-te", str(request.epochs), "-se", str(request.save_every),
-                        "-pg", request.pretrain_g or "assets/pretrained_v2/f0%s%s.pth" % ("G", request.sample_rate),
-                        "-pd", request.pretrain_d or "assets/pretrained_v2/f0%s%s.pth" % ("D", request.sample_rate),
-                        "-l", "1", "-c", "0", "-v", request.version,
-                    ]
-                ),
-            }
-        )
+        command, _pre = build_train_command(settings, request)
+        commands.append({"key": "train", "label": "全量微调（官方 train.py）", "command": " ".join(command)})
     else:
         commands.append(
             {
@@ -252,6 +270,253 @@ def _cuda_available() -> bool:
         return torch.cuda.is_available()
     except Exception:  # noqa: BLE001
         return False
+
+
+# --------------------------------------------------------------------------
+# 与官方 RVC WebUI 对齐的三件事：config.json、底模、参数（阶段 29 / T1 + T2）
+#
+# 改前 `full`（全量微调）这条路径**根本跑不通**，三个独立的失败点：
+#   G2 底模 `assets/pretrained_v2/f0G32k.pth` 本机没有（只有 40k）；
+#   G3 `train.py::get_hparams()` 无条件读 `logs/<exp>/config.json`，而我们从不生成；
+#   G4 官方命令里的 `-sw`（每存档点存权重）我们没传，`-l` / `-c` 被写死。
+# 下面这三组函数把「官方怎么挑」原样落地，plan 与 run 共用，避免两处漂移。
+# --------------------------------------------------------------------------
+
+#: 官方 `infer-web.py:555` 的规则：v1 或 40k → v1 配置，其余 → v2 配置
+def official_config_rel(version_tag: str, sr_tag: str) -> str:
+    return "v1/%s.json" % sr_tag if (version_tag == "v1" or sr_tag == "40k") else "v2/%s.json" % sr_tag
+
+
+#: 各版本实际支持的采样率（照 `vendor/rvc/configs/` 下真实存在的文件）
+ALLOWED_COMBOS: Dict[str, set] = {"v1": {"32k", "40k", "48k"}, "v2": {"32k", "48k"}}
+
+
+def available_pretrained(root: Path) -> List[str]:
+    """磁盘上真实存在的底模（相对 vendor 根的路径，可直接喂给 `-pg` / `-pd`）。
+
+    官方 WebUI 就是这么干的：下拉框里列的是 `assets/pretrained*` 下**真实存在**的文件，
+    一份都没有时就不带 `-pg` / `-pd`（等于从零训）。
+    """
+    found: List[str] = []
+    for sub in ("pretrained_v2", "pretrained"):
+        base = root / "assets" / sub
+        if not base.is_dir():
+            continue
+        for path in sorted(base.glob("f0*.pth")):
+            found.append("%s/%s" % (sub, path.name))
+    return found
+
+
+def resolve_pretrained(root: Path, request: "TrainRequest") -> Dict[str, Any]:
+    """按官方口径挑底模。返回 `{g, d, available, note}`；找不到就是空串（官方允许）。"""
+    sr_tag = request.sample_rate_tag
+    # 顺序照官方：v1 / 40k 先看 `assets/pretrained`（v1 底模），其余先看 `pretrained_v2`
+    subs = ("pretrained", "pretrained_v2") if (request.version_tag == "v1" or sr_tag == "40k") else (
+        "pretrained_v2",
+        "pretrained",
+    )
+    picked: Dict[str, str] = {"g": "", "d": ""}
+    if request.pretrain_g:
+        picked["g"] = request.pretrain_g
+    if request.pretrain_d:
+        picked["d"] = request.pretrain_d
+    for kind in ("g", "d"):
+        if picked[kind]:
+            continue
+        letter = "G" if kind == "g" else "D"
+        for sub in subs:
+            rel = "%s/f0%s%s.pth" % (sub, letter, sr_tag)
+            if (root / "assets" / sub / ("f0%s%s.pth" % (letter, sr_tag))).is_file():
+                picked[kind] = rel
+                break
+    available = available_pretrained(root)
+    note = ""
+    if not picked["g"] or not picked["d"]:
+        miss = [k for k in ("g", "d") if not picked[k]]
+        note = (
+            "找不到 %s 的%s底模（`assets/pretrained*` 下没有 f0%s%s.pth），"
+            "将按官方做法**不带 -pg/-pd** 从零训练（收敛慢、质量差）。"
+            "本机现成的底模：%s。"
+            % (
+                sr_tag,
+                "生成器 / 判别器" if len(miss) == 2 else ("生成器" if "g" in miss else "判别器"),
+                "G/D" if len(miss) == 2 else ("G" if "g" in miss else "D"),
+                sr_tag,
+                "、".join(available) or "（一个都没有）",
+            )
+        )
+    return {"g": picked["g"], "d": picked["d"], "available": available, "note": note}
+
+
+# --------------------------------------------------------------------------
+# 训练过程的 epoch 级进度（阶段 29 / T4）
+#
+# 改前 `full` 模式只有「阶段级」的 5 次 emit：训练这一步一占就是十几分钟到几小时，
+# 界面长时间停在「训练」两个字上，用户无法判断是卡死还是在跑。
+# 官方 train.py 其实每 `log_interval` 个 batch 就打一行
+# `Train Epoch: 3 [45%]` + 一行 `loss_gen=...`，这里把它解析出来逐条上报。
+# --------------------------------------------------------------------------
+
+_TRAIN_EPOCH_RE = re.compile(r"Train Epoch:\s*(\d+)\s*\[\s*(\d+)\s*%\]")
+_TRAIN_EPOCH_DONE_RE = re.compile(r"====>\s*Epoch:\s*(\d+)")
+_TRAIN_LOSS_RE = re.compile(r"loss_gen=([\d.]+).*?loss_fm=([\d.]+)")
+
+
+@dataclass
+class TrainProgress:
+    """从 stdout 里逐步攒出来的训练进度。"""
+
+    epoch: int = 0
+    total_epochs: int = 0
+    batch_percent: int = 0
+    loss_gen: Optional[float] = None
+    loss_fm: Optional[float] = None
+
+    @property
+    def fraction(self) -> float:
+        if self.total_epochs <= 0:
+            return 0.0
+        done = max(self.epoch - 1, 0) + (self.batch_percent / 100.0)
+        return min(max(done / self.total_epochs, 0.0), 1.0)
+
+    def message(self) -> str:
+        loss = "" if self.loss_gen is None else " · loss_gen %.3f" % self.loss_gen
+        return "训练 第 %d/%d 轮（%d%%）%s" % (
+            max(self.epoch, 1),
+            self.total_epochs or max(self.epoch, 1),
+            self.batch_percent,
+            loss,
+        )
+
+
+def parse_train_line(line: str, state: TrainProgress) -> bool:
+    """解析官方 train.py 的一行输出；命中并更新 state 返回 True。"""
+    hit = _TRAIN_EPOCH_RE.search(line)
+    if hit:
+        state.epoch = int(hit.group(1))
+        state.batch_percent = int(hit.group(2))
+        return True
+    hit = _TRAIN_LOSS_RE.search(line)
+    if hit:
+        try:
+            state.loss_gen = float(hit.group(1))
+            state.loss_fm = float(hit.group(2))
+        except ValueError:
+            return False
+        return True
+    hit = _TRAIN_EPOCH_DONE_RE.search(line)
+    if hit:
+        state.epoch = int(hit.group(1))
+        state.batch_percent = 100
+        return True
+    return False
+
+
+def write_train_config(settings: Settings, request: TrainRequest) -> Path:
+    """生成 `logs/<exp>/config.json`（官方 `infer-web.py:556-569` 的同名动作）。
+
+    `train.py::get_hparams()` 会无条件读它 —— 没有就直接 FileNotFoundError。
+    官方只在文件不存在时写（避免覆盖用户手改过的配置），这里照做。
+    """
+    root = bootstrap.vendor_root(settings)
+    exp_dir = root / "logs" / request.clean_name
+    rel = official_config_rel(request.version_tag, request.sample_rate_tag)
+    src = root / "configs" / rel
+    if not src.is_file():
+        raise ValueError(
+            "官方配置模板不存在：configs/%s（版本 %s + 采样率 %s 的组合官方不支持）"
+            % (rel, request.version_tag, request.sample_rate_tag)
+        )
+    exp_dir.mkdir(parents=True, exist_ok=True)
+    target = exp_dir / "config.json"
+    if not target.exists():
+        data = json.loads(src.read_text(encoding="utf-8"))
+        target.write_text(
+            json.dumps(data, ensure_ascii=False, indent=4, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    return target
+
+
+def preflight(settings: Settings, request: TrainRequest) -> Dict[str, Any]:
+    """训练前的**可执行**体检：把「跑起来才会炸」的问题提前列出来。
+
+    返回 `{ok, issues, config, pretrained, available_combos}`。
+    `issues` 里每一条都是用户能照着做的动作，不是堆栈。
+    """
+    root = bootstrap.vendor_root(settings)
+    issues: List[str] = []  # 阻塞项：跑下去必然失败
+    warnings: List[str] = []  # 非阻塞：能跑，但结果会打折
+    sr_tag = request.sample_rate_tag
+    version = request.version_tag
+
+    allowed = ALLOWED_COMBOS.get(version, set())
+    if sr_tag not in allowed:
+        issues.append(
+            "采样率 %s 与版本 %s 的组合官方不支持（%s 只有 %s）。"
+            "40k 请改用 v1（官方 infer-web.py:555 的硬性规则），或换成 %s。"
+            % (sr_tag, version, version, "、".join(sorted(allowed)), "、".join(sorted(allowed)))
+        )
+    rel = official_config_rel(version, sr_tag)
+    config_exists = (root / "configs" / rel).is_file()
+    if not config_exists:
+        issues.append("缺少官方配置模板 configs/%s —— 该采样率暂不可训。" % rel)
+
+    pre = resolve_pretrained(root, request)
+    if request.mode == "full" and pre["note"]:
+        # 官方允许不带底模（等于从零训），所以这只是**警告**不是阻塞
+        warnings.append(pre["note"])
+
+    return {
+        "ok": not issues,
+        "issues": issues,
+        "warnings": warnings,
+        "config": {"path": "logs/%s/config.json" % request.clean_name, "template": "configs/%s" % rel, "template_exists": config_exists},
+        "pretrained": pre,
+        "available_combos": {k: sorted(v) for k, v in ALLOWED_COMBOS.items()},
+        "available_pretrained": pre["available"],
+    }
+
+
+def build_train_command(settings: Settings, request: TrainRequest) -> "tuple[List[str], Dict[str, Any]]":
+    """构造官方 `train.py` 命令 —— **plan 与 run 共用同一份**，避免两处漂移。
+
+    参数面照官方 `infer-web.py:571`：`-e -sr -f0 -bs -g -te -se [-pg -pd] -l -c -sw -v`。
+    其中 `-pg` / `-pd` **只在真有底模时才带**（官方：下拉框为空就不传）。
+    """
+    pre = resolve_pretrained(bootstrap.vendor_root(settings), request)
+    command: List[str] = [
+        sys.executable,
+        "infer/modules/train/train.py",
+        "-e",
+        request.clean_name,
+        "-sr",
+        request.sample_rate_tag,
+        "-f0",
+        "1" if request.f0 else "0",
+        "-bs",
+        str(request.batch_size),
+        "-g",
+        "0",
+        "-te",
+        str(request.epochs),
+        "-se",
+        str(request.save_every),
+    ]
+    if pre["g"]:
+        command += ["-pg", pre["g"]]
+    if pre["d"]:
+        command += ["-pd", pre["d"]]
+    command += [
+        "-l",
+        "1" if request.if_latest else "0",
+        "-c",
+        "1" if request.if_cache_gpu else "0",
+        "-sw",
+        "1" if request.save_every_weights else "0",
+        "-v",
+        request.version_tag,
+    ]
+    return command, pre
 
 
 def _run_command(command: List[str], cwd: Path, log: Callable[[str], None], timeout: Optional[float] = None) -> int:
@@ -277,8 +542,11 @@ def _run_command(command: List[str], cwd: Path, log: Callable[[str], None], time
 def write_filelist(settings: Settings, request: TrainRequest) -> Path:
     """按官方格式生成 filelist.txt（格式见 `infer-web.py`）。
 
-    官方还会额外塞两行 `logs/mute/*` 的静音样本；那需要单独下载 mute.zip，
-    LoRA 微调不强依赖它，这里省略 —— 少两行不会让训练失败。
+    官方会在末尾额外塞**两行** `logs/mute/*` 的静音样本（`infer-web.py:532-543`），
+    作用是让模型学会「静音时不该出声」，抑制推理时的底噪与吞字。
+    改前我们直接省略了这两行（当时以为要额外下载 mute.zip）——
+    实际上 `vendor/rvc/logs/mute/` **已经齐备**（32k/40k/48k 三种采样率都有），
+    所以阶段 29 起照官方补齐；文件不齐时静默跳过，不让训练因此失败。
     """
     root = bootstrap.vendor_root(settings)
     exp_dir = root / "logs" / request.clean_name
@@ -306,6 +574,25 @@ def write_filelist(settings: Settings, request: TrainRequest) -> Path:
                 "%s|%s|0"
                 % ((gt_dir / ("%s.wav" % name)).as_posix(), (feature_dir / ("%s.npy" % name)).as_posix())
             )
+    # 官方的静音样本行（对齐 `infer-web.py:532`）—— 缺任何一个文件就整体跳过
+    mute_dir = root / "logs" / "mute"
+    mute_gt = mute_dir / "0_gt_wavs" / ("mute%s.wav" % request.sample_rate_tag)
+    mute_feat = mute_dir / ("3_feature256" if request.version_tag == "v1" else "3_feature768") / "mute.npy"
+    mute_f0 = mute_dir / "2a_f0" / "mute.wav.npy"
+    mute_f0nsf = mute_dir / "2b-f0nsf" / "mute.wav.npy"
+    mute_ready = mute_gt.is_file() and mute_feat.is_file()
+    if mute_ready and request.f0:
+        mute_ready = mute_f0.is_file() and mute_f0nsf.is_file()
+    if mute_ready:
+        if request.f0:
+            mute_line = "%s|%s|%s|%s|0" % (
+                mute_gt.as_posix(), mute_feat.as_posix(), mute_f0.as_posix(), mute_f0nsf.as_posix()
+            )
+        else:
+            mute_line = "%s|%s|0" % (mute_gt.as_posix(), mute_feat.as_posix())
+        # 官方 `for _ in range(2)`：同一条重复两次，等价于给它双倍权重
+        lines.extend([mute_line, mute_line])
+
     target = exp_dir / "filelist.txt"
     target.write_text("\n".join(lines), encoding="utf-8")
     if not lines:
@@ -510,6 +797,25 @@ def run(
         )
     )
 
+    # ---- 训练配置 config.json（官方在训练前写，见 infer-web.py:556） ----
+    if is_cancelled():
+        return {"cancelled": True, "stages": [r.to_dict() for r in results]}
+    try:
+        config_path = write_train_config(settings, request)
+        results.append(
+            StageResult(
+                key="config",
+                label="生成训练配置 config.json",
+                ok=config_path.is_file(),
+                detail=str(config_path),
+                elapsed_s=0.0,
+                outputs=[str(config_path)],
+            )
+        )
+    except ValueError as exc:
+        results.append(StageResult(key="config", label="生成训练配置 config.json", ok=False, detail=str(exc)))
+        return {"ok": False, "error": str(exc), "stages": [r.to_dict() for r in results]}
+
     # ---- 训练 ----
     if is_cancelled():
         return {"cancelled": True, "stages": [r.to_dict() for r in results]}
@@ -521,16 +827,19 @@ def run(
     info: Dict[str, Any] = {}
 
     if request.mode == "full":
-        command = [
-            script, "infer/modules/train/train.py",
-            "-e", request.clean_name, "-sr", request.sample_rate,
-            "-f0", "1" if request.f0 else "0", "-bs", str(request.batch_size),
-            "-g", "0", "-te", str(request.epochs), "-se", str(request.save_every),
-            "-pg", request.pretrain_g or ("assets/pretrained_v2/f0G%s.pth" % request.sample_rate),
-            "-pd", request.pretrain_d or ("assets/pretrained_v2/f0D%s.pth" % request.sample_rate),
-            "-l", "1", "-c", "0", "-v", request.version,
-        ]
-        code = _run_command(command, root, log or (lambda _: None))
+        command, pre = build_train_command(settings, request)
+        if pre["note"] and log:
+            log(pre["note"])
+        # 逐行解析官方输出的 epoch / loss，把「训练」这一大步拆成可见的推进
+        state = TrainProgress(total_epochs=int(request.epochs))
+
+        def train_log(line: str) -> None:
+            if log:
+                log(line)
+            if parse_train_line(line, state):
+                emit(0.5 + 0.4 * state.fraction, state.message())
+
+        code = _run_command(command, root, train_log)
         # 官方 train.py 把导出模型写到 assets/weights/<name>.pth（相对 cwd=vendor 根）
         produced = sorted((root / "assets" / "weights").glob("%s.pth" % request.clean_name))
         results.append(
@@ -538,7 +847,13 @@ def run(
                 key="train",
                 label="全量微调（官方 train.py）",
                 ok=code == 0,
-                detail="退出码 %d" % code,
+                detail="退出码 %d；跑到第 %d/%d 轮%s"
+                % (
+                    code,
+                    state.epoch,
+                    int(request.epochs),
+                    "" if state.loss_gen is None else "，末次 loss_gen %.3f" % state.loss_gen,
+                ),
                 command=" ".join(command),
                 elapsed_s=time.time() - train_started,
                 outputs=[str(p) for p in produced],
