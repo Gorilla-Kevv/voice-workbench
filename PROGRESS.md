@@ -4,7 +4,7 @@
 
 ## 进度看板
 - 当前正在开发任务：**阶段 30（P0）+ 31（P1）+ 32（P2）+ 33（P3·部分）已完成** —— 音色模型统一管理「看得见 + 管得住 + 产出可查 + 体验收尾」：网关 `modelRegistry.ts` + `/api/models/*` 全套读写；RVC 多根递归扫描使可见模型 5 → 18；`weight_root` 改指模型自身目录让**嵌套模型可加载**；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`；**产出记录页取代历史记录**（三源合并：`GET /v1/jobs` + `/api/models/*` + 云端 IndexedDB）；阶段 33 补了**未识别文件提示**（散文件不再被静默丢弃）与**变声 / 翻唱两页模型库接统一数据源**，并给 ddsp-svc 补了两个兼容旧根避免模型消失
-- 下一阶段：**阶段 29补1 = RVC 训练的前端入口（T3）+ MHA 排雷（T6）+ 一次 full 训练真机冒烟**（用户 10.10 裁决「先做阶段 29」）。阶段 34 = GPT-SoVITS 两段式选择器（零样本参考音频 vs 微调权重）+ 合成下拉接注册表，方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 —— 已让位，排在 29 之后
+- 下一阶段：**阶段 29补2 = RVC 训练前端入口（T3，进行中：TrainCard 已拆出，FullTab 待写）+ 真机冒烟**。之后是阶段 34 = GPT-SoVITS 两段式选择器，方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
   ① 训练集格式化 ✅（11 阶段流水线：语料导入→UVR5→降噪→切分→ASR 转写→**生成训练清单**→BERT→HuBERT→说话人向量→语义 Token）；
@@ -2428,6 +2428,12 @@ P0 的导入仍走各引擎页原有的上传入口。
 ### 下一阶段入口
 
 阶段 29补2 —— 前端「RVC 训练」入口（T3）+ 真机小 epochs 冒烟。
+
+## 阶段 29补2 —— 前端「RVC 训练」入口（T3）【进行中，未完成】
+
+- 分支：feature/vc-svc。**半成品在工作区，未提交**（`FullTab` 组件还没写，当前 typecheck 不过）。
+- 已完成：`types/vc.ts` 补 `VcTrainPreflight` 等；`VoiceConversionPage.tsx` 训练从「音色工坊」折叠卡拆出为独立「训练音色（RVC）」卡（LoRA / 全量两个 Tab，工坊卡只剩融合）。
+- 未完成：**`FullTab` 组件本体**（采样率/版本/轮数/存档/开关/底模选择 + 预检就地展示 + 提交）；挂载 TrainCard；typecheck/eslint；真机冒烟。
 
 ## 阶段 30（计划）—— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化
 

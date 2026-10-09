@@ -833,6 +833,7 @@
 > 本次文档更新时间：10.09 08:10 [BY Qoder]（阶段 27补6：用户主诉两个严重 bug —— ①显存预估「自己把自己检测成占用者」的重复扣账；②服务进程关不掉（只杀 child 导致外部实例漏网）。新增 `server/src/lib/processOwnership.ts`，`runtime.ts` / `sovits.ts` 的 `shutdown()` 均补端口反查一路；netease / indextts 的 `/health` 新增 `pid` 自报。新增坑 42–45）
 > 本次文档更新时间：10.09 19:56 [BY Qoder]（阶段 31 / P1：音色模型统一管理「管得住」。新增 `/api/models` 的 import（流式落盘）/ rename（联动配套）/ update（sidecar 元数据）/ migrate（默认 dry-run）；前端加导入、批量重命名（带预览）、编辑弹窗、迁移确认；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`，两个旧根清空，迁移后加载正常。修掉两个真 bug：路径边界检查把「根本身」判成越界、迁移按目录搬会卷走别的模型。新增坑 52–54）
 > 本次文档更新时间：10.09 19:20 [BY Qoder]（阶段 30 / P0：音色模型统一管理「看得见」。新增网关 `modelRegistry.ts` + `/api/models/*`；RVC 改为「规范根 + 两个兼容旧根」的多根递归扫描，可见模型 5 → 18；`weight_root` 改指模型自身目录使**嵌套模型可加载**（改前 10/10 拼不出路径）；音色库页改多 Tab。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md`。新增坑 49–51）
+> 本次文档更新时间：10.10 02:26 [BY CodeBuddy]（阶段 29补1 完成：32k/48k 底模已下载到位——32k/40k/48k 三种采样率全可带底模训练，验证 37/37。阶段 29补2 进行中：训练卡已从音色工坊拆出，`FullTab` 未写，**工作区半成品未提交**）
 > 本次文档更新时间：10.10 01:52 [BY CodeBuddy]（阶段 29：RVC 训练对齐官方 WebUI 的**后端部分** —— 生成 config.json（40k 强制 v1）、底模按官方口径解析（本机只有 40k，缺失则不带 -pg/-pd）、命令补 -sw 且 -l/-c 改为请求字段、preflight 预检在入队前拦截非法组合、filelist 补官方静音样本、训练逐 epoch + loss 上报。验证脚本 35/35 全绿。新增坑 58/59）
 > 本次文档更新时间：10.10 01:17 [BY CodeBuddy]（阶段 33 / P3：未识别文件不再静默丢弃 —— 注册表新增 `listStrays()` + 面板新区块与修复提示；变声页 / 翻唱页模型库改走 `/api/models`（改名、删除走注册表）；`ddsp-svc` 补两个兼容旧根避免换源后模型消失。新增坑 57/58）
 > 本次文档更新时间：10.09 23:41 [BY CodeBuddy]（阶段 32 / P2：产出记录页取代历史记录，三源合并 —— 服务端任务 + 本地模型 + 云端 IndexedDB；`collectTracks()` 提到 `@/lib/jobArtifacts.ts` 共用；产物 url 统一补网关前缀。新增坑 55/56）
