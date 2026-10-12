@@ -1,0 +1,76 @@
+# Irodori-TTS 本地服务的 Python 依赖（py3.12 + cu128）
+#
+# 用法（torch 必须走 cu128 专用索引，见 README「建 venv」）：
+#   uv pip install --python irodori/.venv -r irodori/requirements.txt \
+#     --extra-index-url https://download.pytorch.org/whl/cu128
+#
+# 与上游 `pyproject.toml` 的差异**都是刻意的**，逐条写清理由，
+# 免得下次有人「照上游补齐」把 Windows 装不上的东西又装回来。
+
+# ---- 核心运行时 ----------------------------------------------------------
+# ⚠️ torch / torchaudio 的 pin **刻意不写 `+cu128`**：本文件是从 PyPI 装的（第 3 步），
+# 而 PyPI 上没有 `+cu128` 这种本地版本号，写了会直接找不到包。
+# 按 PEP 440，`==2.10.0` 能匹配已安装的 `2.10.0+cu128`（未指定 local 段时允许任意 local），
+# 所以第 2 步从 cu128 索引装好的 CUDA 版不会被这一步换成别的构建。
+torch==2.10.0
+torchaudio==2.10.0
+torchao==0.16.0
+
+# ---- 上游 Irodori-TTS 的依赖（照 pyproject.toml 抄，只删装不上的）--------
+datasets>=3.0.0
+huggingface-hub>=0.34.0
+llvmlite>=0.40.0
+numba>=0.57.0
+peft>=0.18.0
+pyyaml>=6.0
+safetensors>=0.7.0
+soundfile>=0.12.0
+# ⚠️ 上游写的是 `>=0.1.99,<0.2`，这里**故意去掉上界**：0.1.99 没有 cp312 的 Windows
+# wheel（只到 cp311），pip 会退回 sdist 构建 → 需要 cmake → `FileNotFoundError` 直接失败
+# （本机实测）。0.2.0 有 cp312 wheel。
+# 放宽的依据：上游代码里 sentencepiece 只出现在一句报错提示文案里
+# （`irodori_tts/tokenizer.py:44` 的 "Install with `pip install transformers sentencepiece`"），
+# 而模型自带 `tokenizer.json` 走的是 `use_fast=True` 的 fast 分词器 ——
+# 也就是说它只是**慢分词器回退路径**的依赖，不是主链路。
+sentencepiece>=0.1.99
+torchdata>=0.11.0
+transformers>=5.12.1,<6
+tqdm>=4.67.3
+
+# ---- dacvae 的配套 -------------------------------------------------------
+# 照 `upstream/dacvae/setup.py` 的 install_requires 抄全（它不通过 pip 安装，
+# 所以这些**必须我们自己列**，漏一个就在 import 期炸）：
+#   argbind / descript-audiotools / einops / huggingface-hub / numpy / torch / torchaudio / tqdm
+# 其中 huggingface-hub / numpy / torch / torchaudio / tqdm 上面已经列过。
+# ⚠️ `einops` 最容易漏 —— 实测 `from dacvae import DACVAE` 就是因为它报 ModuleNotFoundError。
+argbind>=0.3.7
+einops>=0.8.0
+descript-audiotools==0.7.2
+
+# ---- 我们自己的服务层 ----------------------------------------------------
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# ==========================================================================
+# 显式「不装」清单 —— 每一条都有实测理由，不是漏了
+# ==========================================================================
+#
+# torchcodec>=0.10.0,<0.11.0
+#   上游把它列为**基础依赖**，但 cu128 索引下**没有 Windows wheel**（阶段 28 实测 ImportError），
+#   而 torch≥2.9 的 torchaudio.load 完全委托给它 → 任何读音频的路径直接崩。
+#   本项目的对策是 `irodori/app/windecode.py`：用 soundfile 接管 torchaudio.load/info。
+#   ⇒ 所以这里不能装，也不要「照上游补齐」。
+#
+# silentcipher @ git+https://github.com/SesameAILabs/silentcipher.git@d46d7d08...
+#   装了就会**自动加水印**：单次请求耗时≈翻倍、峰值显存 +0.9GB，且上游拒绝提供关闭开关
+#   （PR #38 未被合并）。我们的界面会如实显示「未加水印」。
+#
+# gradio / wandb
+#   上游用于 demo UI 与训练日志上报。我们有自己的 FastAPI 服务层与 JobStore，
+#   不需要它们（也省掉 gradio 那一大坨依赖）。
+#
+# dacvae
+#   上游写的是 `git+https://github.com/facebookresearch/dacvae`，本机 github.com 直连不通。
+#   改由 `irodori/upstream/dacvae/`（codeload tarball 落盘）提供：
+#   上游 `codec.py` 本来就有「从 parents[2]/dacvae 回退加载」的逻辑，放对层级即可。
+#   ⚠️ 必须与 `irodori/upstream/Irodori-TTS/` **同级**，否则会变成命名空间遮蔽。

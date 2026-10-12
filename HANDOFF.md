@@ -18,7 +18,19 @@
 | 模型服务 `trainer/` | Python 3.9（整合包自带 `runtime/python.exe`）+ FastAPI + Uvicorn |
 | 网易模块 `netease/` | **主服务**：本机 py3.12 独立 venv + torch 2.7.0+cu126 + FastAPI；端口 9882，`npm run dev` 自动拉起 |
 | GPT-SoVITS | **辅助服务**（训练链 + 批量合成仍靠它）：Python 3.9 整合包 + FastAPI；端口 9881 |
-| 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重） |
+| IndexTTS `indextts/` | 第四个运行时之一：独立 venv + FastAPI；端口 9883 |
+| Irodori-TTS `irodori/` | **日语特化**（阶段 30 接入中）：独立 venv（**py3.12 + torch 2.10.0+cu128**）+ FastAPI；端口 9884 |
+| 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重）、Irodori v4.1-Small（日语，int4 推理档 + bf16 训练基座） |
+
+### 运行环境路径（新会话直接照抄，别重新找）
+
+| 运行时 | 解释器 / 入口 |
+| --- | --- |
+| GPT-SoVITS | `GPT-SoVITS-v2pro-20250604/runtime/python.exe`（整合包自带） |
+| 网易 | `netease/.venv/Scripts/python.exe`（**必须用它**，整合包 python 缺 `confuciustts`） |
+| IndexTTS | `indextts/.venv/`（`scripts/indextts.mjs` 会自己找） |
+| **Irodori** | `irodori/.venv/Scripts/python.exe`；权重在 `irodori/models/`、上游代码在 `irodori/upstream/`（都在 gitignore 里）；清单 `irodori/weights.manifest.json` **进版本库** |
+| uv（建 venv 用） | `C:\Users\kevin\.local\bin\uv`；⚠️ **缓存默认在 `D:\AI_Cache\uv`，沙箱里写不进去** → 先 `export UV_CACHE_DIR=<工作区内>` |
 
 ### 分支
 
@@ -807,6 +819,8 @@
 | 低 | 变声 / 翻唱两页的**合成下拉**换源到 `/api/models` | 阶段 34 有意留后（无功能收益 + 要动已验证的转换主链路），建议与「变声 / 翻唱真机加载验证」同一轮做。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
 | 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
 | 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
+| **中** | **阶段 30-2：Irodori 推理链路** | 30-1 已把环境与骨架做完（venv / 权重 / `/health` 全绿），可直接开工。要做 `/v1/catalog`（emoji 56 个从代码常量取）、`/v1/warmup\|unload\|synth`（单段克隆 + caption + emoji）、网关 `/api/irodori/*` 透传、`RuntimeSupervisor` spec、arbiter `ServiceName`、preload 档位。方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §4.1 与 §9 |
+| 低 | Irodori 训练档权重下载 | `npm run irodori:weights -- --training`（bf16 基座 2.9GB）。**30-5 开工前必须**，30-2 不需要 |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
 | 高 | 端到端实测阶段 6 的新 UI | **走查已做完一半**（阶段 23）：训练页 s2→s1 顺序 / 官方 hint / 完成卡 E-S 解释、设置页权重下拉（**实测出下拉显示空白，已修**，见坑 22）均浏览器验过；仍缺 ① 带 `slice` 阶段的任务来验切分结果面板（现有历史任务无一含切分），② 权重「加载所选权重」联动（本机 `GPT/SoVITS_weights_v2ProPlus/` 为空，没有训练产物可选） |
 | 高 | **用实际合成对比网易 vs IndexTTS，决定主力** | **IndexTTS 已接入**（阶段 26），两套都可跑：网易稳态 RTF 2.0~2.5 / 常驻 4.9 GB；IndexTTS 暖态 RTF ≈ 2.2、显存被抢时 5~14 / 常驻实测 ≈ 5.3 GB。主力由**用户听感 + 使用测试**拍板；定完回填 preload 账本门槛与默认项 |

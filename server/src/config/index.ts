@@ -116,6 +116,20 @@ export const config = {
     /** 代理请求超时（毫秒）。合成是长任务，0 = 不超时 */
     proxyTimeoutMs: num(process.env.INDEXTTS_PROXY_TIMEOUT_MS, 0),
   },
+  /**
+   * Irodori-TTS 本地服务（irodori/，第四个 Python 运行时）的接入配置。
+   * 与 netease / indextts 同一模式：无 supervisor，生命周期归 `npm run dev:irodori`。
+   *
+   * `proxyTimeoutMs` 这里**刻意不是 0**：Irodori 实测有 89s 长尾，
+   * 而服务端自己有 `IRODORI_TIMEOUT`（默认 180s）看门狗，命中后返回结构化 504。
+   * 网关这条线留得比它宽（240s），是为了让**服务端那个更有信息量的错误**先到前端 ——
+   * 网关超时只会给一句「上游无响应」，用户拿不到「是长尾、可降步重试」这个关键提示。
+   */
+  irodori: {
+    baseUrl: (process.env.IRODORI_URL?.trim() || 'http://127.0.0.1:9884').replace(/\/+$/, ''),
+    /** 代理请求超时（毫秒）。见上方注释：必须宽于服务端的 IRODORI_TIMEOUT */
+    proxyTimeoutMs: num(process.env.IRODORI_PROXY_TIMEOUT_MS, 240_000),
+  },
 } as const;
 
 export const isProduction = config.env === 'production';

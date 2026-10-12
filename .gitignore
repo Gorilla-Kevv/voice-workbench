@@ -63,3 +63,12 @@ indextts/upstream/
 indextts/.venv/
 indextts/checkpoints/
 indextts/.data/
+
+# Irodori-TTS（irodori/）：独立 venv + 上游代码 + 权重，合计约 8 GB。
+# 权重清单（weights.manifest.json）**要进版本库** —— 它是下载与校验的唯一事实源；
+# 只有实际文件不进。
+irodori/.venv/
+irodori/upstream/
+irodori/models/
+irodori/.data/
+irodori/.tmp/

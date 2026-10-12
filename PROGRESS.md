@@ -6,7 +6,10 @@
 - 当前正在开发任务：**阶段 30（P0）+ 31（P1）+ 32（P2）+ 33（P3·部分）已完成** —— 音色模型统一管理「看得见 + 管得住 + 产出可查 + 体验收尾」：网关 `modelRegistry.ts` + `/api/models/*` 全套读写；RVC 多根递归扫描使可见模型 5 → 18；`weight_root` 改指模型自身目录让**嵌套模型可加载**；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`；**产出记录页取代历史记录**（三源合并：`GET /v1/jobs` + `/api/models/*` + 云端 IndexedDB）；阶段 33 补了**未识别文件提示**（散文件不再被静默丢弃）与**变声 / 翻唱两页模型库接统一数据源**，并给 ddsp-svc 补了两个兼容旧根避免模型消失
 - 最新完成：**阶段 29补2 = RVC 训练前端入口（T3）已落地**（10.12 13:47 BY Qoder）——「训练音色（RVC）」独立成卡，LoRA / 全量两条官方路径都在，全量表单带**提交前预检**；typecheck / eslint / vite build 全过，**真机冒烟待用户起服务走一遍**
 - 最新完成：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本官方底模 / 微调自训权重）已落地（10.12 14:45 BY Qoder）—— `SovitsVoicePicker` 加权重来源 Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`；typecheck / eslint / vite build 全过，**真机冒烟待用户**
-- 当前无正在开发的阶段：**剩下三项都是「需用户在真机上点一遍」的验证**（产出记录页走查 / RVC 训练入口冒烟 / 变声翻唱换源加载验证），做完再开新功能
+- 最新完成：**阶段 30-1 = Irodori 环境与骨架**（10.12 18:15 BY Qoder）—— `irodori/` 服务骨架 + 独立 venv（py3.12 + torch 2.10.0+cu128，CUDA 可用、cc 8.9 int4 可用）+ 权重下载器（推理档 1.2GB 与上游代码全部字节校验通过）+ **Windows 解码垫片已生效** + `/health` 实测出 `required_vram_mb: 4700`；验证脚本 26/26
+- 下一阶段：**阶段 30-2 = 推理链路**（`/v1/catalog` `/v1/warmup|unload|synth` + 网关透传 + runtime/arbiter/preload 记账）。环境已就绪，可直接开工
+- 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；阶段 30-4（音色库多片段）与 30-3 可并行
+- 未完成的任务：阶段 30-2…30-7；训练档权重（bf16 2.9GB）需在 30-5 前下载
 - 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
@@ -2478,13 +2481,26 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 - 本次文档更新时间：10.12 13:47
 
-## 阶段 30（计划）—— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化
+## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder]
 
-- 分支=feature/vc-svc（拟定）
+- 分支：feature/vc-svc
 - 立项依据：用户 10.09 裁决「**做克隆和训练**」（并明确 Genie-TTS 与 dots.tts 弃用）。
-  技术前提全部来自阶段 28 实测（`docs/IRODORI-TTS-EVALUATION.md`）。本条目为**计划态**，未动代码。
+  技术前提全部来自阶段 28 实测（`docs/IRODORI-TTS-EVALUATION.md`）。
 - 方案全文：**`docs/IRODORI-INTEGRATION-PLAN.md`**（架构决策 / 接口契约 / 音色库扩展 / 训练三步与三道守卫 /
-  前端文案红线 / 7 段拆分 / DoD / 风险表 / 待拍板 4 问）
+  前端文案红线 / 7 段拆分 / DoD / 风险表）
+- **本条目 10.12 由「计划态」转为实施态**（就地保留位置，不搬移 —— 见文件头「编号说明」）。
+
+### 用户拍板结果（10.12 15:30，答完即开工）
+
+| # | 问题 | 裁决 | 落地口径 |
+| --- | --- | --- | --- |
+| ① | 推理默认步数 | **20 步默认 + 40 步作「最高质量」档** | `/v1/catalog` 的步数档位给 `[20, 40]`，默认 20；40 在 UI 标注「更慢、可能撞长尾」 |
+| ② | 训练默认步数 | **先小档跑闭环，之后必须能升到 2000 / 3000** | 默认档给**冒烟小档**；档位候选 `[小档, 1000, 2000, 3000]`，UI 注明「正式训练建议 ≥2000」 |
+| ③ | 转写来源 | **允许调用现有 ASR，但必须明确提示会临时让出显存** | 训练向导加「批量转写」步骤，文案写明「会切换引擎、耗时较长、期间 Irodori 不在显存」 |
+| ④ | LoRA | **默认关，不做** | 只做 Speaker Inversion（49KB 产物、分钟级）；不实现 LoRA 开关 |
+
+> ② 的「小档」具体步数在 30-5 落地时按实测收敛速度定（倾向 300~500，以「能看出音色在收敛」为准），
+> 定下来写进 `docs/IRODORI-INTEGRATION-PLAN.md` §12 与本条目。
 
 ### 目标拆解（七段，每段独立可验证）
 
@@ -2514,10 +2530,91 @@ P0 的导入仍走各引擎页原有的上传入口。
 6. **前端文案红线**（照实测写，不许夸大）：男声参考下 emoji 不改变情绪音调（F0 锁 110.3–111.9Hz，
    而我们音色库就是男声）；⏩/🐢/👂 三条实测未兑现；caption 只写情绪/环境不写音色；仅日语。
 
-### 待用户拍板（4 问，答完即开工）
+### ~~待用户拍板（4 问，答完即开工）~~ → **已于 10.12 15:30 拍板，见上方「用户拍板结果」表**
 
-① 默认步数 20 还是官方 40（40 留作"最高质量"档？）；② 训练默认步数 2000（≈73 分钟）还是官方 3000（≈1.8 小时）；
-③ 训练向导里允不允许调用现有 ASR 批量转写（会临时从 Irodori 让出显存走一次引擎切换）；④ LoRA 要不要开实验开关（8 小时级 + 作者自述未验证）。
+### 进度
+
+- **30-1（环境与骨架）已完成** —— 30-2 起未开工。
+
+#### 30-1 明细
+
+**已完成**
+
+| 交付物 | 说明 |
+| --- | --- |
+| `irodori/weights.manifest.json` | **权重/代码清单，唯一事实源**（`server.py --check` 与下载脚本共读）。含 9 个权重文件 + 2 个代码仓，逐条记 `sizeBytes` 与源站类型 |
+| `irodori/app/{config,hardware,errors,inventory,windecode,api}.py` + `__init__.py` | 服务骨架：配置（环境变量）/ 硬件探测（lazy import torch）/ 清单核对 / **Windows 解码垫片** / FastAPI 装配（30-1 只交付 `/health`） |
+| `irodori/server.py` | 入口：`--check` 体检（人读 + `--json`）+ uvicorn 启动 |
+| `irodori/requirements.txt` | 依赖，**逐条写明「不装什么、为什么」**（torchcodec / silentcipher / gradio / wandb / dacvae） |
+| `irodori/README.md` | 装法、权重口径、源站连通性、7 段进度表、7 条已知坑 |
+| `scripts/irodori.mjs`、`scripts/irodori-weights.mjs` | 启动/体检入口 + 权重下载器（**8 路 Range 并发 + 逐文件字节校验 + 瞬时错误重试 3 次**） |
+| `package.json` | `dev:irodori` / `irodori:check` / `irodori:weights` |
+| `.gitignore` | `irodori/{.venv,upstream,models,.data,.tmp}`（**清单文件要进版本库**） |
+| `server/src/config/index.ts` | `irodori` 接入配置（端口 9884；`proxyTimeoutMs` 默认 **240s**，刻意宽于服务端 `IRODORI_TIMEOUT` 180s，让服务端那个信息量更大的 504 先到前端） |
+| `docs/ENGINE-ISOLATION.md` | 补记：Irodori 也 monkeypatch，但**独立进程**已满足隔离要求，不需要 worker。判据收紧为「**与主进程共进程 + import 期改全局**」缺一不可 |
+| `.tmp/verify_irodori_env.py` | 30-1 验证脚本（20 项） |
+
+**已验证（真跑）**
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run irodori:check` | 通；清单 9 条全部列出，缺失项标注清楚 |
+| venv | `uv venv --python 3.12` → Python 3.12.10 |
+| torch | `2.10.0+cu128` + `torchaudio 2.10.0+cu128` 装好 |
+| CUDA | **可用**；`NVIDIA GeForce RTX 4060 Laptop GPU`；**cc (8,9) → int4 可用**（与阶段 28 预期一致） |
+| 推理档权重 + 上游代码 | **全部下载并字节校验通过**（int4 812.6MB / tokenizer / codec 409.7MB / Irodori-TTS / dacvae） |
+| `npm run irodori:check`（真机） | 全绿：Python 3.12.10 / torch True / CUDA True / RTX 4060 / **cc 8.9 → int4 可用** / **垫片已装 `['load','info']`** / 推理档 1228.7 ÷ 1228.7 MB |
+| `curl 127.0.0.1:9884/health`（真机） | **`required_vram_mb: 4700`**（30-1 的验收项）；`pid: 20352`；`loaded: false`；`watermark: false`；`weights.ready: true` / `training_ready: false`；`windecode.installed: true`；`cc [8,9]` / `int4_supported: true` |
+| 显存双口径（顺带证实坑 26） | 同一时刻 **nvidia-smi 空闲 4457 MB vs torch 报 7099 MB** —— 差 2.6GB，正是「WDDM 下 torch 看不见别的进程」那条；`/health` 用 nvidia-smi 口径，且此刻 4457 < 4700（准入会如实判「紧张」） |
+| `.tmp/verify_irodori_env.py --health` | **26/26 通过**（清单结构、target 唯一性与边界、inventory 与文件系统对拍、**字节校验能拦住截断**、拍板口径、`--check --json` 合法、`/health` 六个字段） |
+| `_bits_of()` 单测 | 5/5（`subtype_info.bits` / `PCM_24` 字符串 / FLOAT / DOUBLE / 未知编码） |
+
+**过程中修掉的 3 个真问题**（都会在别的机器上复现）
+
+1. **Git Bash 的 GNU tar 把 `F:/x.tar.gz` 当 `主机:路径`** → `Cannot connect to F: resolve failed`。
+   改为 `cwd=父目录` + 只传相对路径（Windows 自带 bsdtar 与 GNU tar 都能解）。
+2. **hf-mirror 偶发 `fetch failed`**（8 路 Range + 同时装 torch 的满载下）→ 给单文件下载加
+   3 次重试，**只重试网络类错误**（字节校验失败不重试 —— 那是源站/清单的问题）。
+3. **`torchaudio.AudioMetaData` 是无默认值的 dataclass**，`cls()` 直接 TypeError →
+   垫片改为「能按字段构造就用真类，不能就退 `SimpleNamespace`」。
+
+**依赖集（全部装完，环境可用于 30-2）**
+
+`transformers 5.19.0` / `peft 0.21.2` / `datasets 5.1.0` / `torchdata 0.11.0` /
+`numba 0.68.0` / `sentencepiece 0.2.2` / `torchao 0.16.0` / `safetensors 0.8.0` /
+`descript-audiotools 0.7.2` / `argbind 0.3.9` / `einops 0.8.2`。
+
+**导入验证（真机，最强的一条）**
+
+```
+from dacvae import DACVAE          -> OK
+import irodori_tts                 -> OK
+from irodori_tts.codec import DACVAECodec -> OK
+from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
+```
+
+> 最后一条顺带**独立核实了阶段 28 记录的一个事实**：emoji 白名单是 **56** 个，
+> 而官方文档表 `EMOJI_ANNOTATIONS.md` 只有 45 条 —— 方案 §4.1 说「UI 以代码常量为准」是对的。
+
+**未完成（交接给后续段）**
+
+- 训练档权重（bf16 基座 2.9GB）未下载：`npm run irodori:weights -- --training`，
+  30-5/30-6 开工前需要（推理档已齐，30-2 不受影响）。
+
+**风险**
+
+- **装依赖踩了三个坑**（都写进项目长期记忆了）：
+  1. 沙箱里 `uv` 的缓存目录（默认 `D:\AI_Cache\uv`，改成工作区内也一样）**写不进去**
+     → `os error 5 拒绝访问`，表现为下到一半 `Failed to write to the client cache`。
+  2. `uv venv` **不装 pip**，而 `uv pip install --no-cache` 在本机极慢
+     （18 分钟未装完一个包，且看不出卡在哪 —— 输出全被缓冲）。
+     最终改 `ensurepip` + `python -m pip`（同镜像、`--progress-bar off`）才有可观测进度。
+  3. `descript-audiotools` 会拖进 librosa → scikit-learn → matplotlib 一大棵树；
+     它很可能是 uv 卡住的元凶（sdist 构建）。**先用 pip 单独装它，别和核心集混在一起**。
+- `weights.manifest.json` 里的 `sizeBytes` 是**某一时刻的源站快照**；上游更新权重后需要
+  同步刷新，否则会误报「截断」。清单的 `note` 已写明这一点。
+- 下载器把源站 `Content-Length` 与清单不一致时**以源站为准并打警告**（不阻断）——
+  这样上游更新权重时不会卡住用户，但清单会静默过时，需要有人看那条警告。
 
 ### 涉及文件（预估）
 

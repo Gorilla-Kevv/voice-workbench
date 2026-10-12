@@ -114,7 +114,15 @@ DDSP-SVC 的 `ddsp`/`reflow`/`nsf_hifigan`/`encoder`/`optimizer`/`logger`/`slice
 那个理由**依然成立** —— `ModuleScope` + `vendor_paths` 确实解决了模块名冲突。
 §4 **没有覆盖**的是「import 期的全局 monkey patch」这一类副作用。
 所以结论不变，只是**新增了一个触发条件**：一旦某个引擎在 import 期修改进程级全局状态，
-它就必须被隔离。GPT-SoVITS 是唯一一个这样的引擎。
+它就必须被隔离。
+
+**补记（阶段 30，2026-10-12）**：按这条判据重新盘了一遍现有引擎 ——
+**GPT-SoVITS 仍是唯一需要额外 worker 的**。Irodori-TTS 也会在 import 期 monkey patch
+（`irodori/app/windecode.py` 用 soundfile 接管 `torchaudio.load`/`info`），
+但它**本身就是独立 venv + 独立进程**，patch 出不了自己的进程边界，
+已经满足本文件的「全局 monkeypatch 只准待在自己进程里」，**不需要再套一层 worker**。
+netease / indextts 不 patch 任何全局状态。
+⇒ 也就是说：需要 worker 的判据是「**与主进程共进程 + import 期改全局**」，缺一不可。
 
 ---
 

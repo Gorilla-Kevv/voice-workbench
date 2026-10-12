@@ -1,0 +1,153 @@
+{
+  "note": "Irodori-TTS 权重与上游代码清单。**唯一事实源**：server.py --check 与 scripts/irodori-weights.mjs 共读这一份，避免两处各写一遍导致漂移。sizeBytes 是 2026-10-12 从各源站读到的真实值，下载后逐文件校验；对不上就是截断，必须重下（阶段 28 踩过：截断的 safetensors 报 central directory 错）。",
+  "totalBytes": {
+    "inference": 1288371558,
+    "training": 4352667154
+  },
+  "entries": [
+    {
+      "id": "int4",
+      "group": "inference",
+      "required": true,
+      "target": "models/irodori_v4.1_small_int4/model.safetensors",
+      "sizeBytes": 852031658,
+      "purpose": "推理主权重（int4-weight-only，配 --model-precision fp32）",
+      "source": {
+        "type": "modelscope",
+        "repo": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+        "path": "int4-weight-only/model.safetensors"
+      }
+    },
+    {
+      "id": "tokenizer-json",
+      "group": "inference",
+      "required": true,
+      "target": "models/irodori_v4.1_small_int4/tokenizer/tokenizer.json",
+      "sizeBytes": 6718495,
+      "purpose": "ModernBERT-ja 分词器",
+      "source": {
+        "type": "modelscope",
+        "repo": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+        "path": "tokenizer/tokenizer.json"
+      }
+    },
+    {
+      "id": "tokenizer-config",
+      "group": "inference",
+      "required": true,
+      "target": "models/irodori_v4.1_small_int4/tokenizer/tokenizer_config.json",
+      "sizeBytes": 668,
+      "purpose": "分词器配置",
+      "source": {
+        "type": "modelscope",
+        "repo": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+        "path": "tokenizer/tokenizer_config.json"
+      }
+    },
+    {
+      "id": "configuration",
+      "group": "inference",
+      "required": false,
+      "target": "models/irodori_v4.1_small_int4/configuration.json",
+      "sizeBytes": 72,
+      "purpose": "ModelScope 下载器留下的元信息；上游不读，缺失不报错",
+      "source": {
+        "type": "modelscope",
+        "repo": "Aratako/Irodori-TTS-v4.1-Small-Quantized",
+        "path": "configuration.json"
+      }
+    },
+    {
+      "id": "codec",
+      "group": "inference",
+      "required": true,
+      "target": "models/dacvae/weights.pth",
+      "sizeBytes": 429620065,
+      "purpose": "DACVAE 音频编解码器（官方默认从 HF 拉；这里落本地，用路径直接喂 DACVAE.load）",
+      "source": {
+        "type": "hf-mirror",
+        "repo": "Aratako/Semantic-DACVAE-Japanese-32dim",
+        "path": "weights.pth"
+      }
+    },
+    {
+      "id": "bf16-base",
+      "group": "training",
+      "required": false,
+      "target": "models/irodori_bf16/model.safetensors",
+      "sizeBytes": 3064295596,
+      "purpose": "训练基座（Speaker Inversion 只能跑在 bf16 上，量化检查点不能训练）。不下载则训练不可用、推理照常。",
+      "source": {
+        "type": "modelscope",
+        "repo": "Aratako/Irodori-TTS-v4.1-Small",
+        "path": "model.safetensors"
+      }
+    },
+    {
+      "id": "bf16-tokenizer-json",
+      "group": "training",
+      "required": true,
+      "target": "models/irodori_bf16/tokenizer/tokenizer.json",
+      "sizeBytes": 6718495,
+      "purpose": "训练基座配套分词器（与 int4 那份内容相同，但按官方目录结构各放一份）",
+      "source": {
+        "type": "modelscope",
+        "repo": "Aratako/Irodori-TTS-v4.1-Small",
+        "path": "tokenizer/tokenizer.json"
+      }
+    },
+    {
+      "id": "bf16-tokenizer-config",
+      "group": "training",
+      "required": true,
+      "target": "models/irodori_bf16/tokenizer/tokenizer_config.json",
+      "sizeBytes": 668,
+      "purpose": "训练基座配套分词器配置",
+      "source": {
+        "type": "modelscope",
+        "repo": "Aratako/Irodori-TTS-v4.1-Small",
+        "path": "tokenizer/tokenizer_config.json"
+      }
+    },
+    {
+      "id": "emoji-table",
+      "group": "training",
+      "required": false,
+      "target": "models/irodori_bf16/EMOJI_ANNOTATIONS.md",
+      "sizeBytes": 3403,
+      "purpose": "官方 emoji 三语释义表（45 条）。UI 调色板的说明文案取自这里，**以代码常量 56 个为准**",
+      "source": {
+        "type": "modelscope",
+        "repo": "Aratako/Irodori-TTS-v4.1-Small",
+        "path": "EMOJI_ANNOTATIONS.md"
+      }
+    }
+  ],
+  "code": [
+    {
+      "id": "upstream-irodori",
+      "target": "upstream/Irodori-TTS",
+      "purpose": "上游本体（官方代码零改动，见 docs/IRODORI-INTEGRATION-PLAN.md §7）",
+      "source": {
+        "type": "tarball",
+        "url": "https://codeload.github.com/Aratako/Irodori-TTS/tar.gz/refs/heads/main",
+        "stripComponents": 1
+      }
+    },
+    {
+      "id": "upstream-dacvae",
+      "target": "upstream/dacvae",
+      "purpose": "DACVAE 包本体（不在 PyPI，只能拉源码）。⚠️ 必须与 upstream/Irodori-TTS 同级：codec.py 从 parents[2]/dacvae 回退加载，放错层会变成命名空间遮蔽（cannot import name 'DACVAE'）",
+      "source": {
+        "type": "tarball",
+        "url": "https://codeload.github.com/facebookresearch/dacvae/tar.gz/refs/heads/main",
+        "stripComponents": 1
+      }
+    }
+  ],
+  "downloadNotes": [
+    "huggingface.co 与 raw.githubusercontent.com 本机直连不通；模型走 ModelScope 镜像，代码走 codeload tarball，codec 走 hf-mirror.com。",
+    "大文件用 8 路 Range 并发（沿用 _bench/chunked_dl.sh 的做法）：单连接在镜像上只有 ~120KB/s。",
+    "★ 每个文件下载后必须校验字节数 == sizeBytes。阶段 28 的 codec 权重曾因截断报 PytorchStreamReader failed（central directory）。"
+  ]
+}

@@ -22,7 +22,10 @@
     "preview": "npm run build && concurrently -n sovits,server -c yellow,magenta \"npm run dev:sovits -- --no-open\" \"npm --prefix server run start\"",
     "typecheck": "npm --prefix app run typecheck && npm --prefix server run typecheck",
     "dev:indextts": "node scripts/indextts.mjs",
-    "indextts:check": "node scripts/indextts.mjs --check"
+    "indextts:check": "node scripts/indextts.mjs --check",
+    "dev:irodori": "node scripts/irodori.mjs",
+    "irodori:check": "node scripts/irodori.mjs --check",
+    "irodori:weights": "node scripts/irodori.mjs --weights"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"
