@@ -4,7 +4,9 @@
 
 ## 进度看板
 - 当前正在开发任务：**阶段 30（P0）+ 31（P1）+ 32（P2）+ 33（P3·部分）已完成** —— 音色模型统一管理「看得见 + 管得住 + 产出可查 + 体验收尾」：网关 `modelRegistry.ts` + `/api/models/*` 全套读写；RVC 多根递归扫描使可见模型 5 → 18；`weight_root` 改指模型自身目录让**嵌套模型可加载**；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`；**产出记录页取代历史记录**（三源合并：`GET /v1/jobs` + `/api/models/*` + 云端 IndexedDB）；阶段 33 补了**未识别文件提示**（散文件不再被静默丢弃）与**变声 / 翻唱两页模型库接统一数据源**，并给 ddsp-svc 补了两个兼容旧根避免模型消失
-- 下一阶段：**阶段 29补2 = RVC 训练前端入口（T3，进行中：TrainCard 已拆出，FullTab 待写）+ 真机冒烟**。之后是阶段 34 = GPT-SoVITS 两段式选择器，方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3
+- 最新完成：**阶段 29补2 = RVC 训练前端入口（T3）已落地**（10.12 13:47 BY Qoder）——「训练音色（RVC）」独立成卡，LoRA / 全量两条官方路径都在，全量表单带**提交前预检**；typecheck / eslint / vite build 全过，**真机冒烟待用户起服务走一遍**
+- 下一阶段：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本参考音频 / 微调权重两个 Tab + 合成下拉接注册表），方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3。进门先读阶段 33 条目的「下一阶段入口」
+- 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
   ① 训练集格式化 ✅（11 阶段流水线：语料导入→UVR5→降噪→切分→ASR 转写→**生成训练清单**→BERT→HuBERT→说话人向量→语义 Token）；
@@ -2429,11 +2431,51 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 阶段 29补2 —— 前端「RVC 训练」入口（T3）+ 真机小 epochs 冒烟。
 
-## 阶段 29补2 —— 前端「RVC 训练」入口（T3）【进行中，未完成】
+## 阶段 29补2 —— 前端「RVC 训练」入口（T3）[计划时间：10.10 02:20 BY CodeBuddy][完成时间：10.12 13:47 BY Qoder]
 
-- 分支：feature/vc-svc。**半成品在工作区，未提交**（`FullTab` 组件还没写，当前 typecheck 不过）。
-- 已完成：`types/vc.ts` 补 `VcTrainPreflight` 等；`VoiceConversionPage.tsx` 训练从「音色工坊」折叠卡拆出为独立「训练音色（RVC）」卡（LoRA / 全量两个 Tab，工坊卡只剩融合）。
-- 未完成：**`FullTab` 组件本体**（采样率/版本/轮数/存档/开关/底模选择 + 预检就地展示 + 提交）；挂载 TrainCard；typecheck/eslint；真机冒烟。
+- 分支：feature/vc-svc
+- 承接阶段 29（后端对齐 T1/T2/T4/T5）与 29补1（32k/48k 底模）。本阶段是 T3：**把官方两条训练路径都摆到界面上**。
+
+### 已完成
+
+| 文件 | 内容 |
+| --- | --- |
+| `app/src/types/vc.ts` | 补 `save_every_weights` / `if_latest` / `if_cache_gpu` / `pretrain_g` / `pretrain_d`（对应官方 train.py 的 `-sw` / `-l` / `-c` / `-pg` / `-pd`）；新增 `VcTrainPreflight` 与 `VcTrainPlanResponse.preflight` |
+| `app/src/pages/VoiceConversionPage.tsx` | 训练从「音色工坊」折叠卡拆出为**独立「训练音色（RVC）」卡**（工坊卡只剩融合）；新增 **`FullTab`** 全量微调表单并挂载 `TrainCard` |
+
+**`FullTab` 的两个设计要点**
+
+1. **提交前先预检**：参数变化后防抖 500ms 自动调 `/v1/vc/train/plan`，把 `preflight.issues`（阻塞，红色）与 `preflight.warnings`（非阻塞，琥珀色）就地列出，并展示「配置模板 → 将写入路径」与本次会跑的 N 个步骤。
+   这解决的是改前「提交后跑十几分钟才炸」——采样率 × 版本不合法、缺官方配置模板现在提交前就能看到。
+2. **底模缺失只是警告，不是阻塞**：官方允许不带 `-pg/-pd` 从零训（收敛慢、质量差，但不失败），所以 `pretrain` 的 note 走 `warnings`，只有 `ok=false` 才禁用提交按钮。
+   采样率下拉直接用 `preflight.available_combos[version]` 禁用不合法档位（v2 只有 32k/48k）。
+
+### 测试结果
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck`（app + server） | 零报错（改前 8 处：2 处未用导入 + 6 处隐式 any） |
+| `npx eslint`（2 个改动文件） | 零告警 |
+| `npx vite build` | 1900 modules transformed **成功**（`--outDir dist-verify` 绕开沙箱清目录，产物已清理） |
+| 后端 `/v1/vc/train/plan` 实调 | **未做** —— trainer 未运行（9881 无响应），只做了契约核对 |
+
+### 未完成
+
+- **真机冒烟**：需要用户起服务后走一遍「变声页 → 训练音色 → 全量微调 → 改采样率看预检报错 → 提交」。本轮只验证了类型、lint 与构建，没有跑真实 preflight 请求。
+
+### 风险
+
+- `preflight` 字段是**可选**的（`VcTrainPlanResponse.preflight?`），老后端没有这个字段时界面静默跳过预检框、提交按钮也不会被拦 —— 不会报错，但也失去了保护。等后端升级到阶段 29 版本才生效。
+- 自动预检会在用户敲语料目录时逐次发请求（已防抖 500ms，`trainPlan` 超时 60s）；若 trainer 未启动，每次都会走 catch 显示「预检失败」，属预期。
+- 全量训练耗时十几分钟到数小时，界面靠 `JobPanel` 轮询；阶段 29 的 T4（epoch 级进度）已在后端落地，前端无需改动即可显示。
+
+### 下一阶段入口
+
+阶段 34 —— GPT-SoVITS 两段式选择器：`SovitsVoicePicker` 加 Tabs「参考音频（零样本）」/「微调权重（`/v1/weights`）」，
+选中即 `loadWeights`；并把变声 / 翻唱的**合成下拉**也接到注册表（`GET /api/models?category=`）。
+涉及 `app/src/components/features/SovitsVoicePicker.tsx`、`app/src/pages/{VoiceConversionPage,SingingConversionPage,SovitsTrainingPage}.tsx`。
+
+- 本次文档更新时间：10.12 13:47
 
 ## 阶段 30（计划）—— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化
 

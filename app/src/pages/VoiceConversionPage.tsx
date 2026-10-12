@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { FolderOpen, Loader2, Upload, Waves } from 'lucide-react';
+import { AlertTriangle, FolderOpen, Loader2, Upload, Waves } from 'lucide-react';
 import { toast } from 'sonner';
 import { RequestError } from '@/lib/errors';
 import { dropHighlight, applyFilesToInput, useFileDrop } from '@/hooks/useFileDrop';
@@ -14,6 +14,7 @@ import { Label } from '@/components/ui/label';
 import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Slider } from '@/components/ui/slider';
+import { Switch } from '@/components/ui/switch';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { SourceNote } from '@/components/features/SourceNote';
@@ -26,7 +27,14 @@ import { useVcTrainHistory } from '@/hooks/useVcTrainHistory';
 import { notifyVcRunChanged } from '@/hooks/useVcRunHistory';
 import { pickArtifactUrl, vcApi } from '@/lib/vc';
 import { formatBytes, modelsApi, type ModelEntry, type ModelStrayFile } from '@/lib/models';
-import type { SovitsJob, VcCatalog, VcModel, VcTrainArtifact } from '@/types';
+import type {
+  SovitsJob,
+  VcCatalog,
+  VcModel,
+  VcTrainArtifact,
+  VcTrainPayload,
+  VcTrainPlanResponse,
+} from '@/types';
 
 /** 一条变声结果：输出（服务端地址）+ 当时的源音频快照，够独立回听 A·B 对比 */
 interface VcResultItem {
@@ -110,6 +118,7 @@ export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => voi
         accentText={ACCENT_TEXT}
         emptyHint="上面跑一次变声"
       />
+      <TrainCard catalog={catalog} accentSolid={ACCENT_SOLID} onChanged={refresh} />
       <WorkshopCard catalog={catalog} accentSolid={ACCENT_SOLID} onChanged={refresh} />
       <TrainResultCard onChanged={refresh} />
     </div>
@@ -613,30 +622,61 @@ function ConvertCard({
   );
 }
 
+/**
+ * 训练音色（RVC）。
+ *
+ * 改前训练**藏在「音色工坊」折叠卡的一个 Tab 里**，且只有 LoRA ——
+ * 官方的 `full`（全量微调）在前端**根本没有入口**（`mode: 'full'` 只存在于类型定义里）。
+ * 现在独立成卡，两条官方训练路径都摆出来：
+ *   * **LoRA 轻量微调** —— 只训 ~4% 参数，几分钟出适配器；
+ *   * **全量微调** —— 调官方 `train.py`，出完整 `.pth`（阶段 29 起对齐官方 WebUI）。
+ *
+ * 一句话区分：这里是 **RVC 变声**的训练；顶部导航的「音色微调训练」是 **GPT-SoVITS** 的，两者不是一回事。
+ */
+function TrainCard({ catalog, accentSolid, onChanged }: { catalog: VcCatalog | null; accentSolid: string; onChanged: () => void }) {
+  const modelNames = (catalog?.models ?? []).map((item) => item.id);
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">训练音色（RVC）</CardTitle>
+        <CardDescription>
+          官方的两条训练路径都在这里：<strong>LoRA</strong> 只训一个小适配器（快、产物几 MB），
+          <strong>全量微调</strong> 跑官方 train.py 出完整模型（慢、但音色更像）。
+          注意：这是 <strong>RVC 变声</strong>的训练，导航里的「音色微调训练」是 GPT-SoVITS 的。
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Tabs defaultValue="lora">
+          <TabsList>
+            <TabsTrigger value="lora">LoRA 轻量微调</TabsTrigger>
+            <TabsTrigger value="full">全量微调（官方 train.py）</TabsTrigger>
+          </TabsList>
+          <TabsContent value="lora" className="pt-4">
+            <LoraTab models={modelNames} accentSolid={accentSolid} onTrained={onChanged} />
+          </TabsContent>
+          <TabsContent value="full" className="pt-4">
+            <FullTab accentSolid={accentSolid} onTrained={onChanged} />
+          </TabsContent>
+        </Tabs>
+      </CardContent>
+    </Card>
+  );
+}
+
 function WorkshopCard({ catalog, accentSolid, onChanged }: { catalog: VcCatalog | null; accentSolid: string; onChanged: () => void }) {
   const modelNames = (catalog?.models ?? []).map((item) => item.id);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle className="text-base">音色工坊</CardTitle>
-        <CardDescription>两条缓解「换音色就要重训」的路径：零训练的权重融合，或只训一个小适配器的 LoRA 微调。</CardDescription>
+        <CardTitle className="text-base">音色工坊 · 融合</CardTitle>
+        <CardDescription>
+          零训练的权重融合：把几个已有音色按比例揉成一个新的。（训练请到上面的「训练音色」卡片）
+        </CardDescription>
       </CardHeader>
       <CardContent>
-        <Tabs defaultValue="merge">
-          <TabsList>
-            <TabsTrigger value="merge">
-                <TermTip term="音色融合" />
-              </TabsTrigger>
-            <TabsTrigger value="lora">LoRA 微调</TabsTrigger>
-          </TabsList>
-          <TabsContent value="merge" className="pt-4">
-            <MergeTab models={modelNames} accentSolid={accentSolid} onChanged={onChanged} />
-          </TabsContent>
-          <TabsContent value="lora" className="pt-4">
-            <LoraTab models={modelNames} accentSolid={accentSolid} onTrained={onChanged} />
-          </TabsContent>
-        </Tabs>
+        <MergeTab models={modelNames} accentSolid={accentSolid} onChanged={onChanged} />
       </CardContent>
     </Card>
   );
@@ -805,6 +845,347 @@ function LoraTab({
         </Button>
         <p className="text-xs text-muted-foreground">只训练约 4% 的参数，产物是几 MB 的适配器，可随时热切换。</p>
       </div>
+      <JobPanel
+        jobId={jobId}
+        onComplete={onTrained}
+        accent={accentSolid.replace('bg-indigo-600', 'text-indigo-500').replace(' text-white', '')}
+        title="训练任务"
+      />
+    </div>
+  );
+}
+
+/**
+ * 全量微调 —— 调官方 `train.py` 出完整模型。
+ *
+ * 改前 `mode: 'full'` 只存在于类型定义里，**官方 RVC WebUI 的训练路径在前端根本没有入口**
+ * （阶段 29 补）。参数面照官方 `infer-web.py:571`：`-e -sr -f0 -bs -g -te -se [-pg -pd] -l -c -sw -v`。
+ *
+ * 关键设计：**提交前先预检**。`/v1/vc/train/plan` 会带回 `preflight`，
+ * 「采样率 × 版本不合法」「缺官方配置模板」这类问题改前要**跑十几分钟才炸**，现在就地列出来；
+ * 而底模缺失只是**警告** —— 官方允许不带 `-pg/-pd` 从零训（收敛慢、质量差，但不会失败）。
+ */
+function FullTab({ accentSolid, onTrained }: { accentSolid: string; onTrained: () => void }) {
+  const [name, setName] = useState('my-voice');
+  const [corpusDir, setCorpusDir] = useState('');
+  const [sampleRate, setSampleRate] = useState('32k');
+  const [version, setVersion] = useState('v2');
+  const [f0, setF0] = useState(true);
+  const [f0Method, setF0Method] = useState('rmvpe');
+  const [epochs, setEpochs] = useState(30);
+  const [saveEvery, setSaveEvery] = useState(10);
+  const [batchSize, setBatchSize] = useState(4);
+  const [pretrainG, setPretrainG] = useState('');
+  const [pretrainD, setPretrainD] = useState('');
+  const [saveEveryWeights, setSaveEveryWeights] = useState(true);
+  const [ifLatest, setIfLatest] = useState(true);
+  const [ifCacheGpu, setIfCacheGpu] = useState(false);
+  const [buildIndex, setBuildIndex] = useState(true);
+
+  const [plan, setPlan] = useState<VcTrainPlanResponse | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const payload = useMemo<VcTrainPayload>(
+    () => ({
+      name: name || 'my-voice',
+      corpus_dir: corpusDir,
+      sample_rate: sampleRate,
+      version,
+      f0,
+      f0_method: f0Method,
+      mode: 'full',
+      epochs,
+      save_every: saveEvery,
+      batch_size: batchSize,
+      pretrain_g: pretrainG,
+      pretrain_d: pretrainD,
+      save_every_weights: saveEveryWeights,
+      if_latest: ifLatest,
+      if_cache_gpu: ifCacheGpu,
+      build_index: buildIndex,
+    }),
+    [
+      name,
+      corpusDir,
+      sampleRate,
+      version,
+      f0,
+      f0Method,
+      epochs,
+      saveEvery,
+      batchSize,
+      pretrainG,
+      pretrainD,
+      saveEveryWeights,
+      ifLatest,
+      ifCacheGpu,
+      buildIndex,
+    ],
+  );
+
+  const runPlan = useCallback(async () => {
+    setPlanning(true);
+    try {
+      const result = await vcApi.trainPlan(payload);
+      setPlan(result);
+      setPlanError(null);
+    } catch (cause) {
+      setPlan(null);
+      setPlanError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPlanning(false);
+    }
+  }, [payload]);
+
+  // 参数一动就重新预检（防抖 500ms）：提交按钮的可用性直接挂在预检结论上。
+  useEffect(() => {
+    const timer = window.setTimeout(() => void runPlan(), 500);
+    return () => window.clearTimeout(timer);
+  }, [runPlan]);
+
+  const preflight = plan?.preflight ?? null;
+  const rates = preflight?.available_combos?.[version];
+  const rateOptions = rates?.length ? rates : ['32k', '40k', '48k'];
+  const pretrainedOptions = preflight?.available_pretrained ?? [];
+  const blocked = Boolean(preflight && !preflight.ok);
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await vcApi.train(payload);
+      setJobId(result.job_id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="full-name">音色名</Label>
+          <Input id="full-name" value={name} onChange={(e) => setName(e.target.value)} className="h-8 text-xs" />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="full-corpus">语料目录（本机路径，10~30 分钟干净干声）</Label>
+          <Input
+            id="full-corpus"
+            value={corpusDir}
+            onChange={(e) => setCorpusDir(e.target.value)}
+            placeholder="F:\\datasets\\my-voice"
+            className="h-8 font-mono text-xs"
+          />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>模型版本</Label>
+          <Select value={version} onValueChange={setVersion}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="v2">v2（768 维特征，推荐）</SelectItem>
+              <SelectItem value="v1">v1（256 维特征）</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>
+            采样率
+            {rates?.length ? <span className="ml-1 text-[11px] text-muted-foreground">（{version} 仅支持 {rates.join(' / ')}）</span> : null}
+          </Label>
+          <Select value={sampleRate} onValueChange={setSampleRate}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {['32k', '40k', '48k'].map((rate) => (
+                <SelectItem key={rate} value={rate} disabled={!rateOptions.includes(rate)}>
+                  {rate}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>
+            <TermTip term="F0 方法">F0 方法（基频提取）</TermTip>
+          </Label>
+          <div className="flex items-center gap-2">
+            <Switch checked={f0} onCheckedChange={setF0} id="full-f0" />
+            <Label htmlFor="full-f0" className="text-xs text-muted-foreground">
+              {f0 ? '启用（歌声 / 说话人克隆都要开）' : '关闭'}
+            </Label>
+          </div>
+        </div>
+        <div className="space-y-1.5">
+          <Label>提取算法</Label>
+          <Select value={f0Method} onValueChange={setF0Method} disabled={!f0}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {['rmvpe', 'pm', 'harvest', 'dio'].map((item) => (
+                <SelectItem key={item} value={item}>{item}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>
+            <TermTip term="epoch">训练轮数 {epochs}</TermTip>
+          </Label>
+          <Slider value={[epochs]} min={5} max={300} step={5} onValueChange={(v) => setEpochs(v[0])} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>每 N 轮存档 {saveEvery}</Label>
+          <Slider value={[saveEvery]} min={1} max={50} step={1} onValueChange={(v) => setSaveEvery(v[0])} />
+        </div>
+        <div className="space-y-1.5">
+          <Label>
+            <TermTip term="batch">批大小 {batchSize}</TermTip>
+          </Label>
+          <Slider value={[batchSize]} min={1} max={16} step={1} onValueChange={(v) => setBatchSize(v[0])} />
+        </div>
+
+        <div className="space-y-1.5">
+          <Label>
+            <TermTip term="底模">生成器底模 G（留空自动挑）</TermTip>
+          </Label>
+          <Select value={pretrainG || '__auto__'} onValueChange={(v) => setPretrainG(v === '__auto__' ? '' : v)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__auto__">自动挑选（推荐）</SelectItem>
+              {pretrainedOptions.map((item) => (
+                <SelectItem key={`g-${item}`} value={item}>{item}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label>
+            <TermTip term="底模">判别器底模 D（留空自动挑）</TermTip>
+          </Label>
+          <Select value={pretrainD || '__auto__'} onValueChange={(v) => setPretrainD(v === '__auto__' ? '' : v)}>
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__auto__">自动挑选（推荐）</SelectItem>
+              {pretrainedOptions.map((item) => (
+                <SelectItem key={`d-${item}`} value={item}>{item}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <div className="grid gap-2 rounded-lg border p-3 sm:grid-cols-2">
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="full-sw" className="text-xs">每个存档点单独存一份（-sw）</Label>
+          <Switch id="full-sw" checked={saveEveryWeights} onCheckedChange={setSaveEveryWeights} />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="full-latest" className="text-xs">只保留最新一份权重（-l）</Label>
+          <Switch id="full-latest" checked={ifLatest} onCheckedChange={setIfLatest} />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="full-cache" className="text-xs">数据集缓存进显存（-c，快但吃显存）</Label>
+          <Switch id="full-cache" checked={ifCacheGpu} onCheckedChange={setIfCacheGpu} />
+        </div>
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="full-index" className="text-xs">训完建检索索引</Label>
+          <Switch id="full-index" checked={buildIndex} onCheckedChange={setBuildIndex} />
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        {planning ? (
+          <p className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2 className="size-3 animate-spin" /> 正在预检参数…
+          </p>
+        ) : null}
+        {planError ? <p className="text-xs text-destructive">预检失败：{planError}</p> : null}
+
+        {preflight ? (
+          <div
+            className={cn(
+              'space-y-1.5 rounded-lg border p-3 text-xs',
+              preflight.ok ? 'border-border bg-muted/30' : 'border-destructive/50 bg-destructive/5',
+            )}
+          >
+            <p className={cn('font-medium', preflight.ok ? 'text-emerald-600' : 'text-destructive')}>
+              {preflight.ok ? '预检通过，可以提交' : '预检未通过 —— 以下问题跑下去必然失败'}
+            </p>
+            {preflight.issues.map((issue) => (
+              <p key={issue} className="flex gap-1.5 text-destructive">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <span>{issue}</span>
+              </p>
+            ))}
+            {preflight.warnings.map((warning) => (
+              <p key={warning} className="flex gap-1.5 text-amber-600 dark:text-amber-400">
+                <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                <span>{warning}</span>
+              </p>
+            ))}
+            {preflight.ok ? (
+              <p className="text-[11px] text-muted-foreground">
+                配置模板 <code className="font-mono">{preflight.config.template}</code> → 将写入{' '}
+                <code className="font-mono">{preflight.config.path}</code>
+                {preflight.pretrained.g || preflight.pretrained.d
+                  ? `；底模 G=${preflight.pretrained.g || '（无）'} / D=${preflight.pretrained.d || '（无）'}`
+                  : ''}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {plan && plan.stages.length > 0 ? (
+          <div className="rounded-lg border p-3">
+            <p className="text-xs font-medium">本次将依次跑 {plan.stages.length} 步</p>
+            <ol className="mt-1.5 space-y-1">
+              {plan.stages.map((stage, index) => (
+                <li key={stage.key} className="text-[11px] text-muted-foreground">
+                  <span className="mr-1 font-mono">{index + 1}.</span>
+                  {stage.label}
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+      </div>
+
+      {error ? <p className="text-xs text-destructive">{error}</p> : null}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          className={`h-8 text-xs ${accentSolid}`}
+          disabled={busy || !corpusDir || blocked}
+          onClick={() => void submit()}
+        >
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : null} 开始全量微调
+        </Button>
+        <Button size="sm" variant="outline" className="h-8 text-xs" disabled={planning} onClick={() => void runPlan()}>
+          重新预检
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          跑官方 train.py，出完整 .pth（比 LoRA 慢很多，但音色更像）。全量训练<b>不需要</b>先有底模——缺底模只是从零训。
+        </p>
+      </div>
+
       <JobPanel
         jobId={jobId}
         onComplete={onTrained}

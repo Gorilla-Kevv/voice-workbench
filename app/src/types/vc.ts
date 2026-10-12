@@ -179,6 +179,15 @@ export interface VcTrainPayload {
   alpha?: number;
   learning_rate?: number;
   keep_workdir?: boolean;
+  /** 官方 train.py 的 `-sw`：每个存档点都单独存一份权重 */
+  save_every_weights?: boolean;
+  /** 官方 train.py 的 `-l`：只保留最新一份权重 */
+  if_latest?: boolean;
+  /** 官方 train.py 的 `-c`：把数据集缓存进显存（快但吃显存） */
+  if_cache_gpu?: boolean;
+  /** 全量模式手动指定底模（留空则由服务端按官方口径自动挑） */
+  pretrain_g?: string;
+  pretrain_d?: string;
 }
 
 export interface VcTrainStage {
@@ -187,10 +196,30 @@ export interface VcTrainStage {
   command: string;
 }
 
+/**
+ * 训练预检（阶段 29 新增，服务端 `training.preflight()`）。
+ *
+ * 存在的理由：`full` 模式改前是「提交后跑十几分钟才炸」，
+ * 采样率 × 版本不合法、缺官方配置模板这类问题现在**提交前**就能看到。
+ */
+export interface VcTrainPreflight {
+  ok: boolean;
+  /** 阻塞项：跑下去必然失败 */
+  issues: string[];
+  /** 非阻塞：能跑但结果打折（如缺底模 → 从零训练） */
+  warnings: string[];
+  config: { path: string; template: string; template_exists: boolean };
+  pretrained: { g: string; d: string; available: string[]; note: string };
+  available_combos: Record<string, string[]>;
+  available_pretrained: string[];
+}
+
 export interface VcTrainPlanResponse {
   ok: boolean;
   stages: VcTrainStage[];
   request: VcTrainPayload;
+  /** 服务端预检结论；老版本后端没有这个字段 */
+  preflight?: VcTrainPreflight;
 }
 
 export interface VcTrainSubmitResponse {
