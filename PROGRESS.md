@@ -5,7 +5,8 @@
 ## 进度看板
 - 当前正在开发任务：**阶段 30（P0）+ 31（P1）+ 32（P2）+ 33（P3·部分）已完成** —— 音色模型统一管理「看得见 + 管得住 + 产出可查 + 体验收尾」：网关 `modelRegistry.ts` + `/api/models/*` 全套读写；RVC 多根递归扫描使可见模型 5 → 18；`weight_root` 改指模型自身目录让**嵌套模型可加载**；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`；**产出记录页取代历史记录**（三源合并：`GET /v1/jobs` + `/api/models/*` + 云端 IndexedDB）；阶段 33 补了**未识别文件提示**（散文件不再被静默丢弃）与**变声 / 翻唱两页模型库接统一数据源**，并给 ddsp-svc 补了两个兼容旧根避免模型消失
 - 最新完成：**阶段 29补2 = RVC 训练前端入口（T3）已落地**（10.12 13:47 BY Qoder）——「训练音色（RVC）」独立成卡，LoRA / 全量两条官方路径都在，全量表单带**提交前预检**；typecheck / eslint / vite build 全过，**真机冒烟待用户起服务走一遍**
-- 下一阶段：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本参考音频 / 微调权重两个 Tab + 合成下拉接注册表），方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3。进门先读阶段 33 条目的「下一阶段入口」
+- 最新完成：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本官方底模 / 微调自训权重）已落地（10.12 14:45 BY Qoder）—— `SovitsVoicePicker` 加权重来源 Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`；typecheck / eslint / vite build 全过，**真机冒烟待用户**
+- 当前无正在开发的阶段：**剩下三项都是「需用户在真机上点一遍」的验证**（产出记录页走查 / RVC 训练入口冒烟 / 变声翻唱换源加载验证），做完再开新功能
 - 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
@@ -2638,3 +2639,64 @@ P0 的导入仍走各引擎页原有的上传入口。
 选中即 `loadWeights`；顺带把变声 / 翻唱的**合成下拉**也接到注册表（与模型库共用同一份列表）。
 
 - 本次文档更新时间：10.10 01:17
+
+## 阶段 34 —— GPT-SoVITS 两段式选择器（零样本 / 微调权重）[计划时间：10.12 14:20 BY Qoder][完成时间：10.12 14:45 BY Qoder]
+
+- 分支：feature/vc-svc
+- 方案：`docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 第 16 项的 GPT-SoVITS 部分。
+
+### 开工前核对到的契约（免得写完才发现对不上）
+
+- 后端 `/v1/tts` 的 `TTSRequest` 同时接受 `voice`（音色库 id）**与** `gpt` / `sovits`（自训权重绝对路径）+ `version`；
+  provider `gpt-sovits.ts` 已经在透传 `fields.gpt` / `fields.sovits`，**前端只需把值填进 providerFields**。
+- **参考音频在两种模式下都必需**（`synth.py::resolve_reference()` 的解析顺序：`voice` → `ref_audio_path` → 报错）。
+  所以「两段式」不是「二选一」，而是「**用官方底模**还是**用自训权重**」，参考音频那一栏两种模式都要在。
+  这条是本阶段最容易做错的地方 —— 按「参考音频 / 权重二选一」去写，微调模式下会必然报「GPT-SoVITS 必须有参考音频」。
+- `/v1/weights` 返回 `{gpt[], sovits[], default, active, pretrained}`，条目含 `path`（绝对路径）/ `name` / `trained`
+  （`trained` = 位于 `*_weights*` 目录，即用户训练产物）；`/v1/weights/load` 收 `{version,gpt,sovits,device,is_half,eager}`。
+
+### 已完成
+
+| 文件 | 内容 |
+| --- | --- |
+| `app/src/components/features/SovitsVoicePicker.tsx` | 新增「权重来源」Tabs：**零样本（官方底模）** / **微调模型（自训权重）**；`SovitsSelection` 增 `weightMode` / `gpt` / `sovits`；微调面板含 GPT+SoVITS 双下拉（`trained` 打「自训」徽标）、刷新、**「加载到显存」热切换**（`/v1/weights/load`，带 `eager`）、显存中权重状态回显；「参考音频」标题改为两模式共用并注明 |
+| `app/src/pages/SynthesisPage.tsx` | 初始 `weightMode: 'zero-shot'`；提交时按模式组装 `providerFields` —— 微调下发 `gpt`/`sovits`，零样本**删键**（不是留空），避免与设置页默认字段合并后残留旧路径 |
+
+### 范围决策（本轮**不做**的一项，写下来免得下次重新吵）
+
+- 变声 / 翻唱两页的**合成下拉**换源到 `/api/models` —— 本轮不做。
+  理由：阶段 33 已实测「引擎 id 集合 == 注册表主权重茎集合（13/13，diff=0）」，换源**无功能收益**，
+  却要动已经验证过的转换主链路（引擎目录由引擎自己提供，网关挂了也不影响）；
+  而这两页的「真机加载验证」本身还没做（阶段 33 遗留）。留到那一轮一起做更安全。
+
+### 测试结果
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck`（app + server） | 零报错（中途 2 处 TS2322：`providerFields` 是 `Record<string,string>`，不能塞 `undefined` → 改为「按模式删键」） |
+| `npx eslint`（2 个改动文件） | 零告警 |
+| `npx vite build` | 1900 modules transformed **成功**（917.01 kB，+4.8 kB 为新增 UI；产物已清理） |
+| `/v1/weights`、`/v1/weights/load` 实调 | **未做** —— trainer 未运行，只做了字段级契约核对 |
+
+### 未完成
+
+- **真机冒烟**：起服务后走一遍「零样本合成 → 切到微调 → 选一对自训权重 → 加载到显存 → 合成」，
+  并确认切回零样本后不再带权重路径。需要用户起 trainer（9881）并占用显存。
+- 变声 / 翻唱的合成下拉换源（见上方范围决策）。
+
+### 风险
+
+- 「加载到显存」是**热切换**：点了之后引擎里那对权重就换了，**页面上不点也会在下次合成时按 `gpt`/`sovits` 字段加载**
+  （服务端 `configure()` 在合成链路里生效）。界面已用「当前显存里是另一对权重」提示这个落差。
+- 权重清单按 `value.version` 过滤：训的是 v2 而这里选了 v2ProPlus 就**看不到**自己训的权重（界面已写明）。
+- 若用户从设置页的 providerFields 里手填过 `gpt`/`sovits`，零样本分支的 `delete` 会把它们清掉 —— 这是**有意为之**
+  （否则切回零样本会静默继续用自训权重），但会覆盖设置页的固化值。
+
+### 下一阶段入口
+
+按 `HANDOFF.md`「下一步」表的优先级，剩下三项都是**需要用户在真机上点一遍**的验证：
+① 产出记录页人工走查（阶段 32 遗留）② RVC 训练前端入口冒烟（阶段 29补2 遗留）
+③ 变声 / 翻唱换源后的真机加载验证（阶段 33 遗留）。**这三项做完再开新功能**。
+新功能候选：阶段 30（Irodori，卡 4 个拍板问题）、DDSP-SVC 训练入口（P5）、`ddsp-svc` 旧根收口。
+
+- 本次文档更新时间：10.12 14:38

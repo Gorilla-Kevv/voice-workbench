@@ -781,6 +781,12 @@
   **前端入口已补齐（阶段 29补2，10.12）**：变声页独立「训练音色（RVC）」卡，LoRA / 全量两个 Tab；
   全量表单带**提交前预检**（防抖调 `/v1/vc/train/plan`，阻塞项红字、底模缺失只警告）。
   **遗留**：真机冒烟（要起服务走一遍）、MHA 排雷（T6）
+- **GPT-SoVITS 已能选自训权重（阶段 34，10.12）**：合成页 `SovitsVoicePicker` 加「零样本（官方底模）/
+  微调模型（自训权重）」两段式 —— 微调面板列 `/v1/weights` 的 GPT+SoVITS 对（`trained` 打「自训」徽标）、
+  可一键**加载到显存**（`/v1/weights/load` 带 `eager`），`SynthesisPage` 按模式把 `gpt`/`sovits` 塞进
+  `providerFields`（零样本走**删键**，避免与设置页默认值合并后残留旧权重）。
+  **关键认知**：参考音频在两种模式下都必需（`synth.py::resolve_reference()` 拿不到就报错），
+  两段式分的只是「官方底模 vs 自训权重」。**遗留**：真机冒烟
 
 ### 验收标准
 
@@ -797,7 +803,8 @@
 | --- | --- | --- |
 | 高 | **产出记录页的浏览器人工走查（阶段 32 遗留验收）** | 跑一次 RVC 变声 + 一次翻唱 + 一次训练，三条记录都要出现在「产出记录」，且能内联播放、能复制本机路径。数据源已实测可用（`total=45`，音频地址加前缀 200），只差用户在浏览器点一遍 |
 | 高 | **RVC 训练前端入口的真机冒烟（阶段 29补2 遗留）** | 前端已落地（独立训练卡 + 全量表单 + 提交前预检），typecheck / eslint / vite build 全过。只差起服务后在浏览器走一遍：变声页 → 训练音色 → 全量微调，**故意把采样率改成 v2 + 40k 看预检报红并禁用提交** → 改回 32k 提交一次小 epochs 训练 |
-| 中 | **阶段 34：GPT-SoVITS 两段式选择器 + 合成下拉接注册表** | `SovitsVoicePicker` 加 Tabs「参考音频（零样本）」/「微调权重（`/v1/weights`）」，选中即 `loadWeights`；再把变声 / 翻唱的**合成下拉**也接到 `/api/models`（现在只有模型库接了）。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
+| 中 | **阶段 34 的真机冒烟（GPT-SoVITS 两段式选择器）** | 前端已落地：`SovitsVoicePicker` 的「零样本 / 微调权重」Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`。要起服务走一遍：零样本合成 → 切微调选一对自训权重 → 加载到显存 → 合成 → **切回零样本确认不再带权重路径** |
+| 低 | 变声 / 翻唱两页的**合成下拉**换源到 `/api/models` | 阶段 34 有意留后（无功能收益 + 要动已验证的转换主链路），建议与「变声 / 翻唱真机加载验证」同一轮做。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
 | 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
 | 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |

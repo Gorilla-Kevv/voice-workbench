@@ -47,6 +47,8 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
     textLang: 'zh',
     splitMethod: 'cut5',
     promptLang: 'zh',
+    // 默认零样本：不训练也能出声，是绝大多数人的第一步
+    weightMode: 'zero-shot',
   });
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -110,6 +112,25 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
     if (isSovits) {
       // 本地模型：把页面上的选择叠加到 Provider 字段上，
       // 这样「默认音色」既可以在设置页固化，也可以在这里临时改。
+      const sovitsFields: Record<string, string> = {
+        ...(settings.providerFields['gpt-sovits'] ?? {}),
+        voice: sovits.voiceId,
+        version: sovits.version,
+        prompt_lang: sovits.promptLang,
+        text_lang: sovits.textLang,
+        text_split_method: sovits.splitMethod,
+      };
+      // 只有微调模式才下发权重路径；零样本 = 服务端用官方底模。
+      // 零样本这一支**必须把键删掉**（而不是留空/给 undefined）：providerFields 会与
+      // 设置页的默认字段合并，残留旧路径会让用户以为切回了零样本、实际还在用自训权重。
+      if (sovits.weightMode === 'finetuned' && sovits.gpt && sovits.sovits) {
+        sovitsFields.gpt = sovits.gpt;
+        sovitsFields.sovits = sovits.sovits;
+      } else {
+        delete sovitsFields.gpt;
+        delete sovitsFields.sovits;
+      }
+
       void controller.run(
         {
           mode: 'preset',
@@ -119,16 +140,13 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
           autoSegment: settings.autoSegment,
         },
         {
-          voiceLabel: sovits.voiceId ? '本地音色' : '未选择音色',
+          voiceLabel: sovits.voiceId
+            ? sovits.weightMode === 'finetuned'
+              ? '本地音色 · 自训权重'
+              : '本地音色'
+            : '未选择音色',
           providerId: settings.providerId,
-          providerFields: {
-            ...(settings.providerFields['gpt-sovits'] ?? {}),
-            voice: sovits.voiceId,
-            version: sovits.version,
-            prompt_lang: sovits.promptLang,
-            text_lang: sovits.textLang,
-            text_split_method: sovits.splitMethod,
-          },
+          providerFields: sovitsFields,
         },
       );
       return;

@@ -1,15 +1,20 @@
-import { useEffect, useState } from 'react';
-import { AlertTriangle, Info, Loader2, RefreshCw, Waves } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, Cpu, Info, Loader2, RefreshCw, Waves } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TermTip } from '@/components/features/TermTip';
 import { sovitsApi } from '@/lib/sovits';
 import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
-import type { SovitsCatalog, SovitsVoice } from '@/types';
+import type { SovitsCatalog, SovitsVoice, SovitsWeightList } from '@/types';
+
+/** 权重来源：零样本走官方底模，微调走自己训出来的那对权重。 */
+export type SovitsWeightMode = 'zero-shot' | 'finetuned';
 
 export interface SovitsSelection {
   voiceId: string;
@@ -17,6 +22,12 @@ export interface SovitsSelection {
   textLang: string;
   splitMethod: string;
   promptLang: string;
+  /** 用官方底模（零样本）还是自训权重（微调） */
+  weightMode: SovitsWeightMode;
+  /** 自训 GPT 权重绝对路径（仅 weightMode === 'finetuned' 时随请求下发） */
+  gpt?: string;
+  /** 自训 SoVITS 权重绝对路径（同上） */
+  sovits?: string;
 }
 
 interface SovitsVoicePickerProps {
@@ -36,6 +47,12 @@ export function SovitsVoicePicker({ value, onChange }: SovitsVoicePickerProps) {
   const [catalog, setCatalog] = useState<SovitsCatalog | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // 自训权重（微调模式用）
+  const [weights, setWeights] = useState<SovitsWeightList | null>(null);
+  const [weightsLoading, setWeightsLoading] = useState(false);
+  const [weightsError, setWeightsError] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -63,6 +80,56 @@ export function SovitsVoicePicker({ value, onChange }: SovitsVoicePickerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  /**
+   * 拉自训权重清单（`/v1/weights`）。
+   *
+   * 只在「微调」模式下才需要 —— 零样本走官方底模，拉回来也是白拉。
+   * 换版本要重拉：该端点是**按版本过滤**的。
+   */
+  const loadWeights = useCallback(async () => {
+    setWeightsLoading(true);
+    try {
+      const result = await sovitsApi.weights(value.version);
+      setWeights(result);
+      setWeightsError(null);
+      // 给一对合理默认值：优先带 `trained` 的（自己训出来的），其次列表第一个。
+      // 注意两处 patch 要合成**一次** onChange —— 分两次会拿同一个旧 value 互相覆盖。
+      const patch: Partial<SovitsSelection> = {};
+      const firstGpt = result.gpt.find((item) => item.trained) ?? result.gpt[0];
+      const firstSovits = result.sovits.find((item) => item.trained) ?? result.sovits[0];
+      if (!value.gpt && firstGpt) patch.gpt = firstGpt.path;
+      if (!value.sovits && firstSovits) patch.sovits = firstSovits.path;
+      if (Object.keys(patch).length > 0) onChange({ ...value, ...patch });
+    } catch (err) {
+      setWeights(null);
+      setWeightsError(err instanceof Error ? err.message : '无法读取权重清单');
+    } finally {
+      setWeightsLoading(false);
+    }
+  }, [value, onChange]);
+
+  useEffect(() => {
+    if (value.weightMode !== 'finetuned') return;
+    void loadWeights();
+    // 只在切到微调模式 / 换版本时重拉：onChange 每次都换新引用，进了依赖就是死循环
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value.weightMode, value.version]);
+
+  /** 把选中的那对权重热加载进显存 —— 等价于官方 WebUI 的「加载模型」按钮。 */
+  const applyWeights = async () => {
+    if (!value.gpt || !value.sovits) return;
+    setApplying(true);
+    try {
+      await sovitsApi.loadWeights({ version: value.version, gpt: value.gpt, sovits: value.sovits });
+      toast.success('权重已加载到显存', { description: '接下来这条合成会用这对权重。' });
+      void loadWeights();
+    } catch (err) {
+      toast.error('加载失败', { description: err instanceof Error ? err.message : String(err) });
+    } finally {
+      setApplying(false);
+    }
+  };
+
   const selected = voices.find((voice) => voice.id === value.voiceId);
 
   /**
@@ -89,13 +156,149 @@ export function SovitsVoicePicker({ value, onChange }: SovitsVoicePickerProps) {
     );
   }
 
+  const activeGpt = weights?.active.gpt ?? null;
+  const activeSovits = weights?.active.sovits ?? null;
+  const selectedGpt = weights?.gpt.find((item) => item.path === value.gpt);
+  const selectedSovits = weights?.sovits.find((item) => item.path === value.sovits);
+  /** 选中的这对权重是否**已经**在显存里 —— 决定「加载到显存」按钮要不要高亮 */
+  const weightsActive =
+    Boolean(activeGpt && activeSovits) && activeGpt === value.gpt && activeSovits === value.sovits;
+
   return (
     <div className="space-y-3">
+      {/*
+        权重来源：这是「零样本 vs 微调」的分叉点。
+        注意它**不是**「参考音频 / 权重」二选一 —— 参考音频在两种模式下都必需
+        （`synth.py::resolve_reference()` 拿不到参考音频就直接报错），
+        这里选的只是「用官方底模，还是用自己训的那对权重」。
+      */}
+      <Tabs
+        value={value.weightMode}
+        onValueChange={(next) => onChange({ ...value, weightMode: next as SovitsWeightMode })}
+      >
+        <TabsList className="grid w-full grid-cols-2">
+          <TabsTrigger value="zero-shot">零样本（官方底模）</TabsTrigger>
+          <TabsTrigger value="finetuned">微调模型（自训权重）</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="zero-shot" className="pt-3">
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            用官方底模 + 一段 3~10 秒参考音频直接合成，<strong>不需要训练</strong>。
+            音色像不像主要取决于参考音频的干净程度与时长。
+          </p>
+        </TabsContent>
+
+        <TabsContent value="finetuned" className="space-y-2 pt-3">
+          <div className="flex items-center justify-between">
+            <Label className="flex items-center gap-1.5 text-xs">
+              <Cpu className="size-3.5" />
+              GPT + SoVITS 权重（一对）
+            </Label>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2"
+              onClick={() => void loadWeights()}
+              disabled={weightsLoading}
+            >
+              <RefreshCw className={cn('size-3', weightsLoading && 'animate-spin')} />
+            </Button>
+          </div>
+
+          {weightsError ? (
+            <p className="text-xs text-destructive">权重清单读取失败：{weightsError}</p>
+          ) : null}
+
+          <div className="grid gap-2 sm:grid-cols-2">
+            <Select
+              value={value.gpt ?? ''}
+              onValueChange={(next) => onChange({ ...value, gpt: next })}
+              disabled={weightsLoading || !weights?.gpt.length}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder={weightsLoading ? '读取中…' : '选择 GPT 权重'} />
+              </SelectTrigger>
+              <SelectContent>
+                {(weights?.gpt ?? []).map((item) => (
+                  <SelectItem key={item.path} value={item.path}>
+                    <span className="flex items-center gap-2">
+                      {item.name}
+                      {item.trained ? (
+                        <Badge variant="secondary" className="h-4 text-[10px] font-normal">
+                          自训
+                        </Badge>
+                      ) : null}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={value.sovits ?? ''}
+              onValueChange={(next) => onChange({ ...value, sovits: next })}
+              disabled={weightsLoading || !weights?.sovits.length}
+            >
+              <SelectTrigger className="h-9">
+                <SelectValue placeholder={weightsLoading ? '读取中…' : '选择 SoVITS 权重'} />
+              </SelectTrigger>
+              <SelectContent>
+                {(weights?.sovits ?? []).map((item) => (
+                  <SelectItem key={item.path} value={item.path}>
+                    <span className="flex items-center gap-2">
+                      {item.name}
+                      {item.trained ? (
+                        <Badge variant="secondary" className="h-4 text-[10px] font-normal">
+                          自训
+                        </Badge>
+                      ) : null}
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          {!weightsLoading && weights && weights.gpt.length === 0 && weights.sovits.length === 0 ? (
+            <p className="text-xs text-amber-600 dark:text-amber-400">
+              这个版本下没有任何权重。到「音色微调训练」页跑一次训练，产物会自动出现在这里。
+            </p>
+          ) : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              variant={weightsActive ? 'outline' : 'default'}
+              className="h-7 text-xs"
+              disabled={applying || !value.gpt || !value.sovits}
+              onClick={() => void applyWeights()}
+            >
+              {applying ? <Loader2 className="mr-1.5 size-3 animate-spin" /> : null}
+              {weightsActive ? '已加载（重新加载）' : '加载到显存'}
+            </Button>
+            {weightsActive ? (
+              <span className="text-[11px] text-muted-foreground">
+                显存中：{selectedGpt?.name ?? '?'} + {selectedSovits?.name ?? '?'}
+              </span>
+            ) : activeGpt && activeSovits ? (
+              <span className="text-[11px] text-muted-foreground">
+                当前显存里是另一对权重 —— 不点「加载到显存」的话，合成用的还是它。
+              </span>
+            ) : null}
+          </div>
+
+          <p className="text-[11px] leading-snug text-muted-foreground">
+            微调模型<strong>同样需要</strong>一段该说话人的参考音频作为提示 —— 下面的参考音频照常选。
+            训练产物若不在本页版本下（比如训的是 v2 而这里选了 v2ProPlus），列表里不会出现。
+          </p>
+        </TabsContent>
+      </Tabs>
+
       <div className="space-y-2">
         <div className="flex items-center justify-between">
           <Label className="flex items-center gap-1.5">
             <Waves className="size-3.5" />
-            本地音色
+            参考音频
+            <span className="text-[11px] font-normal text-muted-foreground">（两种模式都要选）</span>
           </Label>
           <Button size="sm" variant="ghost" className="h-6 px-2" onClick={() => void load()} disabled={loading}>
             <RefreshCw className={cn('size-3', loading && 'animate-spin')} />
