@@ -7,10 +7,11 @@ import { logger } from '../lib/logger.js';
  * ============================================================
  * 作用域的硬边界（这是本文件存在的第一前提）
  * ============================================================
- * 本系统 = 本项目自己拉起的三个 Python 服务：
+ * 本系统 = 本项目自己拉起的四个 Python 服务：
  *   - GPT-SoVITS 本地服务（`config.sovits.baseUrl`，默认 127.0.0.1:9881）
  *   - 网易模块服务（`config.netease.baseUrl`，默认 127.0.0.1:9882）
  *   - IndexTTS 服务（`config.indextts.baseUrl`，默认 127.0.0.1:9883）
+ *   - Irodori 服务（`config.irodori.baseUrl`，默认 127.0.0.1:9884）
  * 仲裁器**只向这几个地址发请求**，而且发之前会校验目标是回环地址（见 `assertOwnService`）。
  * 它不扫描进程、不 taskkill 任何 PID、不认识也不触碰电脑上其它任何程序 ——
  * 浏览器、安卓模拟器、游戏占的显存一概不管（那部分由界面提示用户自己处理）。
@@ -25,11 +26,11 @@ import { logger } from '../lib/logger.js';
  */
 
 /** 本系统内的引擎标识 → 它属于哪个服务 */
-export type FocusEngine = 'netease-tts' | 'netease-asr' | 'indextts-tts' | 'sovits' | 'training' | 'rvc' | 'svc' | 'uvr5' | 'asr';
+export type FocusEngine = 'netease-tts' | 'netease-asr' | 'indextts-tts' | 'irodori-tts' | 'sovits' | 'training' | 'rvc' | 'svc' | 'uvr5' | 'asr';
 
-type ServiceName = 'sovits' | 'netease' | 'indextts';
+type ServiceName = 'sovits' | 'netease' | 'indextts' | 'irodori';
 
-const ALL_SERVICES: ServiceName[] = ['sovits', 'netease', 'indextts'];
+const ALL_SERVICES: ServiceName[] = ['sovits', 'netease', 'indextts', 'irodori'];
 
 /** 每个服务的「卸载自己全部模型」入口（POST），按优先级排列 */
 const RELEASE_ENDPOINTS: Record<ServiceName, string[]> = {
@@ -37,17 +38,20 @@ const RELEASE_ENDPOINTS: Record<ServiceName, string[]> = {
   sovits: ['/v1/engines/unload', '/v1/pipeline/unload'],
   netease: ['/v1/confucius/unload', '/v1/r2t2/unload'],
   indextts: ['/v1/unload'],
+  irodori: ['/v1/unload'],
 };
 
 function serviceOf(engine: FocusEngine): ServiceName {
   if (engine === 'netease-tts' || engine === 'netease-asr') return 'netease';
   if (engine === 'indextts-tts') return 'indextts';
+  if (engine === 'irodori-tts') return 'irodori';
   return 'sovits';
 }
 
 function baseUrlOf(service: ServiceName): string {
   if (service === 'netease') return config.netease.baseUrl;
   if (service === 'indextts') return config.indextts.baseUrl;
+  if (service === 'irodori') return config.irodori.baseUrl;
   return config.sovits.baseUrl;
 }
 

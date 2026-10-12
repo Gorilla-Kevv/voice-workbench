@@ -16,7 +16,7 @@ import { sovitsSupervisor } from './sovits.js';
  * 8 GB 卡装不下两套常驻模型，所以预加载的第一件事是**把另一套让出去**。
  */
 
-export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'sovits' | 'none';
+export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'irodori-tts' | 'sovits' | 'none';
 
 /**
  * 每个模型的显存账本。
@@ -28,6 +28,9 @@ export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'sovits' | 'none';
  *   （阶段 26 实测：加载后 nvidia-smi 空闲从 5548 → 281 MB，**实际常驻约 5.3 GB**，
  *   3072 是加载前的准入口径，偏低 —— 与 netease 不同它没有更大的门槛值可引，
  *   门槛本身待用户在合成实测中确认是否要上调）
+ * - irodori-tts 4700 ← `irodori/app/config.py::REQUIRED_VRAM_MB['int4']`
+ *   （阶段 28 实测净占 ~4.6 GB；`/health` 的 `required_vram_mb` 是唯一真源，
+ *   这里只是预加载账本的**副本**，改门槛两处都要动）
  */
 const MODELS: Record<Exclude<PreloadModel, 'none'>, {
   label: string;
@@ -77,6 +80,26 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
       }).catch(() => undefined);
     },
   },
+  'irodori-tts': {
+    label: 'Irodori-TTS（日语）',
+    vram_mb: 4700,
+    warmup: async () => {
+      await fetch(`${config.irodori.baseUrl}/v1/warmup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(0), // 实测加载 ~20s，不设超时
+      });
+    },
+    release: async () => {
+      await fetch(`${config.irodori.baseUrl}/v1/unload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(30_000),
+      }).catch(() => undefined);
+    },
+  },
   sovits: {
     label: 'GPT-SoVITS',
     vram_mb: 3072,
@@ -115,7 +138,7 @@ interface Preference {
 function readPreference(): Preference {
   try {
     const parsed = JSON.parse(fs.readFileSync(FLAG_FILE, 'utf8')) as Partial<Preference>;
-    if (parsed.model && ['netease-tts', 'indextts-tts', 'sovits', 'none', 'ask'].includes(parsed.model)) {
+    if (parsed.model && ['netease-tts', 'indextts-tts', 'irodori-tts', 'sovits', 'none', 'ask'].includes(parsed.model)) {
       return { model: parsed.model as Preference['model'], updatedAt: parsed.updatedAt ?? 0 };
     }
   } catch {

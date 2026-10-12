@@ -19,7 +19,7 @@
 | 网易模块 `netease/` | **主服务**：本机 py3.12 独立 venv + torch 2.7.0+cu126 + FastAPI；端口 9882，`npm run dev` 自动拉起 |
 | GPT-SoVITS | **辅助服务**（训练链 + 批量合成仍靠它）：Python 3.9 整合包 + FastAPI；端口 9881 |
 | IndexTTS `indextts/` | 第四个运行时之一：独立 venv + FastAPI；端口 9883 |
-| Irodori-TTS `irodori/` | **日语特化**（阶段 30 接入中）：独立 venv（**py3.12 + torch 2.10.0+cu128**）+ FastAPI；端口 9884 |
+| Irodori-TTS `irodori/` | **日语特化**（阶段 30 接入中：30-1 环境 + 30-2 推理链路已完成）：独立 venv（**py3.12 + torch 2.10.0+cu128**）+ FastAPI；端口 9884 |
 | 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重）、Irodori v4.1-Small（日语，int4 推理档 + bf16 训练基座） |
 
 ### 运行环境路径（新会话直接照抄，别重新找）
@@ -79,6 +79,7 @@
 | `trainer/tools/uvr_cli.py` | UVR5 非交互封装（调官方 `vr.py`/`mdxnet.py`，不改官方代码） |
 | `netease/` | **第二个 Python 运行时**（py≥3.10）：`server.py`、`app/tts_engine.py`（Confucius4-TTS 直连）、`app/r2t2.py` + `app/r2t2_worker.py`（R2T2 子进程 worker，vLLM 需 main 环境）、`app/engine.py`（引擎互斥）。上游 API 漂移只改 `tts_engine.py` / `r2t2_worker.py` 两个薄文件 |
 | `indextts/` | **第三个 Python 运行时**（uv 环境在 `upstream/.venv`，py3.11 + torch 2.8 cu128）：`server.py`、`app/{config,hardware,errors,indextts_engine,api}.py`。上游 `upstream/` 是 `git clone --depth 1` 的官方仓库（不改一行），权重在 `upstream/checkpoints/`（5.11 GB，ModelScope 下载）。端点：`/health`、`/v1/catalog`、`/v1/pipeline|warmup|unload`、`/v1/synth`（multipart：text/lang/file 或 ref_path/duration_factor/emo_vector/emo_file/emo_alpha）。上游 API 漂移只改 `indextts_engine.py` 一个薄文件 |
+| `irodori/` | **第四个 Python 运行时**（venv 在 `irodori/.venv`，py3.12 + torch 2.10 cu128）：`server.py`、`app/{config,hardware,errors,inventory,windecode,api,engine,catalog,synth}.py`。`engine.py` 懒加载（上游 `get_cached_runtime` 单实例缓存）+ 显存准入（已加载跳过）+ 合成互斥；`catalog.py` 的 emoji 表**从上游源码 ast 解析**（不 import torch/gradio）；`synth.py` 收口日语校验 / 服务端切句 ≤25 字/段 / 参考三形态互斥。上游 `upstream/{Irodori-TTS,dacvae}/` 只读（tarball 来源锁定）；权重 `models/`、清单 `weights.manifest.json` 进版本库。端点：`/health`、`/v1/catalog|warmup|unload|synth|speakers`。上游 API 漂移只改 `engine.py`（RuntimeKey/SamplingRequest 映射）一个薄文件 |
 | `voicelib/` | **音色库共享存储**（仓库根，不进版本库）：`voices.json` + `voices/<id>.<ext>`。网关（`server/src/services/voiceLibrary.ts`）与 trainer（`app/sovits/voices.py`）读写同一份，位置由 `VOICES_LIB_DIR` 统一覆盖。曾住 `trainer/.data/`，阶段 26补7 迁出（旧索引改名 `.migrated-to-voicelib` 保留） |
 
 ### 入口文件
@@ -100,6 +101,14 @@
 - IndexTTS 端点（经网关 `/api/indextts/*` 透传）：`/health`（同 netease 哲学，永远 200）、
   `/v1/catalog`（语种/滑杆范围/情感维度/**准入门槛**——门槛真源在服务端，坑 19）、
   `/v1/pipeline`、`/v1/warmup`、`/v1/unload`、`/v1/synth`（multipart，返回 base64 音频）
+- Irodori 端点（经网关 `/api/irodori/*` 透传，阶段 30-2）：`/health`（永远 200；`loaded` 现在接引擎真值）、
+  `/v1/catalog`（emoji 56 个 × 官方释义、caption 预设、步数档 `[20,40]` 默认 20、仅 `ja`、
+  `max_ref_seconds=120` —— **前端不要自己抄一份**）、`/v1/warmup`（`?blocking=false` 后台加载；
+  **已加载直接返回不拦**）、`/v1/unload`（回报 `freed_mb`）、`/v1/speakers`、
+  `/v1/synth`（JSON body：`text/caption/num_steps/schedule/seed/duration_scale` +
+  参考三选一 `ref_voice`（音色库 id）/`ref_path`/`speaker_id`（互斥）；返回 base64 PCM_16 WAV）。
+  错误码：`NO_JA_ONLY` / `REF_REQUIRED` / `REF_CONFLICT` / `REF_TOO_SHORT` / `VOICE_NOT_FOUND` /
+  `TEXT_TOO_LONG` / `VRAM_INSUFFICIENT`(503) / `ENGINE_BUSY`(409) / `ENGINE_LOAD_FAILED`(503)
 - 音色库端点（网关原生 `/api/voicelib/*`，阶段 26补7，**不依赖任何 Python 服务**）：
   `GET /`、`GET /:id`、`GET /:id/audio`、`POST /`（原始字节体 + 查询参数元数据）、`POST /source`、
   `PATCH /:id`、`POST /:id/audio`、`DELETE /:id`；trainer 的 `/v1/voices*` 保留且读写同一份数据（坑 27）
@@ -164,6 +173,7 @@
 | TTS 默认 **fp16**，且只转三个大户（T2S / S2A / w2v-bert） | 上游全 fp32 约 7.5 GB，8 GB 卡必 OOM；BigVGAN / CAMPPlus 只占 0.45 GB / 几十 MB，留 fp32 反而避开两处 dtype 冲突（见坑 15） |
 | 上游推理配置**不直接用**，复制成绝对路径副本再交给上游 | `inference_config.yaml` 里 `tokenizer_path` / `w2v_stat` 是相对路径、按 CWD 解析；服务从项目根启动就会找不到 |
 | 权重下载**自己写脚本**，不用 `huggingface-cli download --local-dir` | 上游只认 HF 缓存（坑 13），且需要按实测速度在 ModelScope / 代理 / 直连之间选路（坑 14） |
+| **Irodori 推理链路的三条小决策（阶段 30-2）** | ① **校验顺序 = 请求校验 → 显存准入 → 互斥**：改了请求就能修好的错（路径写错/非日语）不该被显存状态挡住；② **catalog 常量从上游源码 ast 解析**（emoji 全集在 `duration.py`、官方释义在 `gradio_emoji_palette.py`），不 import torch/gradio，上游升级自动跟随；③ **并发合成一律 409 拒绝而非排队**：8GB 卡排队第二条也是显存抖动，让调用方自己串行 |
 
 ### 已知坑（重要，改代码前先看）
 
@@ -682,6 +692,21 @@
     直接换源的话 `total` 从 1 变 0。已给该类别补两根兼容根（RVC 在 P0 踩过同一个坑，坑 51）。
     **下一个要接数据源的类别，先跑一遍 `GET /api/models?category=<key>` 与引擎目录比对数量。**
 
+61. **RuntimeSupervisor 的 flag 文件缺失时会 fallback 到 `defaultEnabled`（阶段 30-2 实测）**
+    `server/.data/<id>-service.json` 不存在 ≠ 停用 —— netease 的默认值是 `true`，
+    临时把 flag 移开再起网关，它照样把网易服务拉起来（且 `scripts/netease.mjs` 被 supervisor
+    spawn 时**不带** `--skip-if-missing`）。测网关要么保留 flag 原样，要么测完
+    `taskkill /t /f` 清理拉起的进程树。另：Git Bash 里 `taskkill /t` 的 `/t` 会被
+    MSYS 转成路径 `T:/` 报「无效参数」—— 前面加 `MSYS_NO_PATHCONV=1`。
+
+62. **从上游源码取常量做 ast 解析时，`X: tuple[...] = (...)` 是 `ast.AnnAssign` 不是 `ast.Assign`**
+    Irodori 上游的 `ALLOWED_ANNOTATION_EMOJIS` 与 `EMOJI_PALETTE_ITEMS` 都是**带注解赋值**
+    （阶段 28 的 56 个 emoji 白名单 + 45 条官方释义就藏在这两处，而这两个模块分别
+    `import torch` / `import gradio`，catalog 不能直接 import）。第一版只认 `ast.Assign`
+    静默解析出 0 个 emoji —— 回归锁在 `.tmp/verify_irodori_infer.py` A8/A9。
+    以后凡是「不 import 上游、直接解析源码拿常量」的场景都用
+    `irodori/app/catalog.py::_assign_targets()` 这个双兼容写法。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -694,6 +719,7 @@
 | GPT-SoVITS 启停接口 | `GET/POST /api/sovits/service`（`{"enabled":true}`）；开关存在 `server/.data/sovits-service.json` |
 | IndexTTS 服务 | `npm run dev:indextts`（第三个 Python 运行时：`indextts/upstream/.venv`，py3.11 + torch 2.8 cu128；端口 **9883**）；体检 `npm run indextts:check`；**阶段 26 起全链路已接入**（网关 `/api/indextts/*` 透传 + 前端「IndexTTS · 情感可控」页）；**设置页开关**（`GET/POST /api/indextts/service`，默认关） |
 | IndexTTS 方案文档 | `docs/INDEX-TTS-INTEGRATION.md`（8 阶段计划；阶段 0/1/2 完成于 25，合成实测 + 透传 + 前端 + 资源管控完成于 26） |
+| Irodori 服务 | `npm run dev:irodori`（第四个 Python 运行时：`irodori/.venv`，py3.12 + torch 2.10 cu128；端口 **9884**）；体检 `npm run irodori:check`；权重 `npm run irodori:weights`（`-- --training` 下训练档 bf16 2.9GB，30-5 前必须）；**30-2 起推理链路可用**（网关 `/api/irodori/*` 透传 + runtime/arbiter/preload 记账）；**启停接口已就位但设置页还没接 UI**（`GET/POST /api/irodori/service`，supervisor 默认停用；接 UI 是 30-7 的活）；**前端页也在 30-7**，当前用 curl/脚本调；推理链路验证 `python .tmp/verify_irodori_infer.py [--gateway]`（真合成段需显存 ≥4700MB） |
 | 启动预加载 | `GET /api/preload/catalog`（各模型显存代价 + 当前余量）、`POST /api/preload`（执行）、`PUT /api/preload/preference`；偏好存 `server/.data/preload.json` |
 | 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`） |
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]` |
@@ -799,6 +825,12 @@
   `providerFields`（零样本走**删键**，避免与设置页默认值合并后残留旧权重）。
   **关键认知**：参考音频在两种模式下都必需（`synth.py::resolve_reference()` 拿不到就报错），
   两段式分的只是「官方底模 vs 自训权重」。**遗留**：真机冒烟
+- **Irodori 推理链路已交付（阶段 30-2，10.13 BY ZCode）**：`/v1/catalog|warmup|unload|synth|speakers`
+  五端点 + 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账全接好；
+  emoji 56 个 + 官方释义 45 条从上游源码 ast 解析；合成互斥 409；验证脚本 **31/31**
+  （A 基础校验 21 + B 切句 4 + C0 准入 503 + D 网关 5）。**遗留**：C 段真机合成（6 句 / RTF≤0.25）
+  被显存阻塞（桌面占用，空闲 3.2~3.9GB < 4700MB，准入 503 拦截行为已实测正确）；
+  30-3 长尾护栏（当前 synth 无看门狗）、30-7 前端页/设置页 UI
 
 ### 验收标准
 
@@ -819,8 +851,9 @@
 | 低 | 变声 / 翻唱两页的**合成下拉**换源到 `/api/models` | 阶段 34 有意留后（无功能收益 + 要动已验证的转换主链路），建议与「变声 / 翻唱真机加载验证」同一轮做。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
 | 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
 | 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
-| **中** | **阶段 30-2：Irodori 推理链路** | 30-1 已把环境与骨架做完（venv / 权重 / `/health` 全绿），可直接开工。要做 `/v1/catalog`（emoji 56 个从代码常量取）、`/v1/warmup\|unload\|synth`（单段克隆 + caption + emoji）、网关 `/api/irodori/*` 透传、`RuntimeSupervisor` spec、arbiter `ServiceName`、preload 档位。方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §4.1 与 §9 |
-| 低 | Irodori 训练档权重下载 | `npm run irodori:weights -- --training`（bf16 基座 2.9GB）。**30-5 开工前必须**，30-2 不需要 |
+| **中** | ~~阶段 30-2：Irodori 推理链路~~ **已完成（10.13，30-1 + 30-2）**；下一小段 **30-3（长尾护栏）与 30-4（音色库多片段）可并行** | 30-3：服务端看门狗 + 自动降步重试一次 + `IRODORI_TIMEOUT`（当前 synth 无看门狗，撞 89s 长尾会占住请求到网关 240s 兜底）；30-4：`ref_clips/engine_tags/speaker_embeds` 扩展 + 网关/trainer 双向兼容 + UI 补录区。方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §4.1 与 §9 |
+| 中 | **Irodori 30-2 的 C 段真机合成补测** | `python .tmp/verify_irodori_infer.py`：显存 ≥4700MB 时 C 段自动执行（6 句 48kHz / RTF≤0.25 / 同 seed 确定 / 并发 409 / unload 归还）。当前桌面占显存（空闲 3.2~3.9GB），准入 503 拦截已实测正确，只差真合成 |
+| 低 | Irodori 训练档权重下载 | `npm run irodori:weights -- --training`（bf16 基座 2.9GB）。**30-5 开工前必须**，30-2/30-3/30-4 不需要 |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
 | 高 | 端到端实测阶段 6 的新 UI | **走查已做完一半**（阶段 23）：训练页 s2→s1 顺序 / 官方 hint / 完成卡 E-S 解释、设置页权重下拉（**实测出下拉显示空白，已修**，见坑 22）均浏览器验过；仍缺 ① 带 `slice` 阶段的任务来验切分结果面板（现有历史任务无一含切分），② 权重「加载所选权重」联动（本机 `GPT/SoVITS_weights_v2ProPlus/` 为空，没有训练产物可选） |
 | 高 | **用实际合成对比网易 vs IndexTTS，决定主力** | **IndexTTS 已接入**（阶段 26），两套都可跑：网易稳态 RTF 2.0~2.5 / 常驻 4.9 GB；IndexTTS 暖态 RTF ≈ 2.2、显存被抢时 5~14 / 常驻实测 ≈ 5.3 GB。主力由**用户听感 + 使用测试**拍板；定完回填 preload 账本门槛与默认项 |
@@ -850,8 +883,7 @@
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志
 
-> 上次文档更新时间：10.08 18:58 [BY Qoder]（阶段 27补1：RVC 变声 `_in_projection` NameError 修复，新增坑 29；同夜另有阶段 27补2 进程隔离收尾）
-> 本次文档更新时间：10.09 00:32 [BY Qoder]（阶段 28：Irodori-TTS 评估与本机推理/训练实测，新增坑 33；dots.tts 试点行按用户裁决改写为 Irodori 决策行）
+> 上次文档更新时间：10.08 18:58 [BY Qoder]（阶段 27补1：RVC 变声 `_in_projection` NameError 修复，新增坑 29；同夜另有阶段 27补2 进程隔离收尾）> 本次文档更新时间：10.09 00:32 [BY Qoder]（阶段 28：Irodori-TTS 评估与本机推理/训练实测，新增坑 33；dots.tts 试点行按用户裁决改写为 Irodori 决策行）
 > 本次文档更新时间：10.09 00:44 [BY Qoder]（阶段 27补4：DDSP-SVC 音色加载入口 + 导入/删除闭环；`describe_model` id 口径修正；新增坑 34/35）
 > 本次文档更新时间：10.09 08:10 [BY Qoder]（阶段 27补6：用户主诉两个严重 bug —— ①显存预估「自己把自己检测成占用者」的重复扣账；②服务进程关不掉（只杀 child 导致外部实例漏网）。新增 `server/src/lib/processOwnership.ts`，`runtime.ts` / `sovits.ts` 的 `shutdown()` 均补端口反查一路；netease / indextts 的 `/health` 新增 `pid` 自报。新增坑 42–45）
 > 本次文档更新时间：10.09 19:56 [BY Qoder]（阶段 31 / P1：音色模型统一管理「管得住」。新增 `/api/models` 的 import（流式落盘）/ rename（联动配套）/ update（sidecar 元数据）/ migrate（默认 dry-run）；前端加导入、批量重命名（带预览）、编辑弹窗、迁移确认；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`，两个旧根清空，迁移后加载正常。修掉两个真 bug：路径边界检查把「根本身」判成越界、迁移按目录搬会卷走别的模型。新增坑 52–54）
@@ -861,3 +893,4 @@
 > 本次文档更新时间：10.10 01:17 [BY CodeBuddy]（阶段 33 / P3：未识别文件不再静默丢弃 —— 注册表新增 `listStrays()` + 面板新区块与修复提示；变声页 / 翻唱页模型库改走 `/api/models`（改名、删除走注册表）；`ddsp-svc` 补两个兼容旧根避免换源后模型消失。新增坑 57/58）
 > 本次文档更新时间：10.09 23:41 [BY CodeBuddy]（阶段 32 / P2：产出记录页取代历史记录，三源合并 —— 服务端任务 + 本地模型 + 云端 IndexedDB；`collectTracks()` 提到 `@/lib/jobArtifacts.ts` 共用；产物 url 统一补网关前缀。新增坑 55/56）
 > 本次文档更新时间：10.09 17:20 [BY Qoder]（阶段 27补7：用户主诉「左侧状态栏显示网易已就绪，但设置页显示未启动」。根因是**两套独立探活各自缓存**：侧栏只探 `/health` 不读 `enabled`，而 `npm run dev` 无条件起 netease、`enabled` 默认 false，导致「进程在跑 + 开关关着」成为开发模式常态。侧栏判定改为以 `enabled` 为唯一事实源；网关状态接口补「读时现探」；开关切换加 `service-enabled-changed` 广播。新增坑 46–48）
+> 本次文档更新时间：10.13 01:55 [BY ZCode]（阶段 30-2：Irodori 推理链路 —— `/v1/catalog|warmup|unload|synth|speakers` 五端点 + 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；emoji 表从上游源码 ast 解析；验证 31/31，真机合成段被桌面显存阻塞待补测。新增坑 61/62）

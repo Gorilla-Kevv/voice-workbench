@@ -8,7 +8,7 @@ import { logger } from '../lib/logger.js';
 import { findServiceProcesses, killTree } from '../lib/processOwnership.js';
 
 /**
- * 通用运行时服务托管器：网易（:9882）与 IndexTTS（:9883）。
+ * 通用运行时服务托管器：网易（:9882）、IndexTTS（:9883）与 Irodori（:9884）。
  *
  * 与 `sovits.ts` 的 SovitsSupervisor 同一套行为契约，但刻意更薄：
  * - 启动走 `node scripts/<name>.mjs`（解释器探测 / venv 判断都留在脚本里，一份逻辑一个家）；
@@ -25,7 +25,7 @@ const PROJECT_ROOT = path.resolve(HERE, '..', '..', '..');
 
 export interface RuntimeSpec {
   /** 服务标识，同时决定 flag 文件名 */
-  id: 'netease' | 'indextts';
+  id: 'netease' | 'indextts' | 'irodori';
   label: string;
   /** 网关侧读取的服务地址（config 里可被环境变量覆盖） */
   baseUrl: () => string;
@@ -349,5 +349,17 @@ export const indexttsSupervisor = new RuntimeSupervisor({
   readyTimeoutMs: 300_000,
 });
 
+export const irodoriSupervisor = new RuntimeSupervisor({
+  id: 'irodori',
+  label: 'Irodori-TTS（日语）',
+  baseUrl: () => config.irodori.baseUrl,
+  script: 'scripts/irodori.mjs',
+  unloadEndpoints: ['/v1/unload'],
+  // `irodori` 是本项目目录名/脚本名，足够特异；不要加入 `python` 这类泛词
+  hints: ['irodori'],
+  defaultEnabled: false,
+  readyTimeoutMs: 300_000,
+});
+
 /** 网关自己的启动/退出钩子按这张表遍历，新增运行时只加实例 */
-export const runtimeSupervisors: RuntimeSupervisor[] = [neteaseSupervisor, indexttsSupervisor];
+export const runtimeSupervisors: RuntimeSupervisor[] = [neteaseSupervisor, indexttsSupervisor, irodoriSupervisor];

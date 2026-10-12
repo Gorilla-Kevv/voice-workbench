@@ -7,9 +7,10 @@
 - 最新完成：**阶段 29补2 = RVC 训练前端入口（T3）已落地**（10.12 13:47 BY Qoder）——「训练音色（RVC）」独立成卡，LoRA / 全量两条官方路径都在，全量表单带**提交前预检**；typecheck / eslint / vite build 全过，**真机冒烟待用户起服务走一遍**
 - 最新完成：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本官方底模 / 微调自训权重）已落地（10.12 14:45 BY Qoder）—— `SovitsVoicePicker` 加权重来源 Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`；typecheck / eslint / vite build 全过，**真机冒烟待用户**
 - 最新完成：**阶段 30-1 = Irodori 环境与骨架**（10.12 18:15 BY Qoder）—— `irodori/` 服务骨架 + 独立 venv（py3.12 + torch 2.10.0+cu128，CUDA 可用、cc 8.9 int4 可用）+ 权重下载器（推理档 1.2GB 与上游代码全部字节校验通过）+ **Windows 解码垫片已生效** + `/health` 实测出 `required_vram_mb: 4700`；验证脚本 26/26
-- 下一阶段：**阶段 30-2 = 推理链路**（`/v1/catalog` `/v1/warmup|unload|synth` + 网关透传 + runtime/arbiter/preload 记账）。环境已就绪，可直接开工
-- 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；阶段 30-4（音色库多片段）与 30-3 可并行
-- 未完成的任务：阶段 30-2…30-7；训练档权重（bf16 2.9GB）需在 30-5 前下载
+- 最新完成：**阶段 30-2 = Irodori 推理链路**（10.13 01:50 BY Qoder）—— `/v1/catalog`（emoji 56 个 + 官方释义 45 条**从上游源码 ast 解析**）、`/v1/warmup|unload|synth|speakers`（懒加载 + 显存准入「已加载跳过」+ 日语校验 + 服务端切句 ≤25 字/段拼接 + 参考三形态互斥 + 409 合成互斥）+ 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；验证脚本 **31/31**（含网关透传真跑）；**C 段真机合成被显存阻塞**（桌面占用 3.2~3.9GB < 准入 4700MB，见 30-2 明细「未完成」）
+- 下一阶段：**阶段 30-3（长尾护栏）与 30-4（音色库多片段）可并行**。30-3：服务端看门狗 + 自动降步重试 + `IRODORI_TIMEOUT`；30-4：`ref_clips/engine_tags/speaker_embeds` 音色库扩展 + 双向兼容 + UI 补录区
+- 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；**30-2 的 C 段真机合成补测**（腾显存后 `python .tmp/verify_irodori_infer.py`）；训练档权重下载（`npm run irodori:weights -- --training`，30-5 前）
+- 未完成的任务：阶段 30-3…30-7；训练档权重（bf16 2.9GB）需在 30-5 前下载
 - 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
@@ -2534,7 +2535,7 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 ### 进度
 
-- **30-1（环境与骨架）已完成** —— 30-2 起未开工。
+- **30-1（环境与骨架）、30-2（推理链路）已完成** —— 30-3 / 30-4 未开工（可并行）。
 
 #### 30-1 明细
 
@@ -2615,6 +2616,63 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
   同步刷新，否则会误报「截断」。清单的 `note` 已写明这一点。
 - 下载器把源站 `Content-Length` 与清单不一致时**以源站为准并打警告**（不阻断）——
   这样上游更新权重时不会卡住用户，但清单会静默过时，需要有人看那条警告。
+
+#### 30-2 明细（10.13 完成于 ZCode 会话）
+
+**已完成**
+
+| 交付物 | 说明 |
+| --- | --- |
+| `irodori/app/engine.py` | 引擎：**懒加载**（上游 `get_cached_runtime` 单实例缓存，权重/精度变化热切换）；**显存准入**（nvidia-smi 口径 + **已加载跳过**——坑 26/24 修法；nvidia-smi 与 torch 差 >1GB 时报错文案点名「其它进程」）；`unload()` 回报归还量；**合成互斥**（非阻塞锁，拿不到 → 409 `ENGINE_BUSY`） |
+| `irodori/app/catalog.py` | `/v1/catalog` 数据装配：emoji **56 个**（上游 `duration.py::ALLOWED_ANNOTATION_EMOJIS`）× 官方释义 **45 条**（`gradio_emoji_palette.py`）——两者都**从上游源码 ast 解析**，不 import torch / gradio（权重缺失的机器探活页也要能开）；caption 官方预设 3 条；步数档 `[20, 40]` 默认 20（拍板①）；语言仅 `ja`；`max_ref_seconds=120` |
+| `irodori/app/synth.py` | 合成编排。顺序刻意是 **请求校验 → 显存准入 → 互斥**（改了请求就能修好的错，不该被显存状态挡住）。日语校验（无假名 → `NO_JA_ONLY`）；**服务端切句 ≤25 字/段**（句读 → 顿号 → 硬切三级，emoji 跟随前句）+ 段间 0.15s 静音拼接；参考三形态互斥：`ref_voice`（读 `voicelib/voices.json`，**每次现读**——坑 27）/ `ref_path` / `speaker_id`（`.data/speakers/`，30-6 产物位）；参考下限 3s（`REF_TOO_SHORT`）；切句上限 1000 字（`TEXT_TOO_LONG`）；产物 PCM_16 WAV base64（float32 经 soundfile 缩放——坑 36 的写法） |
+| `irodori/app/api.py` | 五个端点：`GET /v1/catalog`、`POST /v1/warmup`（`?blocking=false` 后台加载；**已加载直接返回不拦**）、`POST /v1/unload`（幂等）、`POST /v1/synth`（`Body(default=None)`——坑 37）、`GET /v1/speakers`；`/health` 的 `loaded` 改接引擎真值 |
+| `server/src/routes/irodori.ts` | 透明反代（node:http + pipe，挂 `express.json()` 之前——坑 20）+ `/api/health` 的 irodori 摘要（5s 缓存现探） |
+| `server/src/services/runtime.ts` | `RuntimeSpec.id` 加 `'irodori'` + `irodoriSupervisor`（`scripts/irodori.mjs`、hints `['irodori']`、默认停用、readyTimeout 300s）并入 `runtimeSupervisors` 表——设置页开关 / 启动钩子 / 退出清理自动生效 |
+| `server/src/services/arbiter.ts` | `ServiceName` 与 `FocusEngine` 加 `irodori(-tts)`；`RELEASE_ENDPOINTS.irodori = ['/v1/unload']`——「只跑这一个模型」现在会让 Irodori 让位 / 也能把资源集中给它 |
+| `server/src/services/preload.ts` | `PreloadModel` 加 `'irodori-tts'`（4700MB，**服务端真源的副本**，注释写明两处联动）；偏好白名单同步 |
+| `server/src/routes/resources.ts` | ENGINES 清单加 `'irodori-tts'` |
+| `.tmp/verify_irodori_infer.py` | 验证脚本（A 基础与校验 21 项 / B 切句单元 4 项 / C 真机合成 / D 网关透传 5 项；urllib 显式 UTF-8——坑 54；自动清 `http_proxy`） |
+
+**已验证（真跑）**
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` / `npm run build` | 零报错（改动全在 server 与 irodori，app 未动） |
+| `.tmp/verify_irodori_infer.py` | **31/31**：`/health` 六字段、catalog（emoji 56 + 释义 `🤭=笑い` + 档位）、`/v1/speakers` 幂等空表、9 类请求校验错误码全部带 `hint`、切句 4 项（≤25 字 / 不丢字 / emoji 跟随 / 硬切）、**C0 准入 503 实测**（`VRAM_INSUFFICIENT` 带 `free_mb/required_mb` 与「其它进程」文案）、网关 D1–D5（透传 / health 摘要 / service 状态 / 错误契约透传） |
+| 网关「复用外部实例」 | `GET /api/irodori/service` → `enabled=false, reachable=true, managed=false`（服务由本会话手动拉起，网关只探活不重复拉起）——阶段 27补7「读时现探」语义正确 |
+
+**过程中修掉的 3 个真问题**
+
+1. **上游两个 emoji 常量都是 `ast.AnnAssign`（带注解赋值），不是 `ast.Assign`** —— 第一版解析
+   静默返回 0 个 emoji。`X: tuple[str, ...] = (...)` 这种写法走 AnnAssign 节点，
+   `_assign_targets()` 现在两种都认（验证脚本 A8/A9 两条就是为它加的回归锁）。
+2. **校验顺序错了**：参考音频校验（存在 / ≥3s）原来发生在显存准入**之后**，
+   显存不足时用户先看到 503、修完显存回来才知道路径写错。改为「请求校验 → 准入 → 互斥」。
+3. **`payload: Any` 必须显式 `Body(default=None)`**（坑 37 在本服务的重申）——
+   裸写会被 FastAPI 当成必需的 query 参数，JSON body 直接 422。
+
+**未完成（交接）**
+
+- **C 段真机合成被环境阻塞**：桌面常驻占显存，实测空闲 3.2~3.9GB < 准入 4700MB，
+  warmup 被 503 如实拦下（C0 验证的正是这条路径，行为正确）。**不是代码缺陷**：
+  引擎加载路径与阶段 28 bench 的调用同构（同 checkpoint / codec / 精度 / 设备），
+  但「服务端真合成 6 句出 48kHz、RTF≤0.25」这条验收必须等显存。补测：
+  腾出显存 → 起 `npm run dev:irodori`（或 `python server.py`）→ `python .tmp/verify_irodori_infer.py`。
+- 30-3 长尾护栏未做：当前 `/v1/synth` 无看门狗，撞上 89s 长尾时会占住请求直到上游返回
+  （网关 240s 超时兜底，但拿不到「降步重试」提示）。
+- 前端页 / 设置页 / 导航在 30-7（本段完成后 curl 即可用，浏览器无入口）。
+
+**风险**
+
+- 并发合成一律 409 拒绝而非排队（刻意：8GB 卡排队第二条也是抖动，不如让调用方自己串行）。
+- 测试期踩到的**网关测试坑**（已记入 HANDOFF 新坑 61）：RuntimeSupervisor 的 flag 文件
+  **缺失时会 fallback 到 `defaultEnabled`**——netease 默认 true，临时把 flag 移开再起网关，
+  它照样会把网易服务拉起来。测网关要么留 flag，要么测完清理拉起的进程。
+- catalog 的 emoji 解析依赖上游文件路径（`settings.upstream_dir`）；上游目录缺失时
+  catalog 返回空表而不是崩——`/health` 的 `missing_code` 会如实报告。
+
+- 本次文档更新时间：10.13 01:50 [BY ZCode]（阶段 30-2：Irodori 推理链路 + 网关四处记账；验证 31/31；真机合成待显存补测）
 
 ### 涉及文件（预估）
 

@@ -7,6 +7,7 @@ import { configRouter } from './config.js';
 import { resourcesRouter } from './resources.js';
 import { preloadRouter } from './preload.js';
 import { indexttsSummary } from './indextts.js';
+import { irodoriSummary } from './irodori.js';
 import { neteaseSummary } from './netease.js';
 import { sovitsSummary } from './sovits.js';
 import { ttsRouter } from './tts.js';
@@ -60,6 +61,8 @@ apiRouter.get('/health', async (_req, res) => {
       netease: await neteaseSummary(),
       /** IndexTTS（按需启动，未启动是常态） */
       indextts: await indexttsSummary(),
+      /** Irodori（按需启动的日语模块，未启动是常态） */
+      irodori: await irodoriSummary(),
       providers: {
         mimo: { available: true, requiresKey: !config.mimoApiKey },
         'gpt-sovits': { available: sovitsSummary().reachable },
