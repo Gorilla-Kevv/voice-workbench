@@ -81,8 +81,13 @@ class Settings:
     #: 可选的步数档位（UI 下拉直接读它）
     step_presets: tuple[int, ...] = (20, 40)
 
-    #: 采样设备侧超时（秒）。长尾实测见过 89s，超时后由护栏降步重试一次（30-3 实现）
+    #: 采样设备侧超时（秒）—— 整条合成的墙钟预算（30-3 长尾护栏的最后兜底）。
+    #: 长尾实测最坏 89s（40 步 + 某个坏 seed），180s 足够让「慢」的请求跑完，
+    #: 同时保证真正卡死的请求不会把请求线程悬挂住。
     timeout_sec: float = 180.0
+    #: 护栏降步档位（步）。采样撞上长尾时，剩余段落降到这个步数并换 seed。
+    #: 依据：阶段 28 实测同一条命令 40 步 89.17s → 20 步 2.16s（评估文档 §6「采样长尾」）。
+    downgrade_steps: int = 20
     #: 参考音频上限（秒）。官方建议 ~30s，120s 仍有收益但边际很小
     max_ref_seconds: float = 120.0
 
@@ -115,6 +120,10 @@ class Settings:
             settings.timeout_sec = float(_env("IRODORI_TIMEOUT", "180") or 180)
         except ValueError:
             settings.timeout_sec = 180.0
+        try:
+            settings.downgrade_steps = int(_env("IRODORI_DOWNGRADE_STEPS", "20") or 20)
+        except ValueError:
+            settings.downgrade_steps = 20
         return settings
 
     # ------------------------------------------------------------------
@@ -145,6 +154,7 @@ class Settings:
             "default_steps": self.default_steps,
             "step_presets": list(self.step_presets),
             "timeout_sec": self.timeout_sec,
+            "downgrade_steps": self.downgrade_steps,
             "max_ref_seconds": self.max_ref_seconds,
             "allow_cpu": self.allow_cpu,
             "device": self.device,

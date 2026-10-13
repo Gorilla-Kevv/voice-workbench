@@ -23,6 +23,9 @@ export * from './netease';
 // IndexTTS 模块（indextts/，第三个 Python 运行时）
 export * from './indextts';
 
+// Irodori-TTS 模块（irodori/，第四个 Python 运行时；日语特化 + emoji 风格）
+export * from './irodori';
+
 /** 产出记录页（三源合并：服务端任务 / 本地模型 / 云端合成） */
 export * from './outputs';
 

@@ -143,7 +143,11 @@ def create_app(settings: Settings) -> FastAPI:
         """合成一条日语语音（JSON body，返回 base64 WAV）。
 
         请求字段见 `docs/IRODORI-INTEGRATION-PLAN.md` §4.1；服务端负责
-        日语校验（NO_JA_ONLY）、切句（≤25 字/段）、参考音频解析与拼接。
+        日语校验（NO_JA_ONLY）、切句（≤25 字/段）、参考音频解析与拼接，
+        以及**长尾护栏**（段间降步 + 墙钟看门狗，见 `synth.py`）。
+        响应里的 `retried` / `steps_requested` / `steps_used` 如实反映护栏是否介入；
+        超时返回 504 `IRODORI_TIMEOUT`（`details.retry_suggestion` 给降步重试值）。
+
         （`Body(default=None)` 是坑 37：裸 `payload: Any` 会被当成必需的 query 参数）
         """
         parsed = synth_module.parse_payload(payload)

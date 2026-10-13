@@ -149,6 +149,18 @@ def build_catalog(settings: Settings) -> dict[str, Any]:
             "min_ref_seconds": 3.0,
             "note": "官方建议 ~30s 已拿到大部分收益；多片段长参考在 30-4 接入音色库。",
         },
-        "seed": {"note": "同 seed 同输入完全确定（阶段 28 实测）"},
+        "seed": {"note": "同 seed 同输入完全确定（阶段 28 实测）。注意：撞长尾自动降步时，"
+                        "只有随机 seed 会被换掉 —— 你显式指定的 seed 一定保留。"},
+        # 30-3：护栏参数同样遵循「真源在服务端」。前端拿它渲染「重试（降步）」按钮，
+        # 不要自己写死 20 / 180 这两个数。
+        "guard": {
+            "timeout_sec": settings.timeout_sec,
+            "downgrade_steps": settings.downgrade_steps,
+            "note": (
+                "采样有约 1/40 的长尾（坏 seed + 高步数，实测最坏 89s 出 4.96s 音频）。"
+                "多段文本服务端会在段间自动降步并换 seed；单段撞上则由墙钟兜底返回 504，"
+                "用 downgrade_steps 重试即可绕开。"
+            ),
+        },
         "watermark": False,
     }

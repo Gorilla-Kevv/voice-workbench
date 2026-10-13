@@ -5,6 +5,10 @@
 客户端既算不准也切不对。服务端按「≤25 字/段」强切、逐段合成、按顺序拼接，
 对调用方暴露的仍然是一条完整的音频。
 
+**切句顺带成了长尾护栏的支点**（30-3）：段与段之间是唯一真正可中断的点，
+所以「外推超预算 → 剩余段落降步 + 换 seed」就挂在这个循环里
+（见 `_run_synthesis_locked`），墙钟兜底见 `_run_with_watchdog`。
+
 参考音频三选一（互斥，与上游 infer.py 的 ref_group 一致）：
 - `ref_voice`：音色库 id → 读 `voicelib/voices.json` 解析成磁盘路径。
   只读不写，每次现读文件（坑 27：这是两进程共写的同一份 JSON）；
@@ -21,6 +25,7 @@ import json
 import os
 import random
 import re
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,6 +43,9 @@ SEGMENT_MAX_CHARS = 25
 MIN_REF_SECONDS = 3.0
 #: 段间静音（秒）。硬拼接会有「接缝感」，一小段静音最便宜地解决
 SEGMENT_GAP_SECONDS = 0.15
+#: 段间外推触发降步时只用到预算的这个比例。留一成余量给拼接、编码与响应序列化 ——
+#: 卡在预算线上才降，等于每次都赌最后一段不超时
+BUDGET_SAFETY = 0.9
 
 #: 日语判定：文本里至少要有一个假名（平/片/半片）。汉字-only 的中文会被拒 ——
 #: 这是「仅日语」服务的正确行为（方案 §4.1 错误码 NO_JA_ONLY）
@@ -311,42 +319,165 @@ def resolve_reference(settings: Settings, payload: SynthPayload) -> dict[str, An
 
 
 def run_synthesis(settings: Settings, payload: SynthPayload) -> dict[str, Any]:
-    """完整合成一条。
+    """完整合成一条（带长尾护栏）。
 
     顺序刻意是：**先请求校验（参考音频存在/够长）→ 再显存准入 → 最后互斥**。
     参考音频不存在这类「改了请求就能修好」的错误，不该被显存状态挡住 ——
     否则用户会先去折腾显存，回来还是被告知路径写错了。
+
+    护栏见 `_run_with_watchdog`：段间外推降步（主）+ 墙钟看门狗（兜底）。
     """
     reference = resolve_reference(settings, payload)
     engine.check_vram_admission(settings, loaded=engine.is_loaded())
     if not engine.try_acquire_busy():
         raise IrodoriError(
             "ENGINE_BUSY",
-            "已有一条合成/训练在跑，显存同一时刻只服务一个请求",
-            "等当前任务结束再试；批量文本请走批量接口而不是并发请求。",
+            # 两种「忙」要说清楚：一种在正常跑，一种是上一请求已被护栏放弃但还没跑完。
+            # 后者用户只能等（没有任何操作能加速），不写清楚会被当成死锁。
+            (
+                "上一次合成已经超时被放弃，但它仍在收尾（采样无法从外部中断），"
+                "显存要等它跑完才可用"
+                if engine.is_recovering()
+                else "已有一条合成/训练在跑，显存同一时刻只服务一个请求"
+            ),
+            "等它结束再试（约等于剩余段落的时长）；批量文本请走批量接口而不是并发请求。",
             status=409,
             retryable=True,
         )
     try:
-        return _run_synthesis_locked(settings, payload, reference)
-    finally:
+        # ⚠️ 加载**刻意放在看门狗之外**：首次加载约 20s，是启动成本而不是采样成本。
+        # 算进预算的话，任何小于 20s 的预算都会让第一次请求必然 504（本机实测踩到）。
+        # 加载失败有它自己的错误码（ENGINE_LOAD_FAILED），不需要护栏兜。
+        runtime, _ = engine.load(settings)
+        return _run_with_watchdog(settings, payload, reference, runtime)
+    except IrodoriError as error:
+        # ⚠️ 超时是「放弃请求、但合成还在收尾」：合成权必须留给工作线程自己放。
+        # 在这里放掉，下一个请求会立刻拿到锁、然后和孤儿一起抢上游的 _infer_lock。
+        if error.code != "IRODORI_TIMEOUT":
+            engine.release_busy()
+        raise
+    except Exception:
+        # 走到这里说明工作线程根本没起来（start 失败等）：合成权没人会放，自己放掉
         engine.release_busy()
+        raise
 
 
-def _run_synthesis_locked(settings: Settings, payload: SynthPayload, reference: dict[str, Any]) -> dict[str, Any]:
+def _run_with_watchdog(
+    settings: Settings, payload: SynthPayload, reference: dict[str, Any], runtime: Any
+) -> dict[str, Any]:
+    """墙钟看门狗（护栏第二层，兜底）。
+
+    ☠️ 为什么只能「放弃」而不能「中断」：上游 `sample_rf` 的采样循环**没有任何回调
+    hook**（`log_fn` 只在每个阶段结束时打一次，步与步之间没有），而一个已经在 CUDA 上
+    跑起来的同步采样，Python 层既没有取消协议也没有线程 kill。所以超时后只能：
+
+    1. 让请求线程带着 **504 `IRODORI_TIMEOUT`** 先返回（用户立刻拿到可行动的提示）；
+    2. 让工作线程跑完剩余段落 —— 但它会在**段间检查点**看到 cancel 标志并立刻停手，
+       所以实际收尾时间 = 当前那一段的剩余时间（而不是整条文本）；
+    3. 合成权继续被持有到工作线程退出（此时新请求拿 409，文案由 `is_recovering` 区分）。
+
+    真正能**绕开**长尾的是护栏第一层（段间外推降步），见 `_run_synthesis_locked`。
+    """
+    budget = max(float(settings.timeout_sec), 1.0)
+    holder: dict[str, Any] = {}
+    progress: dict[str, Any] = {"done": 0, "total": 0, "steps": None, "downgraded": False}
+    cancel = threading.Event()
+
+    def target() -> None:
+        try:
+            holder["result"] = _run_synthesis_locked(settings, payload, reference, runtime, cancel, progress)
+        except BaseException as error:  # noqa: BLE001 - 异常要原样交给请求线程重新抛出
+            holder["error"] = error
+        finally:
+            # 顺序要紧：先清 recovering，再放锁 —— 反过来会有一瞬间「锁空着但仍在收尾」
+            engine.clear_recovering()
+            engine.release_busy()
+
+    worker = threading.Thread(target=target, name="irodori-synth", daemon=True)
+    worker.start()
+    worker.join(budget)
+
+    if worker.is_alive():
+        cancel.set()
+        engine.mark_recovering()
+        steps = progress.get("steps")
+        raise IrodoriError(
+            "IRODORI_TIMEOUT",
+            (
+                f"合成超过 {budget:.0f}s 预算仍未完成"
+                f"（已完成 {progress.get('done', 0)}/{progress.get('total', 0)} 段，步数 {steps}）"
+            ),
+            "这是罕见的采样长尾（实测约 1/40，坏 seed + 高步数触发）。把 num_steps 降到 20 重试即可绕开；"
+            "多段文本的服务端会自动对剩余段落降步，单段长文本建议拆开合成。",
+            status=504,
+            retryable=True,
+            details={
+                "timeout_sec": budget,
+                "steps": steps,
+                "segments_done": progress.get("done", 0),
+                "segments_total": progress.get("total", 0),
+                "downgraded": progress.get("downgraded", False),
+                # 给客户端「重试（降步）」按钮用，别让前端自己猜降到几步
+                "retry_suggestion": {"num_steps": settings.downgrade_steps},
+            },
+        )
+
+    if "error" in holder:
+        raise holder["error"]
+    return holder["result"]
+
+
+def _run_synthesis_locked(
+    settings: Settings,
+    payload: SynthPayload,
+    reference: dict[str, Any],
+    runtime: Any,
+    cancel: "threading.Event",
+    progress: dict[str, Any],
+) -> dict[str, Any]:
     import torch  # noqa: PLC0415 - 合成期才有 torch
-
-    runtime, _ = engine.load(settings)
 
     from irodori_tts.inference_runtime import SamplingRequest  # noqa: PLC0415
 
     segments = split_sentences(payload.text)
     base_seed = payload.seed if payload.seed is not None else random.randint(0, 2**31 - 1)
     steps = payload.num_steps or settings.default_steps
+    requested_steps = steps
+    downgraded_at: Optional[int] = None
+
+    budget = max(float(settings.timeout_sec), 1.0)
+    trigger = budget * BUDGET_SAFETY
+    progress.update({"total": len(segments), "steps": steps, "downgraded": False})
 
     started = time.perf_counter()
     pieces: list[Any] = []
     for index, segment in enumerate(segments):
+        # 请求已被看门狗放弃：剩余段落不必再跑（省下的正是收尾时间）
+        if cancel.is_set():
+            raise IrodoriError("IRODORI_TIMEOUT", "合成已超过预算，放弃剩余段落", "", status=504)
+
+        # ---- 护栏第一层：段间外推降步（真正绕开长尾的手段） ----
+        # 依据是阶段 28 实测：同一条命令 40 步撞上坏 seed 要 89.17s，降到 20 步变 2.16s。
+        # 只能对「还没跑的段」生效 —— 正在跑的那一段杀不掉（见 _run_with_watchdog 的说明），
+        # 好在第一段通常就是最慢的那一段，跑完它之后预算还剩大半。
+        if index > 0 and downgraded_at is None and steps > settings.downgrade_steps:
+            elapsed = time.perf_counter() - started
+            predicted = elapsed + (elapsed / index) * (len(segments) - index)
+            if predicted > trigger:
+                steps = settings.downgrade_steps
+                downgraded_at = index
+                # 只在我们自己随机 seed 时才换：用户显式给了 seed 就尊重「同 seed 同输入确定」，
+                # 那种情况下靠降步绕开（实测够用），不偷偷改人家的输入。
+                if payload.seed is None:
+                    base_seed = random.randint(0, 2**31 - 1)
+                progress.update({"steps": steps, "downgraded": True})
+                print(
+                    f"[irodori] 采样偏慢（{index} 段用了 {elapsed:.1f}s，"
+                    f"按此速度整条约 {predicted:.0f}s > 预算 {budget:.0f}s）→ "
+                    f"剩余段落降到 {steps} 步",
+                    flush=True,
+                )
+
         request = SamplingRequest(
             text=segment,
             caption=payload.caption,
@@ -366,6 +497,7 @@ def _run_synthesis_locked(settings: Settings, payload: SynthPayload, reference: 
         elif audio.shape[0] != 1:
             audio = audio.reshape(1, -1)
         pieces.append(audio)
+        progress["done"] = index + 1
 
     sample_rate = int(result.sample_rate)
     gap = torch.zeros(1, int(SEGMENT_GAP_SECONDS * sample_rate), dtype=torch.float32)
@@ -396,8 +528,13 @@ def _run_synthesis_locked(settings: Settings, payload: SynthPayload, reference: 
         "elapsed_sec": round(elapsed_sec, 3),
         "rtf": round(elapsed_sec / duration_sec, 4) if duration_sec > 0 else None,
         "used_seed": base_seed,
+        # 步数三分：请求要的 / 实际用的 / 有没有被护栏降过 —— 前端要把「质量档被自动调低」
+        # 如实显示出来，否则用户以为拿到的还是 40 步的音质
+        "steps_requested": requested_steps,
         "steps_used": steps,
-        "retried": False,
+        "retried": downgraded_at is not None,
+        "downgraded_at_segment": downgraded_at,
+        "timeout_sec": budget,
         "segments": len(segments),
         "voice_id": reference.get("voice_id"),
         "voice_name": reference.get("voice_name"),

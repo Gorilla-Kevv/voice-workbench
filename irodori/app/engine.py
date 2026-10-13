@@ -31,6 +31,15 @@ _STATE_LOCK = threading.RLock()
 #: 合成互斥：同一时刻只允许一条 synth 在跑（上游 InferenceRuntime 内部也有
 #: `_infer_lock`，但排队等待不如直接 409 告诉用户「训练/合成中」）
 _BUSY_LOCK = threading.Lock()
+#: 是否有「被放弃但仍在收尾」的合成线程（30-3 护栏的第二层命中后出现）。
+#:
+#: ⚠️ 背景：`sample_rf` 的采样循环没有任何回调 hook（上游只在整段采样结束后 log 一次），
+#: Python 层**杀不掉**一个正在 CUDA 上跑的同步采样。所以墙钟超时只能「放弃」请求线程、
+#: 让工作线程跑完自然退出。这期间合成权仍被它持有（不能放 —— 否则新请求会和它抢
+#: 上游的 `_infer_lock`，把显存打爆）。这个标志只用于**把 409 的文案说清楚**，
+#: 真正的互斥仍然是 `_BUSY_LOCK` 本身。
+_RECOVERING = False
+_RECOVERING_LOCK = threading.Lock()
 
 loaded_at: Optional[float] = None
 last_error: Optional[str] = None
@@ -179,5 +188,28 @@ def try_acquire_busy() -> bool:
 
 
 def release_busy() -> None:
+    """释放合成权。
+
+    ⚠️ 调用方是**合成工作线程**（而不是请求线程）：墙钟超时时请求线程会先返回 504，
+    合成权必须留到工作线程自然结束才放 —— 见 `_RECOVERING` 的注释。
+    """
     if _BUSY_LOCK.locked():
         _BUSY_LOCK.release()
+
+
+def is_recovering() -> bool:
+    """是否有被放弃但仍未跑完的合成（用于把 409 文案说清楚）。"""
+    with _RECOVERING_LOCK:
+        return _RECOVERING
+
+
+def mark_recovering() -> None:
+    global _RECOVERING
+    with _RECOVERING_LOCK:
+        _RECOVERING = True
+
+
+def clear_recovering() -> None:
+    global _RECOVERING
+    with _RECOVERING_LOCK:
+        _RECOVERING = False

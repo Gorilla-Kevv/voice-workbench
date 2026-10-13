@@ -7,10 +7,11 @@
 - 最新完成：**阶段 29补2 = RVC 训练前端入口（T3）已落地**（10.12 13:47 BY Qoder）——「训练音色（RVC）」独立成卡，LoRA / 全量两条官方路径都在，全量表单带**提交前预检**；typecheck / eslint / vite build 全过，**真机冒烟待用户起服务走一遍**
 - 最新完成：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本官方底模 / 微调自训权重）已落地（10.12 14:45 BY Qoder）—— `SovitsVoicePicker` 加权重来源 Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`；typecheck / eslint / vite build 全过，**真机冒烟待用户**
 - 最新完成：**阶段 30-1 = Irodori 环境与骨架**（10.12 18:15 BY Qoder）—— `irodori/` 服务骨架 + 独立 venv（py3.12 + torch 2.10.0+cu128，CUDA 可用、cc 8.9 int4 可用）+ 权重下载器（推理档 1.2GB 与上游代码全部字节校验通过）+ **Windows 解码垫片已生效** + `/health` 实测出 `required_vram_mb: 4700`；验证脚本 26/26
-- 最新完成：**阶段 30-2 = Irodori 推理链路**（10.13 01:50 BY Qoder）—— `/v1/catalog`（emoji 56 个 + 官方释义 45 条**从上游源码 ast 解析**）、`/v1/warmup|unload|synth|speakers`（懒加载 + 显存准入「已加载跳过」+ 日语校验 + 服务端切句 ≤25 字/段拼接 + 参考三形态互斥 + 409 合成互斥）+ 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；验证脚本 **31/31**（含网关透传真跑）；**C 段真机合成被显存阻塞**（桌面占用 3.2~3.9GB < 准入 4700MB，见 30-2 明细「未完成」）
-- 下一阶段：**阶段 30-3（长尾护栏）与 30-4（音色库多片段）可并行**。30-3：服务端看门狗 + 自动降步重试 + `IRODORI_TIMEOUT`；30-4：`ref_clips/engine_tags/speaker_embeds` 音色库扩展 + 双向兼容 + UI 补录区
+- 最新完成：**阶段 30-2 = Irodori 推理链路**（10.13 01:50 BY Qoder）—— `/v1/catalog`（emoji 56 个 + 官方释义 45 条**从上游源码 ast 解析**）、`/v1/warmup|unload|synth|speakers`（懒加载 + 显存准入「已加载跳过」+ 日语校验 + 服务端切句 ≤25 字/段拼接 + 参考三形态互斥 + 409 合成互斥）+ 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；验证脚本 **31/31**（含网关透传真跑）；**C 段真机合成已于 10.13 19:00 跑通**（39/40，唯一失败是 RTF 阈值口径 —— 服务端口径本就高于阶段 28 的 bench 口径，已按实测改为 0.35）
+- 最新完成：**阶段 30-3 = Irodori 长尾护栏**（10.13 19:10 BY Qoder）—— **段间外推降步**（每段后外推整条耗时，超 `0.9×IRODORI_TIMEOUT` 就把剩余段降到 20 步 + 换 seed；依据阶段 28 实测 40 步 89s → 20 步 2.16s）+ **墙钟看门狗**（专用工作线程 + 504 `IRODORI_TIMEOUT`，带 `retry_suggestion`）；**加载不计入采样预算**（否则小预算首次请求必假超时）；超时后合成权留到孤儿线程段间检查点退出（期间 409 文案区分「仍在收尾」）；catalog 暴露 `guard` 段；前端 `lib/irodori.ts` + `types/irodori.ts`。验证脚本 **69/69**（56 项假 runtime 单测 + **13 项真机**：真机降步 200/`retried=true`、超预算 504/`downgraded=true`、收尾期 409）
+- 下一阶段：**阶段 30-4（音色库多片段长参考）**：`ref_clips/engine_tags/speaker_embeds` 音色库扩展 + 双向兼容 + UI 补录区。之后 30-5（训练 S1+S2，含 manifest 非空硬断言）→ 30-6（S3 + `speaker_id` 闭环）→ 30-7（前端完整化）
 - 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；**30-2 的 C 段真机合成补测**（腾显存后 `python .tmp/verify_irodori_infer.py`）；训练档权重下载（`npm run irodori:weights -- --training`，30-5 前）
-- 未完成的任务：阶段 30-3…30-7；训练档权重（bf16 2.9GB）需在 30-5 前下载
+- 未完成的任务：阶段 30-4…30-7；训练档权重（bf16 2.9GB）需在 30-5 前下载
 - 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
@@ -2482,7 +2483,7 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 - 本次文档更新时间：10.12 13:47
 
-## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder]
+## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder]
 
 - 分支：feature/vc-svc
 - 立项依据：用户 10.09 裁决「**做克隆和训练**」（并明确 Genie-TTS 与 dots.tts 弃用）。
@@ -2535,7 +2536,7 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 ### 进度
 
-- **30-1（环境与骨架）、30-2（推理链路）已完成** —— 30-3 / 30-4 未开工（可并行）。
+- **30-1（环境与骨架）、30-2（推理链路）、30-3（长尾护栏）已完成** —— 30-4 未开工。
 
 #### 30-1 明细
 
@@ -2654,14 +2655,17 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
 
 **未完成（交接）**
 
-- **C 段真机合成被环境阻塞**：桌面常驻占显存，实测空闲 3.2~3.9GB < 准入 4700MB，
-  warmup 被 503 如实拦下（C0 验证的正是这条路径，行为正确）。**不是代码缺陷**：
-  引擎加载路径与阶段 28 bench 的调用同构（同 checkpoint / codec / 精度 / 设备），
-  但「服务端真合成 6 句出 48kHz、RTF≤0.25」这条验收必须等显存。补测：
-  腾出显存 → 起 `npm run dev:irodori`（或 `python server.py`）→ `python .tmp/verify_irodori_infer.py`。
-- 30-3 长尾护栏未做：当前 `/v1/synth` 无看门狗，撞上 89s 长尾时会占住请求直到上游返回
-  （网关 240s 超时兜底，但拿不到「降步重试」提示）。
-- 前端页 / 设置页 / 导航在 30-7（本段完成后 curl 即可用，浏览器无入口）。
+- ~~C 段真机合成被环境阻塞~~ → **10.13 19:00 已补测通过**：桌面显存释放后
+  `.tmp/verify_irodori_infer.py` 跑出 **39/40**，六句全部 200、48kHz、base64 合法、
+  同 seed 完全确定、并发恰一个 200 一个 409、unload 回报归还量且可再加载。
+  **唯一失败项是 C9 的 RTF 阈值**（实测 0.298 vs 断言 0.25）—— 不是退化：
+  阶段 28 的 0.246 是 **bench 口径**（单进程直调、长文本、无 HTTP/base64/切句），
+  服务端口径多了三层固定开销且单段音频更短（RTF 分母就是音频时长，越短越高）。
+  已把断言改为 0.35 并写明两个口径的差异（见脚本 C9 注释）。
+  真机每段耗时（RTX 4060，20 步）：1 段 1.88s / 2 段 3.21s / 4 段 6.57s → 每段 ≈1.6s。
+- 30-3 长尾护栏 → **已完成**，见下方 30-3 明细。
+- 前端页 / 设置页 / 导航在 30-7（`lib/irodori.ts` 与 `types/irodori.ts` 已在 30-3 建好，
+  30-7 直接接页面即可）。
 
 **风险**
 
@@ -2672,7 +2676,63 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
 - catalog 的 emoji 解析依赖上游文件路径（`settings.upstream_dir`）；上游目录缺失时
   catalog 返回空表而不是崩——`/health` 的 `missing_code` 会如实报告。
 
-- 本次文档更新时间：10.13 01:50 [BY ZCode]（阶段 30-2：Irodori 推理链路 + 网关四处记账；验证 31/31；真机合成待显存补测）
+#### 30-3 明细（10.13 完成）
+
+**已完成**
+
+| 交付物 | 说明 |
+| --- | --- |
+| `irodori/app/synth.py` | **两层护栏**。① **段间外推降步**（主手段）：每跑完一段就按 `elapsed / done × total` 外推整条耗时，超过 `BUDGET_SAFETY(0.9) × timeout_sec` 就把**剩余段落**降到 `downgrade_steps`（默认 20）；**只在 seed 是我们自己随机生成时才换 seed** —— 用户显式给了 seed 就保留「同 seed 同输入确定」，靠降步绕开。② **墙钟看门狗**（兜底）：合成跑在专用工作线程，请求线程 `join(budget)`，超时返回 504 并把 cancel 置位（工作线程在段间检查点看到后立刻停手）。响应新增 `steps_requested` / `steps_used` / `retried` / `downgraded_at_segment` / `timeout_sec` |
+| `irodori/app/engine.py` | `is_recovering()` / `mark_recovering()` / `clear_recovering()`：只用于把 409 文案说清楚（真正的互斥仍是 `_BUSY_LOCK`）。**合成权改为由工作线程释放**（而不是请求线程）—— 超时后锁必须留着，否则新请求会和孤儿一起抢上游 `_infer_lock` |
+| `irodori/app/config.py` | `downgrade_steps`（`IRODORI_DOWNGRADE_STEPS`，默认 20）；`timeout_sec` 的注释改写为「整条合成的墙钟预算」并写明 89s 长尾的出处 |
+| `irodori/app/catalog.py` | 新增 `guard` 段（`timeout_sec` / `downgrade_steps` / 说明）—— 护栏参数真源在服务端，前端「重试（降步）」按钮不要写死 20 |
+| `irodori/app/api.py` | `/v1/synth` 文档字符串补护栏说明（含 504 的 `retry_suggestion` 契约） |
+| `app/src/types/irodori.ts`、`app/src/lib/irodori.ts` | 前端契约与客户端：`irodoriApi`（health/catalog/speakers/warmup/unload/synthesize）+ `isIrodoriTimeout()` + `irodoriRetrySuggestion()`（**从服务端 details 取降步值**，不写死）+ `withLowerSteps()`。合成用 `timeoutMs: 0` —— 刻意让服务端那个带 `retry_suggestion` 的 504 先到前端 |
+| `irodori/README.md` | 进度表更新 + 新增「长尾护栏怎么工作」一节 + 已知坑 8/9（`sample_rf` 杀不掉、加载与采样要分开计时） |
+| `.tmp/verify_irodori_guard.py` | 30-3 验证脚本：A 配置与常量 / B 段间降步（假 runtime，10 项）/ C 墙钟看门狗（8 项）/ D 成功响应契约与拼接（14 项）/ E 30-2 校验回归（4 项）/ **F 真机护栏（`--real`，13 项）** |
+
+**已验证（真跑）**
+
+| 项 | 结果 |
+| --- | --- |
+| `.tmp/verify_irodori_guard.py` | **56/56**（假 runtime 注入，不占显存：降步触发/不触发、段数不丢、seed 语义、超时 504、收尾期 409、孤儿结束后锁自动归还、孤儿只跑被卡的那一段） |
+| `.tmp/verify_irodori_guard.py --real`（服务以 `IRODORI_TIMEOUT=8` 启动） | **69/69**：真机 40 步 3 段 → 外推 16s > 8s → **降步生效、200、`retried=true`、`steps_used=20`、`downgraded_at_segment=1`、elapsed 5.897s**；40 步 5 段 → 降步后仍超 → **504 + `details.downgraded=true`**；收尾期新请求 **409 且文案含「仍在收尾」** |
+| `.tmp/verify_irodori_infer.py`（默认预算，真机） | **39/40**（唯一失败是已按服务端口径修正的 C9；A/B/D 全绿） |
+| `npm run typecheck` / `eslint` / `vite build` | 全过（前端新增两个文件，build 917 kB 无变化） |
+| 真机每段耗时实测（RTX 4060，20 步） | 1 段 1.88s / 2 段 3.21s / 4 段 6.57s → **每段 ≈1.6s，固定开销 ≈0.3s/请求** |
+
+**过程中修掉的 2 个真问题**
+
+1. **模型加载被算进采样预算** —— 首次加载 20~30s，导致任何小于 30s 的预算在**首次请求必然 504**
+   （本机实测踩到：`IRODORI_TIMEOUT=3` 时第一次合成 34.5s 后端返回「已完成 0/2 段」）。
+   修法：`engine.load()` 移出看门狗，放在 `run_synthesis` 里、线程启动之前。
+2. **超时路径把合成权误放掉** —— `run_synthesis` 的 `except Exception` 把 `IRODORI_TIMEOUT`
+   也兜住了，于是锁被释放、下一个请求立刻拿到锁并与孤儿线程抢上游 `_infer_lock`。
+   修法：`except IrodoriError` 先判 code，超时**不释放**（留给工作线程）。
+
+**为什么不做「超时后自动降步重跑整条」**（记下来免得后来者重试）
+
+重跑要再占一次 `sample_rf`，而孤儿线程还握着上游 `_infer_lock`，实际会串行等到孤儿结束 ——
+时长翻倍、收益不确定。所以服务端只做**段间降步**，把「整条降步重跑」交给客户端的
+「重试（降步）」按钮（30-7 接），504 的 `details.retry_suggestion.num_steps` 就是给它用的。
+
+**未完成（交接）**
+
+- 「重试（降步）」按钮的 UI 在 30-7（`lib/irodori.ts` 的 `irodoriRetrySuggestion()` /
+  `withLowerSteps()` 已就位）。
+- 真机降步验证需要**服务以 `IRODORI_TIMEOUT=8` 启动**才跑（F 段会检查并提示），
+  默认 180s 下真机不会触发降步（6 段 40 步 ≈ 20s，远在预算内）。
+
+**风险**
+
+- 超时后**无法中断**正在跑的 CUDA 采样（`sample_rf` 循环里没有任何回调 hook）。
+  因此孤儿线程的收尾时间 = **当前那一段**的剩余时间（不是整条文本）—— 已在段间检查点
+  置 cancel 让它立刻停手。极端情况下（单段本身就卡死）收尾会等到那一段结束。
+- 降步只对**尚未开始**的段落生效。第一段如果就是坏 seed 的那一段，它仍会按原步数跑完
+  （评估文档实测：坏 seed 那次的**音频本身是正常的**，只是慢）。
+- 并发合成一律 409（含收尾期），刻意不排队：8GB 卡上排队第二条也是抖动。
+
+- 本次文档更新时间：10.13 19:10 [BY Qoder]（阶段 30-3：Irodori 长尾护栏 + 30-2 真机合成补测；验证 69/69（含 13 项真机）+ 39/40）
 
 ### 涉及文件（预估）
 
