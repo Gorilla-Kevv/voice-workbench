@@ -163,4 +163,27 @@ def build_catalog(settings: Settings) -> dict[str, Any]:
             ),
         },
         "watermark": False,
+        # 30-5：训练段常量同样遵循「真源在服务端」。步数档 / batch 上限 / 小档说明
+        # 都从 settings 来，UI 不要自己写死 400 / 8 / 2.2 这几个数。
+        "training": {
+            "steps_presets": [
+                {
+                    "value": value,
+                    "estimated_minutes": round(value * settings.seconds_per_step / 60, 1),
+                    "note": ("冒烟小档：只为跑通闭环，具体步数待 30-6 实测回填"
+                             if value == settings.smoke_steps
+                             else ("官方默认量级" if value >= 2000 else "")),
+                }
+                for value in settings.train_step_presets
+            ],
+            "smoke_steps": settings.smoke_steps,
+            "max_batch": settings.max_train_batch,
+            "seconds_per_step": settings.seconds_per_step,
+            "estimate_note": (
+                f"按阶段 28 实测 {settings.seconds_per_step}s/步（batch {settings.max_train_batch}"
+                " + 梯度检查点，RTX 4060 Laptop）估算，不是保证值。"
+            ),
+            "s3_ready": False,
+            "s3_note": "S3（Speaker Inversion 训练）在 30-6 落地；POST /v1/train 现在返回 501。",
+        },
     }

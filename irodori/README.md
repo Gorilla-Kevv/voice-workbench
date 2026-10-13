@@ -153,7 +153,7 @@ irodori/
 | 30-2 | 推理链路 `/v1/catalog` `/v1/warmup\|unload\|synth` + 网关透传 + 显存记账 | 完成（真机合成已验证） |
 | 30-3 | 长尾护栏（段间降步 + 墙钟看门狗 + `IRODORI_TIMEOUT`） | 完成 |
 | 30-4 | 音色库多片段长参考（`ref_clips` / `engine_tags` / `speaker_embeds`） | 完成 |
-| 30-5 | 训练 S1+S2（数据→latent→manifest，含**非空硬断言**）+ JobStore | 未开始 |
+| 30-5 | 训练 S1+S2（数据→latent→manifest，含**非空硬断言**）+ JobStore | 完成（63/63，含真机 20 条） |
 | 30-6 | 训练 S3（自动 batch + SI 编排 + 产物注册 + `speaker_id` 闭环） | 未开始 |
 | 30-7 | 前端完整化 + 设置页 + 预加载账本 + 整链路走查 | 未开始 |
 
@@ -200,7 +200,10 @@ irodori/
 2. **下载截断不报错**，要到加载模型时才炸 → 永远用下载脚本，别手抄 URL 用浏览器下。
 3. **int4 需要 cc ≥ 8.0** → 换机后先看 `/health` 的 `int4_supported`。
 4. **训练数据的 Windows 陷阱**：官方 `prepare_manifest.py` 会静默丢弃全部样本且退出码 0
-   → 30-5 必须做 `written > 0` 硬断言（这是 30-5 的验收核心）。
+   → 我们**不用它**，改调 `DACVAECodec.encode_file()`，并在写完后硬断言
+   `written == 待编码条数`，不等就 `TRAIN_MANIFEST_EMPTY`(422) 且删掉半份 manifest（30-5 已落地）。
+   注意：**垫片要在每个入口都装**（`encode_manifest()` 里也装了一次）——
+   只在 `create_app()` 装会导致脚本/单测直接调用时 20/20 全失败。
 5. **长文本不稳**：训练音频都 ≤30s，>30s 会退化/幻觉（issue #13）→ 切句在服务端做，≤25 字/段。
 6. **emoji 对男声几乎无效**（issue #9），且表尾 emoji 训练样本极少 → UI 文案不许夸大。
 7. **水印**：本服务未装 SilentCipher，`/health` 恒报 `watermark: false`；界面要如实标注。

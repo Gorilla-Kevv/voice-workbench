@@ -62,16 +62,18 @@ def status() -> dict[str, Any]:
     }
 
 
-def check_vram_admission(settings: Settings, *, loaded: bool) -> dict[str, Any]:
+def check_vram_admission(settings: Settings, *, loaded: bool, task: str = "infer") -> dict[str, Any]:
     """显存准入。返回当前显存读数；不足时抛 `VRAM_INSUFFICIENT`(503)。
 
     - `loaded=True`（模型已常驻）→ 直接放行，不算「空闲 − 需求」（坑 26）；
-    - nvidia-smi 与 torch 读数差 >1GB 时，报错文案直接说「被其它进程占用」。
+    - nvidia-smi 与 torch 读数差 >1GB 时，报错文案直接说「被其它进程占用」；
+    - `task="prepare"`（数据整备）按 codec 档判 —— 它只加载 DACVAE，
+      拿推理的 4.7GB 去卡它就纯属误伤（30-5）。
     """
     vram = vram_mb()
     if loaded or vram is None:
-        return {"vram": vram, "required_mb": required_vram_mb(settings.precision)}
-    required = required_vram_mb(settings.precision)
+        return {"vram": vram, "required_mb": required_vram_mb(settings.precision, task)}
+    required = required_vram_mb(settings.precision, task)
     free = vram["free_mb"]
     if free >= required:
         return {"vram": vram, "required_mb": required}

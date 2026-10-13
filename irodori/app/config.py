@@ -30,16 +30,27 @@ REQUIRED_VRAM_MB: dict[str, int] = {
     "int4": 4700,
     #: bf16 基座（训练用），实测峰值 6131 MB
     "bf16": 6100,
+    #: 只加载 DACVAE codec（数据整备 S2 用）。30-5 实测（RTX 4060 Laptop）：
+    #:   codec 常驻净占 **483 MB**（nvidia-smi 口径，torch allocated 518 MB）；
+    #:   编码峰值随片段长度涨：1s → 578 MB / 10s → 1111 MB / 30s → **2285 MB**
+    #:   （torch 口径，不含 CUDA context）。取 2500 MB：撑得住 30s 的长片段，
+    #:   又远低于推理档的 4700 MB（不该拿推理的门槛去卡一个只需要 codec 的任务）。
+    "prepare": 2500,
 }
 
 
-def required_vram_mb(precision: str = "fp32") -> int:
-    """推理准入基准（MB）。
+def required_vram_mb(precision: str = "fp32", task: str = "infer") -> int:
+    """准入基准（MB）。
 
-    只按 int4 档报：`fp32` 与 `bf16` 在这套权重上差约 400MB，
-    但准入判断宁保守勿乐观（差 400MB 卡住的代价远大于多等一会儿）。
+    `task` 决定看哪一档：
+    - `infer`：只按 int4 档报（`fp32` 与 `bf16` 在这套权重上差约 400MB，
+      准入宁保守勿乐观 —— 差 400MB 卡住的代价远大于多等一会儿）；
+    - `prepare`：数据整备只加载 codec，按 codec 档报（准备阶段把 TTS 模型卸载了，
+      不该拿 4.7GB 去卡一个只需要 codec 的任务）。
     """
     _ = precision  # 保留参数：将来若换权重档要按精度分流
+    if task == "prepare":
+        return REQUIRED_VRAM_MB["prepare"]
     return REQUIRED_VRAM_MB["int4"]
 
 
@@ -91,6 +102,18 @@ class Settings:
     #: 参考音频上限（秒）。官方建议 ~30s，120s 仍有收益但边际很小
     max_ref_seconds: float = 120.0
 
+    # ---- 训练侧（30-5 起）----
+    #: 训练步数档位。用户 10.12 拍板：先小档跑闭环，之后必须能升到 2000/3000。
+    #: 「小档」取 400 步（方案给的区间是 300~500，以「能看出音色在收敛」为准），
+    #: 30-6 用 bf16 基座实测收敛速度后回填真值 —— 在此之前它是**待验值**。
+    smoke_steps: int = 400
+    train_step_presets: tuple[int, ...] = (400, 1000, 2000, 3000)
+    #: 自动 batch 探测的上限（方案 §6.4：实测 batch 8 = 2.2 s/步，再大没验过）
+    max_train_batch: int = 8
+    #: SI 训练实测速度（秒/步，batch 8 + 梯度检查点，4060 Laptop）—— 阶段 28 实测值，
+    #: 只用于给用户算「大概要跑多久」，不是保证值。
+    seconds_per_step: float = 2.2
+
     #: 任务/上传产物目录（gitignore）
     data_dir: Path = field(default_factory=lambda: IRODORI_DIR / ".data")
     uploads_dir: Path = field(default_factory=lambda: IRODORI_DIR / ".data" / "uploads")
@@ -131,6 +154,16 @@ class Settings:
     # ------------------------------------------------------------------
 
     @property
+    def jobs_dir(self) -> Path:
+        """任务持久化目录（`<data_dir>/jobs`）。"""
+        return self.data_dir / "jobs"
+
+    @property
+    def datasets_dir(self) -> Path:
+        """整备好的数据集根目录（`<data_dir>/datasets/<id>/manifest.jsonl`）。"""
+        return self.data_dir / "datasets"
+
+    @property
     def int4_model_file(self) -> Path:
         return self.int4_dir / "model.safetensors"
 
@@ -159,6 +192,13 @@ class Settings:
             "allow_cpu": self.allow_cpu,
             "device": self.device,
             "data_dir": str(self.data_dir),
+            "uploads_dir": str(self.uploads_dir),
+            "datasets_dir": str(self.datasets_dir),
+            "jobs_dir": str(self.jobs_dir),
+            "smoke_steps": self.smoke_steps,
+            "train_step_presets": list(self.train_step_presets),
+            "max_train_batch": self.max_train_batch,
+            "seconds_per_step": self.seconds_per_step,
         }
 
 

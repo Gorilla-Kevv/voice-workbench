@@ -132,8 +132,8 @@ Irodori 的长参考需要多片段 → 只加不改：
 
 | 步 | 动作 | 复用 |
 | --- | --- | --- |
-| S1 数据整备 | 收集目标说话人日语片段（**官方建议多段短句拼接，非单条长录音**），每条要 `text`（转写）与可选 `caption` | 转写来源三选一：① 音色库片段自带 `prompt_text` ② 上传同名 `.txt` ③ 调我们现有 ASR（需临时让出显存，UI 明示"训练前先转写，会切换 GPU 占用"） |
-| S2 latent 编码 | 用官方 codec 把音频编成 DACVAE latent（32 维），写 `manifest.jsonl`（字段 `text/caption/latent_path/speaker_id/num_frames`） | **不走 `prepare_manifest.py`**（它在 Windows 会 16/16 静默跳过）；直接调 `DACVAECodec.encode_file()`，我在阶段 28 已用这条路编出 16/16 |
+| S1 数据整备 ✅30-5 | 收集目标说话人日语片段（**官方建议多段短句拼接，非单条长录音**），每条要 `text`（转写）与可选 `caption` | 转写来源三选一：① 音色库片段自带 `prompt_text` ② 上传同名 `.txt` ③ 调我们现有 ASR（需临时让出显存，UI 明示"训练前先转写，会切换 GPU 占用"）。落地形态：`traindata.collect()` 三个来源（音色库长参考 / 上传目录 / 显式列表）**互斥**，缺转写在 `/v1/train/plan` 就报清 |
+| S2 latent 编码 ✅30-5 | 用官方 codec 把音频编成 DACVAE latent（32 维），写 `manifest.jsonl`（字段 `text/caption/latent_path/speaker_id/num_frames`） | **不走 `prepare_manifest.py`**（它在 Windows 会 16/16 静默跳过）；直接调 `DACVAECodec.encode_file()`，我在阶段 28 已用这条路编出 16/16。落地形态：`traindata.encode_manifest()` + **守卫一**（见 §6.2），真机 20 条 → `written=20`（14.6s） |
 | S3 训练 | `train.py --config configs/train_v4_small_speaker_inversion.yaml --speaker-inversion --batch-size N --gradient-checkpointing --max-steps 3000`，基座冻结只训 16 个 embedding token | 产物 `checkpoint_final.speaker.safetensors`（49KB）→ 自动登记进音色库该音色的 `speaker_embeds` |
 
 ### 6.2 守卫一：manifest 非空硬断言（★ 最重要）
@@ -146,6 +146,10 @@ S2 结束后 **written 行数必须 > 0 且等于输入片段数**，否则 `TRA
 
 沿用坑 26/坑 24 的修法。训练前检查：模型未加载 → 按 `required_vram_mb(train)` 判；已加载 → 跳过。
 训练侧门槛按实测：**batch 8 + 梯度检查点 ≈4.4GB 净占**（整卡峰值 6911MB），我给的准入档位取 **5120MB**（含桌面波动余量）。
+
+> 30-5 补一条**数据整备（S1+S2）自己的档位**：它只加载 DACVAE codec，不该拿 4.7GB 去卡。
+> 实测 codec 常驻净占 **483MB**，编码峰值随片段长度涨（1s → 578MB / 10s → 1111MB / 30s → 2285MB），
+> 取 **2500MB**（`config.REQUIRED_VRAM_MB["prepare"]`，`check_vram_admission(task="prepare")`）。
 
 ### 6.4 守卫三：自动 batch 探测
 
@@ -195,7 +199,7 @@ S2 结束后 **written 行数必须 > 0 且等于输入片段数**，否则 `TRA
 | **30-2** | 推理链路：`/v1/catalog` + `/v1/warmup/unload/synth`（单段克隆 + caption + emoji）+ 网关透传 + RuntimeSupervisor spec + arbiter `ServiceName` + preload `MODELS` 档位 | `irodori/app/*`、`server/src/routes/irodori.ts`、`server/src/services/{runtime,arbiter,preload}.ts` | `npm run typecheck && npm run lint`；真合成 6 句出 48kHz；RTF ≤0.25（默认 20 步）；显存读数与阶段 28 一致（净占 ~4.6GB） |
 | **30-3** | 长尾护栏：服务端看门狗 + 自动降步重试一次 + `IRODORI_TIMEOUT`；网关 `proxyTimeoutMs` 档位；客户端"重试（降步）"按钮 | `irodori/app/synth.py`、`server/src/routes/irodori.ts`、`app/src/lib/irodori.ts` | 构造 40 步 + 已知坏 seed（阶段 28 的 seed 42 场景）→ 必须在护栏内返回且 `retried=true` |
 | **30-4** | 音色库多片段长参考：`ref_clips/engine_tags/speaker_embeds` 扩展 + 网关/trainer 双向兼容 + UI 补录区 | `server/src/services/voiceLibrary.ts`、`server/src/routes/voicelib.ts`、`trainer/app/sovits/voices.py`、`VoiceLibraryPage` | 旧音色记录在 GPT-SoVITS 合成不回归；新增长参考后 Irodori 克隆相似度**用户耳朵验收**（重点：5.4s 短参考 vs 30s 多段参考的对比） |
-| **30-5** | 训练 S1+S2：数据导入/转写来源 + latent 编码 + **manifest 非空断言** + JobStore | `irodori/app/{traindata,jobs,routers/train}.py` | 单元级：喂 20 条片段必须 `written=20`；故意断掉解码路径必须 `TRAIN_MANIFEST_EMPTY` 而不是静默通过（这条就是这个阶段的验收核心） |
+| **30-5** | 训练 S1+S2：数据导入/转写来源 + latent 编码 + **manifest 非空断言** + JobStore | `irodori/app/{traindata,jobs,routers/train}.py` | ✅ **已完成（10.14，63/63）**：真机喂 20 条 → `written=20`；断掉解码路径（全失败与部分失败）均 `TRAIN_MANIFEST_EMPTY`(422) 且不留半份 manifest |
 | **30-6** | 训练 S3：自动 batch 探测 + SI 训练编排 + 进度/取消/ETA + 产物登记 + `--ref-embed` 推理闭环 | `irodori/app/speakers.py`、`IrodoriTrainingPage` | 小步数（50 步）跑完 → 产出 `.speaker.safetensors` → 用 `speaker_id` 合成成功且音色与参考一致（耳朵验收）；batch 探测值与实际显存不冲突 |
 | **30-7** | 前端完整化 + 设置页 + 预加载账本回填 + 文档/走查（含 `docs/IRODORI-INTEGRATION.md`、HANDOFF 坑更新） | `app/src/pages/*`、`AppShell`/`PAGE_META`、`preload.ts`、`ResourceBudget` | 浏览器整链路走查（未启动→启动→合成→训练→固化→复用），控制台无新报错；侧栏/设置页状态一致（不重犯阶段 27补7 的两套探活问题） |
 
@@ -233,7 +237,7 @@ S2 结束后 **written 行数必须 > 0 且等于输入片段数**，否则 `TRA
 | # | 问题 | 裁决 | 落地口径 |
 | --- | --- | --- | --- |
 | ① | 推理默认步数 | **20 步默认 + 40 步作「最高质量」档** | `/v1/catalog` 档位 `[20, 40]`，默认 20；40 在 UI 标注「更慢、可能撞长尾」 |
-| ② | 训练默认步数 | **先小档跑闭环，之后必须能升到 2000 / 3000** | 默认冒烟小档；候选 `[小档, 1000, 2000, 3000]`，UI 注明「正式训练建议 ≥2000」。小档具体值在 30-5 按实测收敛速度定 |
+| ② | 训练默认步数 | **先小档跑闭环，之后必须能升到 2000 / 3000** | 默认冒烟小档 **= 400 步**（30-5 落地，档位 `[400, 1000, 2000, 3000]` 由服务端 `/v1/catalog` 与 `/v1/train/plan` 下发，UI 不抄数）；UI 注明「正式训练建议 ≥2000」。**400 是待验值**：30-6 用 bf16 基座实测「几步能听出音色在收敛」后回填真值（候选区间 300~500） |
 | ③ | 转写来源 | **允许调用现有 ASR，但必须明确提示会临时让出显存** | 训练向导加「批量转写」步骤，文案写明「会切换引擎、耗时较长、期间 Irodori 不在显存」 |
 | ④ | LoRA | **默认关，不做** | 只做 Speaker Inversion（49KB 产物、分钟级），不实现 LoRA 开关（§6.6 整节作废） |
 

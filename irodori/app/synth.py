@@ -219,7 +219,11 @@ def _split_long(piece: str, max_chars: int) -> list[str]:
     return out
 
 
-def _voicelib_file(settings: Settings) -> Path:
+def voicelib_file(settings: Settings) -> Path:
+    """音色库索引路径（`voicelib/voices.json`）。
+
+    30-5 起训练侧（`traindata.py`）也要读它取长参考片段，所以从私有改成公开。
+    """
     root = os.environ.get("VOICES_LIB_DIR") or str(PROJECT_DIR / "voicelib")
     return Path(root) / "voices.json"
 
@@ -233,7 +237,7 @@ def _resolve_ref_voice(settings: Settings, voice_id: str) -> dict[str, Any]:
 
     返回的是 `resolve_reference()` 的结果结构（含 ref_wav / ref_wavs / 回显字段）。
     """
-    path = _voicelib_file(settings)
+    path = voicelib_file(settings)
     try:
         records = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError as error:

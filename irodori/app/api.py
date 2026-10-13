@@ -1,7 +1,8 @@
 """FastAPI 应用装配。
 
 30-1 交付 `/health`；30-2 补推理链路（`/v1/catalog`、`/v1/warmup|unload|synth`、`/v1/speakers`）；
-训练相关端点在 30-5 / 30-6 补。
+30-5 补训练侧 S1+S2（`/v1/train/plan|upload|prepare|datasets` + `/v1/jobs`）；
+S3 训练编排在 30-6。
 
 探活哲学与 netease / indextts 一致：`/health` **永远 200**，「服务活着」与「模型可用」
 是两件事（后者看 `weights.ready` 与 `loaded`）。
@@ -22,6 +23,8 @@ from .config import Settings, load_manifest, required_vram_mb
 from .errors import IrodoriError
 from .hardware import compute_capability, device_name, probe, vram_mb
 from .inventory import group_report, resolve_weights_manifest_path, scan
+from .jobs import JobStore
+from .routers import train as train_routes
 from . import synth as synth_module
 
 
@@ -37,6 +40,8 @@ def create_app(settings: Settings) -> FastAPI:
         description="日语特化 TTS：零样本克隆 + caption/emoji 风格控制 + Speaker Inversion 音色固化",
     )
     app.state.settings = settings
+    # 任务表（30-5）：训练/整备都是长任务，走 JobStore 的轮询形态（对齐 trainer）
+    app.state.jobs = JobStore(settings.jobs_dir)
 
     @app.exception_handler(IrodoriError)
     async def _handle_irodori_error(_: Request, exc: IrodoriError) -> JSONResponse:
@@ -169,5 +174,10 @@ def create_app(settings: Settings) -> FastAPI:
                     "updated_at": stat.st_mtime,
                 })
         return {"ok": True, "speakers": items, "count": len(items)}
+
+    # ------------------------------------------------------------------
+    # 训练侧（30-5：S1+S2；S3 在 30-6）
+    # ------------------------------------------------------------------
+    train_routes.register(app, settings, app.state.jobs)
 
     return app
