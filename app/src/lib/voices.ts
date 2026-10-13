@@ -98,6 +98,8 @@ function metaParams(meta: {
   filename?: string;
   duration_s?: number | null;
   sample_rate?: number | null;
+  /** 适用引擎标签（30-4）；不传则不写该字段 */
+  engine_tags?: string[];
 }): string {
   const params = new URLSearchParams();
   params.set('name', meta.name);
@@ -108,6 +110,10 @@ function metaParams(meta: {
   if (meta.filename) params.set('filename', meta.filename);
   if (meta.duration_s != null) params.set('duration_s', String(meta.duration_s));
   if (meta.sample_rate != null) params.set('sample_rate', String(meta.sample_rate));
+  // 只在真有标签时带上：服务端「空串」与「没传」是两种语义（后者不写键）
+  if (meta.engine_tags && meta.engine_tags.length > 0) {
+    params.set('engine_tags', meta.engine_tags.join(','));
+  }
   return params.toString();
 }
 
@@ -135,6 +141,7 @@ export const voiceApi = {
         prompt_lang: draft.prompt_lang,
         note: draft.note ?? '',
         tags: (draft.tags ?? []).join(','),
+        engine_tags: (draft.engine_tags ?? []).join(','),
         audio_path: draft.audio_path,
       }),
     }),
@@ -152,4 +159,37 @@ export const voiceApi = {
 
   deleteVoice: (id: string) =>
     request<{ ok: boolean; message: string }>(`/${encodeURIComponent(id)}`, { method: 'DELETE' }),
+
+  // ------------------------------------------------------------------
+  // 日语长参考多片段（30-4，Irodori 用）
+  //
+  // 片段一律**按序号**操作（而不是按路径）：路径是服务端资产，
+  // 让浏览器来回传它既没必要，也给了路径注入的空间。
+  // ------------------------------------------------------------------
+
+  /** 试听某一片 */
+  refClipAudioUrl: (id: string, index: number) =>
+    `${VOICELIB_BASE}/${encodeURIComponent(id)}/ref-clips/${index}/audio`,
+
+  addRefClip: async (id: string, file: File, text?: string) => {
+    const probe = await probeAudioFile(file);
+    const params = new URLSearchParams();
+    params.set('filename', file.name);
+    if (probe?.duration_s != null) params.set('duration_s', String(probe.duration_s));
+    if (probe?.sample_rate != null) params.set('sample_rate', String(probe.sample_rate));
+    if (text?.trim()) params.set('text', text.trim());
+    return request<VoiceResponse>(`/${encodeURIComponent(id)}/ref-clips?${params.toString()}`, {
+      method: 'POST',
+      body: file,
+    });
+  },
+
+  updateRefClip: (id: string, index: number, text: string) =>
+    request<VoiceResponse>(`/${encodeURIComponent(id)}/ref-clips/${index}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ text }),
+    }),
+
+  removeRefClip: (id: string, index: number) =>
+    request<VoiceResponse>(`/${encodeURIComponent(id)}/ref-clips/${index}`, { method: 'DELETE' }),
 };

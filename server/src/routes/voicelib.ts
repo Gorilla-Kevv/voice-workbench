@@ -17,13 +17,17 @@ import express, { type Request, type Response, type Router as RouterType } from 
 import { Router } from 'express';
 import {
   VoiceLibraryError,
+  addRefClip,
   createVoice,
   createVoiceFromPath,
   deleteVoice,
+  getRefClipPath,
   getVoice,
   getVoiceAudioPath,
   listVoices,
+  removeRefClip,
   replaceVoiceAudio,
+  updateRefClip,
   updateVoice,
   type UpdateVoicePatch,
 } from '../services/voiceLibrary.js';
@@ -72,6 +76,8 @@ function readMeta(req: Request) {
     filename: q.filename,
     duration_s: num(q.duration_s),
     sample_rate: num(q.sample_rate),
+    // 30-4：适用引擎标签（逗号分隔）。留空则不写该字段
+    engine_tags: (q.engine_tags ?? '').split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
   };
 }
 
@@ -97,8 +103,69 @@ voicelibRouter.post('/source', express.json(), (req: Request, res: Response) => 
       note: String(body.note ?? ''),
       tags: String(body.tags ?? '').split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
       audio_path: String(body.audio_path ?? ''),
+      engine_tags: String(body.engine_tags ?? '').split(/[,，]/).map((tag) => tag.trim()).filter(Boolean),
     });
     res.json({ ok: true, voice });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// --------------------------------------------------------------------------
+// 日语长参考多片段（30-4）
+//
+// 必须在 `/:id` 之前注册（Express 按注册顺序匹配；虽然 `/:id` 只吃单段路径，
+// 但显式排序能让「谁先谁后」不依赖对匹配规则的记忆）。
+// 上传同样不走 multipart：字节放请求体，元数据走查询参数（与主音频一致）。
+// --------------------------------------------------------------------------
+
+/** 追加一片：请求体 = 音频原始字节，元数据 = 查询参数 */
+voicelibRouter.post('/:id/ref-clips', rawAudio, (req: Request, res: Response) => {
+  try {
+    const q = req.query as Record<string, string | undefined>;
+    const num = (raw: string | undefined) => {
+      const value = Number(raw);
+      return raw != null && raw !== '' && Number.isFinite(value) ? value : null;
+    };
+    const content = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    const voice = addRefClip(req.params.id, content, q.filename ?? 'clip.wav', {
+      duration_s: num(q.duration_s),
+      sample_rate: num(q.sample_rate),
+      text: q.text,
+    });
+    res.json({ ok: true, voice });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+/** 试听某一片（按序号取，避免让前端传路径） */
+voicelibRouter.get('/:id/ref-clips/:index/audio', (req: Request, res: Response) => {
+  try {
+    const filePath = getRefClipPath(req.params.id, Number(req.params.index));
+    res.setHeader('Cache-Control', 'no-store');
+    res.type(AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream');
+    fs.createReadStream(filePath).pipe(res);
+  } catch (error) {
+    if (!res.headersSent) sendError(res, error);
+    else res.destroy();
+  }
+});
+
+/** 改某片的转写文本 */
+voicelibRouter.patch('/:id/ref-clips/:index', express.json(), (req: Request, res: Response) => {
+  try {
+    const body = (req.body ?? {}) as { text?: string };
+    res.json({ ok: true, voice: updateRefClip(req.params.id, Number(req.params.index), { text: body.text }) });
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+/** 删某一片 */
+voicelibRouter.delete('/:id/ref-clips/:index', (req: Request, res: Response) => {
+  try {
+    res.json({ ok: true, voice: removeRefClip(req.params.id, Number(req.params.index)) });
   } catch (error) {
     sendError(res, error);
   }

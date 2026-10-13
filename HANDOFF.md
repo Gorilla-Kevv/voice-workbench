@@ -113,7 +113,9 @@
   错误码：`NO_JA_ONLY` / `REF_REQUIRED` / `REF_CONFLICT` / `REF_TOO_SHORT` / `VOICE_NOT_FOUND` /
   `TEXT_TOO_LONG` / `VRAM_INSUFFICIENT`(503) / `ENGINE_BUSY`(409，含「上一次仍在收尾」) /
   `ENGINE_LOAD_FAILED`(503) / `IRODORI_TIMEOUT`(504)
-- 音色库端点（网关原生 `/api/voicelib/*`，阶段 26补7，**不依赖任何 Python 服务**）：
+- 音色库端点（网关原生 `/api/voicelib/*`，阶段 26补7，**不依赖任何 Python 服务**；
+  阶段 30-4 追加片段端点 `POST|PATCH|DELETE /:id/ref-clips[/:index]` 与
+  `GET /:id/ref-clips/:index/audio`，字段契约见 `server/src/services/voiceLibrary.ts` 的兼容铁律）：
   `GET /`、`GET /:id`、`GET /:id/audio`、`POST /`（原始字节体 + 查询参数元数据）、`POST /source`、
   `PATCH /:id`、`POST /:id/audio`、`DELETE /:id`；trainer 的 `/v1/voices*` 保留且读写同一份数据（坑 27）
 - GPU 进程端点（`/api/resources/gpu-processes`，阶段 26补9）：GET 列进程（pid + 显存读数，WDDM 拿不到为 null）；
@@ -725,6 +727,15 @@
     修法：`except IrodoriError` 先判 `code`，超时**不释放**，留给工作线程在段间检查点
     退出时释放。验证锁在 `.tmp/verify_irodori_guard.py` C10（`try_acquire_busy()` 必须返回 False）。
 
+65. **音色库是「两个进程写同一份 JSON」，新增字段必须两侧都认（阶段 30-4 实测）**
+    `trainer/app/sovits/voices.py` 的 `_persist()` 是**按字段列表重建 JSON** 的写法，
+    而 `_load()` 在发现历史脏数据（如 `prompt_lang` 是字面量 `"undefined"`）时会
+    **自动落盘修正**。于是：网关（Node）写进 `voicelib/voices.json` 的新字段，
+    只要 GPT-SoVITS 服务启动一次就可能被整体抹掉 —— 用户看到的是「长参考莫名其妙消失」。
+    修法：Python 侧 `Voice` 也加这三个字段并全程透传，**缺失时不写键**（别塞 null/空数组，
+    那会污染旧记录的磁盘形状）。回归锁在 `.tmp/verify_voicelib_py_compat.py` P8–P12。
+    推论：**凡是两个进程共写的索引文件，加字段都要先问「另一边会不会重建它」**。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -854,7 +865,13 @@
   段间外推降步（主）+ 墙钟看门狗 504（兜底）；`engine.py` 加 recovering 标记且**合成权改由工作线程释放**；
   catalog 暴露 `guard`；前端 `lib/irodori.ts` + `types/irodori.ts` 已建（含 `irodoriRetrySuggestion()`）。
   验证 **69/69**（56 假 runtime 单测 + 13 真机：真机降步 200/`retried=true`、超预算 504/`downgraded=true`、收尾期 409）。
-  **遗留**：30-4（音色库多片段）、30-5（训练 S1+S2）、30-6（S3）、30-7（前端页 / 设置页 / 「重试（降步）」按钮 UI）
+- **Irodori 音色库长参考已交付（阶段 30-4，10.13 BY Qoder）**：`VoiceRecord` 新增可选
+  `ref_clips` / `engine_tags` / `speaker_embeds`（**只加不改**，缺失不写键）；网关 4 个片段端点
+  （增/删/改/试听，按序号操作）；**Python 侧同步透传**（否则 GPT-SoVITS 一次启动就把这些字段抹掉 —— 坑 65）；
+  **Irodori 回落链**：`ref_voice` 有长参考就用长参考、没有回落 3~10s 主音频，响应回显 `ref_source`；
+  前端音色库行展开新增「日语长参考」区。验证 **74 项**（Node 31 / Python 24 / Irodori 19，含真机走长参考合成）。
+  **遗留**：30-5（训练 S1+S2）、30-6（S3 + `speaker_embeds` 写入）、30-7（Irodori 页面 + 设置页 +
+  「重试（降步）」按钮 UI + 按引擎筛选）
 
 ### 验收标准
 
@@ -875,7 +892,7 @@
 | 低 | 变声 / 翻唱两页的**合成下拉**换源到 `/api/models` | 阶段 34 有意留后（无功能收益 + 要动已验证的转换主链路），建议与「变声 / 翻唱真机加载验证」同一轮做。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
 | 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
 | 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
-| **中** | ~~阶段 30-3：Irodori 长尾护栏~~ **已完成（10.13）**；下一小段 **阶段 30-4（音色库多片段长参考）** | 30-4：`ref_clips/engine_tags/speaker_embeds` 扩展 + 网关/trainer 双向兼容 + UI 补录区。方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §4.1 与 §9 |
+| **中** | ~~阶段 30-4：音色库多片段长参考~~ **已完成（10.13）**；下一小段 **阶段 30-5（训练 S1+S2）** | 30-5：数据/转写来源 + latent 编码 + **manifest 非空硬断言**（官方 `prepare_manifest.py` 会静默丢弃全部样本且退出码 0，这是该段的验收核心）+ JobStore。开工前先 `npm run irodori:weights -- --training` 下 bf16 基座（2.9GB）。方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §6 与 §9 |
 | 中 | ~~Irodori 30-2 的 C 段真机合成补测~~ **已完成（10.13 19:00）** | `verify_irodori_infer.py` 39/40（唯一失败是已修正口径的 RTF 阈值）。注：C 段需要显存 ≥4700MB，桌面占用时脚本会如实跳过 |
 | 低 | Irodori 训练档权重下载 | `npm run irodori:weights -- --training`（bf16 基座 2.9GB）。**30-5 开工前必须**，30-2/30-3/30-4 不需要 |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
@@ -920,3 +937,5 @@
 > 本次文档更新时间：10.13 01:55 [BY ZCode]（阶段 30-2：Irodori 推理链路 —— `/v1/catalog|warmup|unload|synth|speakers` 五端点 + 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；emoji 表从上游源码 ast 解析；验证 31/31，真机合成段被桌面显存阻塞待补测。新增坑 61/62）
 >
 > 本次文档更新时间：10.13 19:15 [BY Qoder]（阶段 30-3：Irodori 长尾护栏 —— 段间外推降步 + 墙钟看门狗 504 + recovering 语义；顺带**补测 30-2 的 C 段真机合成**（39/40，RTF 阈值按服务端口径修正为 0.35）。验证 69/69（含 13 项真机）。新增坑 63/64：预算不能含加载成本、超时不能放合成权）
+>
+> 本次文档更新时间：10.13 20:15 [BY Qoder]（阶段 30-4：音色库多片段长参考 —— `ref_clips`/`engine_tags`/`speaker_embeds` 只加不改 + **两侧都不吞字段** + Irodori `ref_voice` 回落链（长参考优先）+ 前端「日语长参考」区。验证 74 项（Node 31 / Python 24 / Irodori 19，含真机走长参考合成）。新增坑 65：两个进程共写的索引，加字段要两侧都认）

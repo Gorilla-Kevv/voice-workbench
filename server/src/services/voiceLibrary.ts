@@ -35,6 +35,38 @@ const SUPPORTED_LANGS = new Set(['zh', 'en', 'ja', 'ko', 'yue', 'auto']);
 /** 官方对参考音频时长的硬约束（trainer catalog.REF_AUDIO_MIN/MAX_SEC 的镜像，仅用于 warnings） */
 const REF_MIN_SEC = 3.0;
 const REF_MAX_SEC = 10.0;
+/**
+ * 日语长参考（Irodori）的约束。与 Irodori 侧的 `max_ref_seconds`（120）对齐。
+ * 注意这两组约束**故意不同**：GPT-SoVITS 只吃 3~10s 的单条主音频，
+ * Irodori 要的是「多段短句拼起来的长参考」（官方建议 ~30s）。
+ * 分流靠的是「谁读哪个字段」，不是靠校验 —— 见下方 ref_clips 的注释。
+ */
+const LONG_REF_MAX_SEC = 120;
+const LONG_REF_SWEET_SPOT_SEC = 30;
+
+/**
+ * 日语长参考的一个片段。
+ *
+ * 为什么是**多片段**而不是一条长录音：官方训练/推理都建议多段短句拼接，
+ * 单条长录音里的停顿与语气漂移会污染 speaker embedding。
+ */
+export interface RefClip {
+  /** 绝对路径（托管上传时在 `voicelib/voices/` 下） */
+  path: string;
+  dur_s: number | null;
+  sample_rate: number | null;
+  /** 该片段的转写（Irodori 的 SI 训练要用；推理不需要） */
+  text?: string;
+  added_at?: number;
+}
+
+/** 固化的 speaker embedding（Speaker Inversion 产物，30-6 训练写入） */
+export interface SpeakerEmbed {
+  path: string;
+  trained_at: number;
+  steps?: number;
+  batch?: number;
+}
 
 export interface VoiceRecord {
   id: string;
@@ -50,11 +82,31 @@ export interface VoiceRecord {
   size_bytes: number;
   created_at: number;
   updated_at: number;
+  // ---- 以下三个是 30-4 新增的**可选**字段 ----
+  //
+  // ⚠️ 兼容铁律（改这段前先读）：
+  // 1. **缺失时保持 `undefined`，不要默认成 `[]`** —— 否则每次改个 note 都会给
+  //    磁盘上所有旧记录塞进空数组，几百条记录的索引被无意义地改写一遍；
+  // 2. **Python 侧（`trainer/app/sovits/voices.py`）必须同步认这三个字段** ——
+  //    那边 `_load()` 是显式列字段构造的，不认的字段会被丢掉，而它一旦
+  //    触发「修复落盘」就把 Node 写的这些字段**抹掉**（方案 §5 点名的坑）；
+  // 3. 三个字段都不是「引擎路由」的依据：GPT-SoVITS 继续只读 `audio_path`，
+  //    Irodori 读 `ref_clips`（为空时回落 `audio_path`）。`engine_tags` 只是标注。
+  /** 日语长参考多片段（Irodori 用；旧记录没有此字段） */
+  ref_clips?: RefClip[];
+  /** 适用引擎标签，如 `['gsv', 'irodori']`；空/缺失 = 未标注（所有引擎都可见） */
+  engine_tags?: string[];
+  /** 固化的 speaker embedding 列表（30-6 训练产物登记在这里） */
+  speaker_embeds?: SpeakerEmbed[];
 }
 
 export interface VoiceView extends VoiceRecord {
   exists: boolean;
   warnings: string[];
+  /** 长参考总时长（秒）；没有片段时是 0 */
+  ref_clips_total_sec: number;
+  /** 片段里有几个缺转写（SI 训练要用，UI 要提示） */
+  ref_clips_missing_text: number;
 }
 
 export class VoiceLibraryError extends Error {
@@ -165,7 +217,7 @@ function readIndex(): VoiceRecord[] {
   for (const item of raw) {
     const record = item as Partial<VoiceRecord>;
     if (!record || typeof record.id !== 'string') continue;
-    items.push({
+    const voice: VoiceRecord = {
       id: record.id,
       name: record.name ?? '',
       audio_path: record.audio_path ?? '',
@@ -179,9 +231,51 @@ function readIndex(): VoiceRecord[] {
       size_bytes: record.size_bytes ?? 0,
       created_at: record.created_at ?? 0,
       updated_at: record.updated_at ?? 0,
-    });
+    };
+    // 30-4 的三个可选字段：**只在磁盘上真的有时才带上**（见 VoiceRecord 的兼容铁律 1）
+    if (Array.isArray(record.ref_clips)) voice.ref_clips = normalizeRefClips(record.ref_clips);
+    if (Array.isArray(record.engine_tags)) voice.engine_tags = normalizeEngineTags(record.engine_tags);
+    if (Array.isArray(record.speaker_embeds)) voice.speaker_embeds = normalizeSpeakerEmbeds(record.speaker_embeds);
+    items.push(voice);
   }
   return items;
+}
+
+function normalizeRefClips(raw: unknown[]): RefClip[] {
+  const clips: RefClip[] = [];
+  for (const item of raw) {
+    const clip = item as Partial<RefClip>;
+    if (!clip || typeof clip.path !== 'string' || !clip.path) continue;
+    const next: RefClip = {
+      path: clip.path,
+      dur_s: typeof clip.dur_s === 'number' ? clip.dur_s : null,
+      sample_rate: typeof clip.sample_rate === 'number' ? clip.sample_rate : null,
+    };
+    if (typeof clip.text === 'string' && clip.text.trim()) next.text = clip.text.trim();
+    if (typeof clip.added_at === 'number') next.added_at = clip.added_at;
+    clips.push(next);
+  }
+  return clips;
+}
+
+function normalizeEngineTags(raw: unknown[]): string[] {
+  return [...new Set(raw.map((tag) => String(tag ?? '').trim().toLowerCase()).filter(Boolean))];
+}
+
+function normalizeSpeakerEmbeds(raw: unknown[]): SpeakerEmbed[] {
+  const embeds: SpeakerEmbed[] = [];
+  for (const item of raw) {
+    const embed = item as Partial<SpeakerEmbed>;
+    if (!embed || typeof embed.path !== 'string' || !embed.path) continue;
+    const next: SpeakerEmbed = {
+      path: embed.path,
+      trained_at: typeof embed.trained_at === 'number' ? embed.trained_at : 0,
+    };
+    if (typeof embed.steps === 'number') next.steps = embed.steps;
+    if (typeof embed.batch === 'number') next.batch = embed.batch;
+    embeds.push(next);
+  }
+  return embeds;
 }
 
 function writeIndex(items: VoiceRecord[]): void {
@@ -209,7 +303,40 @@ function toView(record: VoiceRecord): VoiceView {
       }
     }
   }
-  return { ...record, exists, warnings };
+
+  // ---- 日语长参考（30-4）----
+  const clips = record.ref_clips ?? [];
+  let total = 0;
+  let missingText = 0;
+  for (const clip of clips) {
+    if (!isFile(clip.path)) {
+      warnings.push(`日语长参考片段已丢失：${path.basename(clip.path)}`);
+      continue;
+    }
+    if (clip.dur_s) total += clip.dur_s;
+    if (!clip.text) missingText += 1;
+  }
+  if (clips.length > 0) {
+    if (total > LONG_REF_MAX_SEC) {
+      warnings.push(
+        `日语长参考合计 ${total.toFixed(0)} 秒，超过上限 ${LONG_REF_MAX_SEC} 秒（服务端会截断到前 ${LONG_REF_MAX_SEC} 秒）`,
+      );
+    } else if (total < LONG_REF_SWEET_SPOT_SEC) {
+      // 只是提示，不是错误：官方说 ~30s 已拿到大部分收益，不是硬门槛
+      warnings.push(`日语长参考合计 ${total.toFixed(0)} 秒，官方建议 ~${LONG_REF_SWEET_SPOT_SEC} 秒（当前偏短）`);
+    }
+    if (missingText > 0) {
+      warnings.push(`${missingText} 个日语长参考片段缺转写文本（Speaker Inversion 训练要用）`);
+    }
+  }
+
+  return {
+    ...record,
+    exists,
+    warnings,
+    ref_clips_total_sec: Math.round(total * 10) / 10,
+    ref_clips_missing_text: missingText,
+  };
 }
 
 // --------------------------------------------------------------------------
@@ -250,6 +377,15 @@ export interface CreateVoiceInput {
   /** 浏览器探测的音频元数据（Node 侧没有 soundfile，时长由前端解码后带上；可为空） */
   duration_s?: number | null;
   sample_rate?: number | null;
+  /** 适用引擎标签（30-4）；不传则不写该字段（兼容铁律 1） */
+  engine_tags?: string[];
+}
+
+/** 只在真的给了标签时才写 `engine_tags` 键（兼容铁律 1） */
+function applyEngineTags(record: VoiceRecord, raw: string[] | undefined): void {
+  if (!Array.isArray(raw)) return;
+  const tags = normalizeEngineTags(raw);
+  if (tags.length > 0) record.engine_tags = tags;
 }
 
 function newId(): string {
@@ -292,6 +428,7 @@ export function createVoice(input: CreateVoiceInput): VoiceView {
     created_at: now,
     updated_at: now,
   };
+  applyEngineTags(record, input.engine_tags);
   items.push(record);
   writeIndex(items);
   return toView(record);
@@ -322,6 +459,7 @@ export function createVoiceFromPath(input: CreateVoiceInput & { audio_path: stri
     created_at: now,
     updated_at: now,
   };
+  applyEngineTags(record, input.engine_tags);
   items.push(record);
   writeIndex(items);
   return toView(record);
@@ -334,6 +472,8 @@ export interface UpdateVoicePatch {
   note?: string;
   tags?: string[];
   audio_path?: string;
+  /** 适用引擎标签（30-4）。传空数组 = 清空标注 */
+  engine_tags?: string[];
 }
 
 export function updateVoice(id: string, patch: UpdateVoicePatch): VoiceView {
@@ -347,6 +487,12 @@ export function updateVoice(id: string, patch: UpdateVoicePatch): VoiceView {
   if (patch.prompt_lang != null) record.prompt_lang = normalizePromptLang(patch.prompt_lang);
   if (patch.note != null) record.note = patch.note;
   if (patch.tags != null) record.tags = patch.tags;
+  if (patch.engine_tags != null) {
+    const tags = normalizeEngineTags(patch.engine_tags);
+    // 空数组 = 清空标注：**把键删掉**而不是留一个空数组（兼容铁律 1）
+    if (tags.length > 0) record.engine_tags = tags;
+    else delete record.engine_tags;
+  }
   if (patch.audio_path != null) {
     if (!isFile(patch.audio_path)) {
       throw new VoiceLibraryError(400, 'VOICE_PATH_MISSING', `指定的音频文件不存在：${patch.audio_path}`);
@@ -357,6 +503,147 @@ export function updateVoice(id: string, patch: UpdateVoicePatch): VoiceView {
   record.updated_at = Date.now() / 1000;
   writeIndex(items);
   return toView(record);
+}
+
+// --------------------------------------------------------------------------
+// 日语长参考多片段（30-4）
+// --------------------------------------------------------------------------
+
+/** 片段数量上限：再多也不会被服务端全部用到（它按 max_ref_seconds 顺序截断） */
+const MAX_REF_CLIPS = 24;
+
+function loadVoiceForEdit(id: string): { items: VoiceRecord[]; record: VoiceRecord } {
+  const items = readIndex();
+  const record = items.find((item) => item.id === id);
+  if (!record) {
+    throw new VoiceLibraryError(404, 'VOICE_NOT_FOUND', `音色不存在：${id}`, '它可能已被删除，请刷新列表。');
+  }
+  return { items, record };
+}
+
+/**
+ * 追加一个日语长参考片段。
+ *
+ * 为什么在这里**拒绝**超上限而不是像服务端那样截断：超过 `max_ref_seconds` 的片段
+ * 永远不会被合成用到（Irodori 按顺序截断），存下来只是浪费磁盘 + 让 UI 显示的总时长
+ * 与「实际生效的时长」不一致。宁可当场说清楚。
+ */
+export function addRefClip(
+  id: string,
+  content: Buffer,
+  filename: string,
+  probe: { duration_s?: number | null; sample_rate?: number | null; text?: string },
+): VoiceView {
+  if (!content || content.length === 0) {
+    throw new VoiceLibraryError(400, 'REF_CLIP_EMPTY', '上传的片段内容为空');
+  }
+  if (content.length > MAX_UPLOAD_BYTES) {
+    throw new VoiceLibraryError(400, 'REF_CLIP_TOO_LARGE', '片段文件过大，上限 64 MB');
+  }
+  const suffix = path.extname(filename || 'clip.wav').toLowerCase() || '.wav';
+  if (!ALLOWED_SUFFIXES.has(suffix)) {
+    throw new VoiceLibraryError(400, 'REF_CLIP_FORMAT_UNSUPPORTED', `不支持的音频格式：${suffix}`,
+      `可用格式：${[...ALLOWED_SUFFIXES].join('、')}`);
+  }
+  const { items, record } = loadVoiceForEdit(id);
+  const clips = record.ref_clips ?? [];
+  if (clips.length >= MAX_REF_CLIPS) {
+    throw new VoiceLibraryError(400, 'REF_CLIP_LIMIT', `片段数量已达上限 ${MAX_REF_CLIPS} 个`,
+      '先删掉不用的片段再加；片段不是越多越好，官方建议合计 ~30 秒。');
+  }
+  const currentTotal = clips.reduce((sum, clip) => sum + (clip.dur_s ?? 0), 0);
+  const incoming = probe.duration_s ?? 0;
+  if (currentTotal + incoming > LONG_REF_MAX_SEC) {
+    throw new VoiceLibraryError(
+      400,
+      'REF_CLIP_TOTAL_TOO_LONG',
+      `加上这一片会达到 ${(currentTotal + incoming).toFixed(0)} 秒，超过上限 ${LONG_REF_MAX_SEC} 秒`,
+      `官方建议合计 ~${LONG_REF_SWEET_SPOT_SEC} 秒（再多收益很小）；请先删掉一些片段或改用更短的素材。`,
+    );
+  }
+
+  // 文件名带 voice id 前缀：一眼能看出归属，删除音色时也好一起清理
+  let index = clips.length;
+  let target = path.join(AUDIO_DIR, `${record.id}.ref${index}${suffix}`);
+  while (isFile(target)) {
+    index += 1;
+    target = path.join(AUDIO_DIR, `${record.id}.ref${index}${suffix}`);
+  }
+  fs.mkdirSync(AUDIO_DIR, { recursive: true });
+  fs.writeFileSync(target, content);
+
+  const clip: RefClip = {
+    path: target,
+    dur_s: probe.duration_s ?? null,
+    sample_rate: probe.sample_rate ?? null,
+    added_at: Date.now() / 1000,
+  };
+  const text = (probe.text ?? '').trim();
+  if (text) clip.text = text;
+  record.ref_clips = [...clips, clip];
+  record.updated_at = Date.now() / 1000;
+  writeIndex(items);
+  return toView(record);
+}
+
+/** 改某片的转写文本（按索引，避免让调用方传路径） */
+export function updateRefClip(id: string, index: number, patch: { text?: string }): VoiceView {
+  const { items, record } = loadVoiceForEdit(id);
+  const clips = record.ref_clips ?? [];
+  if (!Number.isInteger(index) || index < 0 || index >= clips.length) {
+    throw new VoiceLibraryError(404, 'REF_CLIP_NOT_FOUND', `片段序号越界：${index}（共 ${clips.length} 个）`);
+  }
+  const clip = clips[index];
+  if (patch.text != null) {
+    const text = patch.text.trim();
+    // 清空转写 = 把键删掉（与 engine_tags 同一处理，保持磁盘干净）
+    if (text) clip.text = text;
+    else delete clip.text;
+  }
+  record.updated_at = Date.now() / 1000;
+  writeIndex(items);
+  return toView(record);
+}
+
+/** 删某片（同时删托管文件；外部路径只摘记录不动磁盘） */
+export function removeRefClip(id: string, index: number): VoiceView {
+  const { items, record } = loadVoiceForEdit(id);
+  const clips = record.ref_clips ?? [];
+  if (!Number.isInteger(index) || index < 0 || index >= clips.length) {
+    throw new VoiceLibraryError(404, 'REF_CLIP_NOT_FOUND', `片段序号越界：${index}（共 ${clips.length} 个）`);
+  }
+  const [removed] = clips.splice(index, 1);
+  if (clips.length > 0) record.ref_clips = clips;
+  else delete record.ref_clips;
+  record.updated_at = Date.now() / 1000;
+  writeIndex(items);
+  // 只删自己托管目录里的文件：用户通过 ref_path 引用的外部文件不碰
+  if (removed && isFile(removed.path) && path.dirname(removed.path) === AUDIO_DIR) {
+    try {
+      fs.unlinkSync(removed.path);
+    } catch {
+      // 删不掉不影响正确性
+    }
+  }
+  return toView(record);
+}
+
+/** 取某片的磁盘路径（试听用；越界或文件丢失都抛 404） */
+export function getRefClipPath(id: string, index: number): string {
+  const record = readIndex().find((item) => item.id === id);
+  if (!record) {
+    throw new VoiceLibraryError(404, 'VOICE_NOT_FOUND', `音色不存在：${id}`);
+  }
+  const clips = record.ref_clips ?? [];
+  if (!Number.isInteger(index) || index < 0 || index >= clips.length) {
+    throw new VoiceLibraryError(404, 'REF_CLIP_NOT_FOUND', `片段序号越界：${index}（共 ${clips.length} 个）`);
+  }
+  const clip = clips[index];
+  if (!isFile(clip.path)) {
+    throw new VoiceLibraryError(404, 'REF_CLIP_MISSING', `片段文件已丢失：${path.basename(clip.path)}`,
+      '删掉这条片段记录，或重新上传。');
+  }
+  return clip.path;
 }
 
 export function replaceVoiceAudio(
@@ -415,6 +702,16 @@ export function deleteVoice(id: string): void {
       fs.unlinkSync(record.audio_path);
     } catch {
       // 删不掉不影响正确性
+    }
+  }
+  // 日语长参考片段：只删自己托管目录里的（30-4）
+  for (const clip of record.ref_clips ?? []) {
+    if (isFile(clip.path) && path.dirname(clip.path) === AUDIO_DIR) {
+      try {
+        fs.unlinkSync(clip.path);
+      } catch {
+        // 删不掉不影响正确性
+      }
     }
   }
 }

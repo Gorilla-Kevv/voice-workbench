@@ -37,6 +37,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceHubList } from '@/components/features/ResourceHub';
+import { VoiceLongReference } from '@/components/features/VoiceLongReference';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
@@ -848,6 +849,8 @@ function ReferenceAudioPanel() {
                             ))}
                           </div>
                         ) : null}
+                        {/* 日语长参考（30-4）：只对 Irodori 有意义，故单独成块 */}
+                        <VoiceLongReference voice={voice} onChanged={() => void load()} />
                       </div>
                     ) : null}
                   </div>

@@ -224,8 +224,15 @@ def _voicelib_file(settings: Settings) -> Path:
     return Path(root) / "voices.json"
 
 
-def _resolve_ref_voice(settings: Settings, voice_id: str) -> tuple[Path, Optional[str]]:
-    """音色库 id → 磁盘路径。返回 (路径, 音色名)。"""
+def _resolve_ref_voice(settings: Settings, voice_id: str) -> dict[str, Any]:
+    """音色库 id → 参考。**优先长参考多片段，为空时回落主音频**（30-4）。
+
+    回落链的意义：同一个音色在 GPT-SoVITS 眼里是「一条 3~10 秒的主音频」，
+    在 Irodori 眼里可能是「几段短句拼起来的长参考」—— 后者质量更好，但用户
+    完全可能只填了前者。所以这里不能二选一，而是「有长参考就用长参考」。
+
+    返回的是 `resolve_reference()` 的结果结构（含 ref_wav / ref_wavs / 回显字段）。
+    """
     path = _voicelib_file(settings)
     try:
         records = json.loads(path.read_text(encoding="utf-8"))
@@ -240,12 +247,47 @@ def _resolve_ref_voice(settings: Settings, voice_id: str) -> tuple[Path, Optiona
                            "检查 voicelib/voices.json 是否损坏（网关侧也能重建）。") from error
     if not isinstance(records, list):
         raise IrodoriError("VOICE_LIB_BROKEN", "音色库格式不对（应为数组）", "检查 voicelib/voices.json。")
+
     for record in records:
-        if isinstance(record, dict) and record.get("id") == voice_id:
-            audio = str(record.get("audio_path") or "")
-            if not audio:
-                break
-            return Path(audio), str(record.get("name") or voice_id)
+        if not (isinstance(record, dict) and record.get("id") == voice_id):
+            continue
+        name = str(record.get("name") or voice_id)
+
+        # ① 长参考多片段优先（30-4）
+        raw_clips = record.get("ref_clips")
+        clips = [
+            Path(str(item["path"]))
+            for item in (raw_clips if isinstance(raw_clips, list) else [])
+            if isinstance(item, dict) and item.get("path")
+        ]
+        if clips:
+            for clip in clips:
+                _check_ref_file(clip, f"音色 {name} 的长参考片段")
+            return {
+                "voice_id": voice_id,
+                "speaker_id": None,
+                "voice_name": name,
+                "ref_wavs": [str(clip) for clip in clips],
+                # 回显「实际用的是哪一层」，前端要如实显示（否则用户以为用的是长参考）
+                "ref_source": "ref_clips",
+                "ref_clip_count": len(clips),
+            }
+
+        # ② 回落主音频（老音色 / 没配长参考的音色）
+        audio = str(record.get("audio_path") or "")
+        if not audio:
+            break
+        main = Path(audio)
+        _check_ref_file(main, f"音色 {name} 的参考音频")
+        return {
+            "voice_id": voice_id,
+            "speaker_id": None,
+            "voice_name": name,
+            "ref_wav": str(main),
+            "ref_source": "audio_path",
+            "ref_clip_count": 0,
+        }
+
     raise IrodoriError(
         "VOICE_NOT_FOUND",
         f"音色库中没有 id 为 {voice_id!r} 的音色（共 {len(records)} 条）",
@@ -279,7 +321,13 @@ def _check_ref_file(path: Path, label: str) -> None:
 
 def resolve_reference(settings: Settings, payload: SynthPayload) -> dict[str, Any]:
     """把三种参考形态解成上游 SamplingRequest 的字段。返回含 ref_wav/ref_wavs/ref_embed 与回显信息。"""
-    result: dict[str, Any] = {"voice_id": None, "speaker_id": None, "voice_name": None}
+    result: dict[str, Any] = {
+        "voice_id": None,
+        "speaker_id": None,
+        "voice_name": None,
+        "ref_source": None,
+        "ref_clip_count": 0,
+    }
 
     if payload.speaker_id:
         speakers_dir = settings.data_dir / "speakers"
@@ -287,6 +335,7 @@ def resolve_reference(settings: Settings, payload: SynthPayload) -> dict[str, An
         if candidates[0].is_file():
             result["ref_embed"] = str(candidates[0])
             result["speaker_id"] = payload.speaker_id
+            result["ref_source"] = "speaker_embed"
             return result
         found = sorted(speakers_dir.glob("*.speaker.safetensors")) if speakers_dir.is_dir() else []
         raise IrodoriError(
@@ -300,21 +349,20 @@ def resolve_reference(settings: Settings, payload: SynthPayload) -> dict[str, An
         for clip in clips:
             _check_ref_file(clip, "参考片段")
         result["ref_wavs"] = [str(clip) for clip in clips]
+        result["ref_source"] = "ref_clips"
+        result["ref_clip_count"] = len(clips)
         return result
 
     if payload.ref_voice:
-        path, name = _resolve_ref_voice(settings, payload.ref_voice)
-        _check_ref_file(path, f"音色 {name} 的参考音频")
-        result["ref_wav"] = str(path)
-        result["voice_id"] = payload.ref_voice
-        result["voice_name"] = name
-        return result
+        # 音色库解析（长参考优先，回落主音频）整段交给它，见 _resolve_ref_voice 的注释
+        return _resolve_ref_voice(settings, payload.ref_voice)
 
     assert payload.ref_path is not None
     path = Path(payload.ref_path)
     _check_ref_file(path, "参考音频")
     result["ref_wav"] = str(path)
     result["voice_id"] = "ref_path"
+    result["ref_source"] = "ref_path"
     return result
 
 
@@ -539,6 +587,11 @@ def _run_synthesis_locked(
         "voice_id": reference.get("voice_id"),
         "voice_name": reference.get("voice_name"),
         "speaker_id": reference.get("speaker_id"),
+        # 实际用的是哪一层参考：ref_clips（长参考）/ audio_path（主音频）/
+        # ref_path（直给路径）/ speaker_embed（固化音色）。
+        # 前端要如实显示 —— 用户以为用的是长参考、实际用的是 5 秒主音频，是最坏的情况。
+        "ref_source": reference.get("ref_source"),
+        "ref_clip_count": reference.get("ref_clip_count") or 0,
         "caption": payload.caption,
         "schedule": payload.schedule,
         "duration_scale": payload.duration_scale,

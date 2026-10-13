@@ -9,7 +9,8 @@
 - 最新完成：**阶段 30-1 = Irodori 环境与骨架**（10.12 18:15 BY Qoder）—— `irodori/` 服务骨架 + 独立 venv（py3.12 + torch 2.10.0+cu128，CUDA 可用、cc 8.9 int4 可用）+ 权重下载器（推理档 1.2GB 与上游代码全部字节校验通过）+ **Windows 解码垫片已生效** + `/health` 实测出 `required_vram_mb: 4700`；验证脚本 26/26
 - 最新完成：**阶段 30-2 = Irodori 推理链路**（10.13 01:50 BY Qoder）—— `/v1/catalog`（emoji 56 个 + 官方释义 45 条**从上游源码 ast 解析**）、`/v1/warmup|unload|synth|speakers`（懒加载 + 显存准入「已加载跳过」+ 日语校验 + 服务端切句 ≤25 字/段拼接 + 参考三形态互斥 + 409 合成互斥）+ 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；验证脚本 **31/31**（含网关透传真跑）；**C 段真机合成已于 10.13 19:00 跑通**（39/40，唯一失败是 RTF 阈值口径 —— 服务端口径本就高于阶段 28 的 bench 口径，已按实测改为 0.35）
 - 最新完成：**阶段 30-3 = Irodori 长尾护栏**（10.13 19:10 BY Qoder）—— **段间外推降步**（每段后外推整条耗时，超 `0.9×IRODORI_TIMEOUT` 就把剩余段降到 20 步 + 换 seed；依据阶段 28 实测 40 步 89s → 20 步 2.16s）+ **墙钟看门狗**（专用工作线程 + 504 `IRODORI_TIMEOUT`，带 `retry_suggestion`）；**加载不计入采样预算**（否则小预算首次请求必假超时）；超时后合成权留到孤儿线程段间检查点退出（期间 409 文案区分「仍在收尾」）；catalog 暴露 `guard` 段；前端 `lib/irodori.ts` + `types/irodori.ts`。验证脚本 **69/69**（56 项假 runtime 单测 + **13 项真机**：真机降步 200/`retried=true`、超预算 504/`downgraded=true`、收尾期 409）
-- 下一阶段：**阶段 30-4（音色库多片段长参考）**：`ref_clips/engine_tags/speaker_embeds` 音色库扩展 + 双向兼容 + UI 补录区。之后 30-5（训练 S1+S2，含 manifest 非空硬断言）→ 30-6（S3 + `speaker_id` 闭环）→ 30-7（前端完整化）
+- 最新完成：**阶段 30-4 = 音色库多片段长参考**（10.13 20:10 BY Qoder）—— `VoiceRecord` 只加不改地新增可选 `ref_clips`（多片段长参考）/ `engine_tags`（适用引擎标注）/ `speaker_embeds`（30-6 训练产物位）；**两侧都不吞字段**（Node 的 `readIndex/_persist` 与 Python 的 `Voice.to_dict/_persist` 都只在有值时写键）；网关新增片段增删改 + 试听 4 个端点；**Irodori 侧补上回落链** —— `ref_voice` 现在「有长参考就用长参考，没有才回落 3~10s 主音频」，并在响应里回显 `ref_source`/`ref_clip_count`；前端音色库行展开新增「日语长参考」区（多片上传/逐片试听/逐片转写/引擎标签）。验证 **74 项**（Node 31 + Python 24 + Irodori 19，含真机走长参考合成）
+- 下一阶段：**阶段 30-5（训练 S1+S2）**：数据/转写来源 + latent 编码 + **manifest 非空硬断言** + JobStore。开工前先下训练档权重：`npm run irodori:weights -- --training`（bf16 基座 2.9GB）。之后 30-6（S3 + `speaker_id` 闭环）→ 30-7（前端完整化）
 - 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；**30-2 的 C 段真机合成补测**（腾显存后 `python .tmp/verify_irodori_infer.py`）；训练档权重下载（`npm run irodori:weights -- --training`，30-5 前）
 - 未完成的任务：阶段 30-4…30-7；训练档权重（bf16 2.9GB）需在 30-5 前下载
 - 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
@@ -2483,7 +2484,7 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 - 本次文档更新时间：10.12 13:47
 
-## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder]
+## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder][30-4 完成时间：10.13 20:10 BY Qoder]
 
 - 分支：feature/vc-svc
 - 立项依据：用户 10.09 裁决「**做克隆和训练**」（并明确 Genie-TTS 与 dots.tts 弃用）。
@@ -2536,7 +2537,7 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 ### 进度
 
-- **30-1（环境与骨架）、30-2（推理链路）、30-3（长尾护栏）已完成** —— 30-4 未开工。
+- **30-1（环境与骨架）、30-2（推理链路）、30-3（长尾护栏）、30-4（音色库多片段长参考）已完成** —— 30-5 未开工。
 
 #### 30-1 明细
 
@@ -2732,7 +2733,55 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
   （评估文档实测：坏 seed 那次的**音频本身是正常的**，只是慢）。
 - 并发合成一律 409（含收尾期），刻意不排队：8GB 卡上排队第二条也是抖动。
 
-- 本次文档更新时间：10.13 19:10 [BY Qoder]（阶段 30-3：Irodori 长尾护栏 + 30-2 真机合成补测；验证 69/69（含 13 项真机）+ 39/40）
+#### 30-4 明细（10.13 完成）
+
+**已完成**
+
+| 交付物 | 说明 |
+| --- | --- |
+| `server/src/services/voiceLibrary.ts` | `VoiceRecord` **只加不改**地新增三个可选字段：`ref_clips`（多片段长参考）/ `engine_tags`（适用引擎标注）/ `speaker_embeds`（30-6 训练产物位）。**兼容铁律三条**写进代码注释：① 缺失时保持 `undefined`，**不默认成 `[]`**（否则每次改个 note 都会给所有旧记录塞空数组）；② Python 侧必须同步认这三个字段；③ 三者都**不是引擎路由依据**（GPT-SoVITS 继续只读 `audio_path`，Irodori 读 `ref_clips`，为空回落）。另新增 `addRefClip` / `updateRefClip` / `removeRefClip` / `getRefClipPath`，`deleteVoice` 连带清理托管片段文件 |
+| `server/src/routes/voicelib.ts` | 4 个新端点：`POST /:id/ref-clips`（rawAudio + query，**与主音频一致不走 multipart**）/ `GET /:id/ref-clips/:index/audio`（试听）/ `PATCH /:id/ref-clips/:index`（改转写）/ `DELETE /:id/ref-clips/:index`。片段一律**按序号**操作（不让浏览器传路径）。`readMeta` / `/source` 补 `engine_tags` |
+| `trainer/app/sovits/voices.py` | `Voice` 加三个字段 + `to_dict` / `_persist` / `_load` 全程透传（**只在非 None 时写键**）。这是本段最容易被忽略的一处 —— 见下方「关键风险」 |
+| `irodori/app/synth.py` | `_resolve_ref_voice()` 重写为**回落链**：有 `ref_clips` → 用多片段（`ref_wavs`）；没有 / 全无效 → 回落 `audio_path`。响应新增 `ref_source`（`ref_clips`/`audio_path`/`ref_path`/`speaker_embed`）与 `ref_clip_count` |
+| `app/src/types/sovits.ts`、`app/src/lib/voices.ts` | `SovitsVoice` 加三个可选字段 + `ref_clips_total_sec` / `ref_clips_missing_text`（服务端算好，前端别自己加）；`voiceApi` 加 4 个片段操作 + `refClipAudioUrl` |
+| `app/src/components/features/VoiceLongReference.tsx`、`VoiceLibraryPage.tsx` | 行展开新增「日语长参考」区：多选上传、逐片试听/删除/改转写、总时长与 ~30s 建议、引擎标签快捷开关。**文案按实测写**（多段短句优于长录音；转写只训练要用；标签不影响合成行为） |
+| `server/scripts/verify-voicelib.ts` | Node 侧验证（最小 express + 隔离音色库目录，**不启真网关**以免按 flag 连带拉起别的模型服务） |
+| `.tmp/verify_voicelib_py_compat.py`、`.tmp/verify_irodori_longref.py` | Python 侧双向兼容 + Irodori 回落链验证 |
+
+**关键风险（方案 §5 点名的那条，本段真正修掉）**
+
+`trainer/app/sovits/voices.py` 的 `_persist()` 是「按字段列表重建 JSON」的写法，
+而 `_load()` 在发现历史脏数据（例如 `prompt_lang` 是字面量 `"undefined"`）时会**自动落盘修正**。
+也就是说：**GPT-SoVITS 服务只要启动一次，就可能把网关写进去的 `ref_clips` / `engine_tags` /
+`speaker_embeds` 整体抹掉** —— 用户会看到「长参考莫名其妙消失」。修法是让 Python 侧也认这三个
+字段并原样透传；回归锁在 `.tmp/verify_voicelib_py_compat.py` 的 P8–P12（专门构造脏语种触发落盘，
+再断言三个字段仍在）。
+
+**已验证（真跑）**
+
+| 项 | 结果 |
+| --- | --- |
+| `server/scripts/verify-voicelib.ts` | **31/31**：片段增删改查、试听返回真 WAV、越界 404、超总时长上限被拒且不落文件、`engine_tags` 去重小写化与「清空后键消失」、删除音色连带清理片段；**磁盘形状兼容**（旧记录改 note 后键集**完全不变**） |
+| `.tmp/verify_voicelib_py_compat.py` | **24/24**：旧记录落盘不塞新键、三个字段读回原样、**脏数据触发自动落盘后新字段仍在**、`update`/`replace_audio` 不丢、新建记录不写空键、GPT-SoVITS 原有能力（`audio_path`/`is_usable`/`warnings`）不回归 |
+| `.tmp/verify_irodori_longref.py`（含 `--real`） | **24/24**：回落链（有长参考用长参考 / 没有回落主音频 / 片段文件丢失报错 / 无效条目跳过 / 全无效则回落）、假 runtime 端到端确认上游收到 `ref_wavs`；**真机**：`ref_source=ref_clips`、2 片、48kHz、200 |
+| 回归 | guard 脚本 **56/56**；`verify_irodori_infer.py` 真机 **39/40**（唯一失败是 RTF 阈值，已按实测波动区间 0.30~0.37 放宽到 0.45 —— 该断言抓的是「异常慢」而不是性能基准） |
+| `npm run typecheck` / `eslint` / `vite build` | 全过（build 922.9 kB） |
+
+**未完成（交接）**
+
+- `speaker_embeds` 的**写入**在 30-6（训练产物登记）；本段只把字段与透传打通。
+- 音色库页面的「按引擎筛选」没做（`engine_tags` 已可编辑，但列表筛选留到 30-7 与 Irodori 页面一起）。
+- Irodori 合成页（30-7）还没做 —— 所以「长参考 → 更好的克隆相似度」这条**听感验收**要等页面能选音色后由用户耳朵判断。
+
+**风险**
+
+- `engine_tags` **只是标注**，不参与任何路由或校验。真正的分流是「谁读哪个字段」：
+  GPT-SoVITS 读 `audio_path`（并硬性要求 3~10s），Irodori 读 `ref_clips`。
+  若将来有人拿 `engine_tags` 去做过滤，要注意它是用户手填的自由文本（已做小写化与去重，但不做白名单校验）。
+- 片段合计上限（120s）在**写入时**拒绝，而不是像服务端那样截断 —— 刻意为之：
+  超过上限的片段永远不会被合成用到，存下来只会让 UI 显示的总时长与「实际生效时长」不一致。
+
+- 本次文档更新时间：10.13 20:10 [BY Qoder]（阶段 30-4：音色库多片段长参考 —— 三字段只加不改 + 两侧不吞字段 + Irodori 回落链；验证 74 项（Node 31 / Python 24 / Irodori 19，含真机））
 
 ### 涉及文件（预估）
 

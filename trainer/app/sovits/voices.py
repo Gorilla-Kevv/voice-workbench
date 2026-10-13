@@ -76,6 +76,17 @@ class Voice:
     size_bytes: int = 0
     created_at: float = 0.0
     updated_at: float = 0.0
+    # ---- 以下三个是 30-4 新增的字段，本服务**只透传不解释** ----
+    #
+    # ⚠️ 为什么必须在这里显式列出来（哪怕 GPT-SoVITS 自己用不到）：
+    # `_persist()` 是「按字段列表重建 JSON」的写法，不认的键会被直接丢掉 ——
+    # 而它一旦被触发（例如某个音色的 prompt_lang 需要规范化 → repaired=True → 落盘），
+    # 就会把网关侧（Node）写进来的 `ref_clips` / `engine_tags` / `speaker_embeds`
+    # **整体抹掉**。这正是方案 §5 点名的「两侧都不能吞」。
+    # 缺失时保持 None，写盘时**不输出该键**（与 Node 侧「不主动写空值」同一规矩）。
+    ref_clips: Optional[List[Dict[str, Any]]] = None
+    engine_tags: Optional[List[str]] = None
+    speaker_embeds: Optional[List[Dict[str, Any]]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         payload: Dict[str, Any] = {
@@ -94,6 +105,13 @@ class Voice:
             "updated_at": self.updated_at,
             "exists": Path(self.audio_path).is_file(),
         }
+        # 30-4：三个可选字段**只在有值时输出**（保持旧记录的磁盘形状不变）
+        if self.ref_clips is not None:
+            payload["ref_clips"] = self.ref_clips
+        if self.engine_tags is not None:
+            payload["engine_tags"] = self.engine_tags
+        if self.speaker_embeds is not None:
+            payload["speaker_embeds"] = self.speaker_embeds
         payload["warnings"] = self.warnings()
         return payload
 
@@ -406,6 +424,22 @@ class VoiceLibrary:
                 "size_bytes": voice.size_bytes,
                 "created_at": voice.created_at,
                 "updated_at": voice.updated_at,
+                # 30-4：缺失时不写键（别给旧记录塞 null，那会污染磁盘形状）
+                **(
+                    {"ref_clips": voice.ref_clips}
+                    if voice.ref_clips is not None
+                    else {}
+                ),
+                **(
+                    {"engine_tags": voice.engine_tags}
+                    if voice.engine_tags is not None
+                    else {}
+                ),
+                **(
+                    {"speaker_embeds": voice.speaker_embeds}
+                    if voice.speaker_embeds is not None
+                    else {}
+                ),
             }
             for voice in self._items.values()
         ]
@@ -462,6 +496,10 @@ def _parse_index(index_path: Path) -> Tuple[Dict[str, Voice], bool]:
                 size_bytes=item.get("size_bytes", 0),
                 created_at=item.get("created_at", 0.0),
                 updated_at=item.get("updated_at", 0.0),
+                # 30-4：缺失 → None（不是空列表），这样 _persist 不会写空键
+                ref_clips=item.get("ref_clips"),
+                engine_tags=item.get("engine_tags"),
+                speaker_embeds=item.get("speaker_embeds"),
             )
         except KeyError:
             continue

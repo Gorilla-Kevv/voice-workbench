@@ -152,10 +152,25 @@ irodori/
 | 30-1 | 环境与骨架（本文件覆盖的内容） | 完成 |
 | 30-2 | 推理链路 `/v1/catalog` `/v1/warmup\|unload\|synth` + 网关透传 + 显存记账 | 完成（真机合成已验证） |
 | 30-3 | 长尾护栏（段间降步 + 墙钟看门狗 + `IRODORI_TIMEOUT`） | 完成 |
-| 30-4 | 音色库多片段长参考（`ref_clips` / `engine_tags` / `speaker_embeds`） | 未开始 |
+| 30-4 | 音色库多片段长参考（`ref_clips` / `engine_tags` / `speaker_embeds`） | 完成 |
 | 30-5 | 训练 S1+S2（数据→latent→manifest，含**非空硬断言**）+ JobStore | 未开始 |
 | 30-6 | 训练 S3（自动 batch + SI 编排 + 产物注册 + `speaker_id` 闭环） | 未开始 |
 | 30-7 | 前端完整化 + 设置页 + 预加载账本 + 整链路走查 | 未开始 |
+
+### 参考音频怎么选（回落链，30-4）
+
+同一个音色在 GPT-SoVITS 眼里是「一条 3~10 秒的主音频」，在 Irodori 眼里可能是
+「几段短句拼起来的长参考」（官方建议合计 ~30 秒，多段短句优于单条长录音）。
+`ref_voice` 的解析是**回落链**而不是二选一：
+
+```
+音色库记录 → 有 ref_clips？ ── 是 → 用多片段（ref_wavs）
+                              └─ 否 → 回落 audio_path（主音频）
+```
+
+响应里的 `ref_source`（`ref_clips` / `audio_path` / `ref_path` / `speaker_embed`）
+与 `ref_clip_count` 会如实回显**实际用的是哪一层** —— 界面要显示它，
+否则用户会以为在用长参考、实际用的是 5 秒主音频。
 
 ### 长尾护栏（30-3）怎么工作
 

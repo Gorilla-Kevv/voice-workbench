@@ -272,6 +272,31 @@ export interface SovitsHealth {
 // 音色库
 // --------------------------------------------------------------------------
 
+/**
+ * 日语长参考的一个片段（30-4）。
+ *
+ * 用途是 Irodori 的零样本克隆：官方建议「多段短句拼接」而不是一条长录音
+ * （单条长录音里的停顿与语气漂移会污染 speaker embedding）。
+ * GPT-SoVITS 完全不用它 —— 它只读 `audio_path`（且要求 3~10 秒）。
+ */
+export interface VoiceRefClip {
+  /** 绝对路径 */
+  path: string;
+  dur_s: number | null;
+  sample_rate: number | null;
+  /** 该片段的转写（Speaker Inversion 训练要用；推理不需要） */
+  text?: string;
+  added_at?: number;
+}
+
+/** 固化的 speaker embedding（Speaker Inversion 产物，30-6 训练写入） */
+export interface VoiceSpeakerEmbed {
+  path: string;
+  trained_at: number;
+  steps?: number;
+  batch?: number;
+}
+
 export interface SovitsVoice {
   id: string;
   name: string;
@@ -290,6 +315,17 @@ export interface SovitsVoice {
   exists: boolean;
   /** 会导致合成失败的前置问题（缺文本、时长越界、文件丢失…） */
   warnings: string[];
+  // ---- 30-4 新增（都可选：旧记录没有这些字段） ----
+  /** 日语长参考多片段（Irodori 用） */
+  ref_clips?: VoiceRefClip[];
+  /** 适用引擎标签，如 ['irodori','gsv']；空/缺失 = 未标注 */
+  engine_tags?: string[];
+  /** 固化的 speaker embedding 列表 */
+  speaker_embeds?: VoiceSpeakerEmbed[];
+  /** 长参考合计时长（秒）—— 服务端算好的，前端别再自己加一遍 */
+  ref_clips_total_sec: number;
+  /** 有几个片段缺转写 */
+  ref_clips_missing_text: number;
 }
 
 export interface SovitsVoiceDraft {
@@ -298,6 +334,8 @@ export interface SovitsVoiceDraft {
   prompt_lang: string;
   note?: string;
   tags?: string[];
+  /** 适用引擎标签（30-4）。留空 = 不写该字段（不是写空数组） */
+  engine_tags?: string[];
 }
 
 // --------------------------------------------------------------------------
