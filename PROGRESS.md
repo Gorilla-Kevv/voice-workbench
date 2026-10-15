@@ -2898,6 +2898,20 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
   （实测 0.5 s/步），但保守估时比乐观估时安全，暂不改。
 - 音色质量**未做耳朵验收**：本次样本只有 6 条同一句的短片段，只证明链路通，不证明像不像。
 
+**下一阶段入口（阶段 30-7）**
+
+- 目标：`IrodoriTtsPage`（日语合成页：文本框 + emoji 调色板 + caption + 参考三选一 + 步数档 + 换 seed + 结果堆叠走 `useResultStack`）
+  + `IrodoriTrainingPage`（三步向导：数据 → 整备 → 训练；JobStore 进度/取消/ETA + 训练中合成 409 的提示 + 「重试（降步）」按钮）
+  + 设置页 `irodori` 服务开关 + preload 账本与 `ResourceBudget` 回填 + 浏览器整链路走查。
+- 涉及文件（预估）：`app/src/pages/{IrodoriTtsPage,IrodoriTrainingPage}.tsx`、`app/src/lib/irodori.ts`（已存在，补训练段）、
+  `app/src/types/irodori.ts`（补训练契约）、`app/src/App.tsx`（PAGE_META/路由）、
+  `app/src/components/layout/AppShell.tsx`（导航组「日语 · Irodori 风格」）、
+  设置页服务卡、`server/src/services/preload.ts`、`app/src/lib/resources.ts`、网关 `/api/irodori/*`（确认超时档位）。
+- 所在分支：`feature/vc-svc`（当前分支）。
+- 验证命令：`npm run typecheck`、`cd app && npx eslint src`、`npm run build`；
+  服务侧 `irodori/.venv/Scripts/python.exe .tmp/verify_irodori_train_s3.py`（离线 68/68）
+  与 `irodori/.venv/Scripts/python.exe .tmp/smoke_irodori_s3.py`（真机闭环，需 bf16 基座 + 空闲显存 ≥4.7GB）。
+
 **风险**
 
 - 本机 8GB，训练独占显卡：桌面占满时（实测空闲 <4.6GB）训练会如实 503，需要用户先腾显存。
