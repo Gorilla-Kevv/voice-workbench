@@ -179,11 +179,22 @@ def build_catalog(settings: Settings) -> dict[str, Any]:
             "smoke_steps": settings.smoke_steps,
             "max_batch": settings.max_train_batch,
             "seconds_per_step": settings.seconds_per_step,
-            "estimate_note": (
-                f"按阶段 28 实测 {settings.seconds_per_step}s/步（batch {settings.max_train_batch}"
-                " + 梯度检查点，RTX 4060 Laptop）估算，不是保证值。"
+            "auto_batch": {
+                "probe_batch": settings.train_probe_batch,
+                "probe_steps": settings.train_probe_steps,
+                "headroom": settings.auto_batch_headroom,
+                "note": (
+                    "开训前会真跑 batch "
+                    f"{settings.train_probe_batch} 共 {settings.train_probe_steps} 步量显存，"
+                    "再按空闲显存的一定比例反推能上到多大 batch（上限 "
+                    f"{settings.max_train_batch}）。请求里显式给 batch 就跳过探测。"
+                ),
+            },
+            "train_max_hours": settings.train_max_hours,
+            "s3_ready": True,
+            "s3_note": (
+                "POST /v1/train 入队（自动 batch → 训练 → 产物登记 → 用 speaker_id 合成）。"
+                "训练期间该服务独占显卡，合成请求一律 409。"
             ),
-            "s3_ready": False,
-            "s3_note": "S3（Speaker Inversion 训练）在 30-6 落地；POST /v1/train 现在返回 501。",
         },
     }

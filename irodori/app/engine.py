@@ -45,7 +45,15 @@ loaded_at: Optional[float] = None
 last_error: Optional[str] = None
 
 
-def _ensure_upstream_on_path(settings: Settings) -> None:
+def ensure_upstream_on_path(settings: Settings) -> None:
+    """把上游源码目录挂进 `sys.path`（幂等）。
+
+    ⚠️ **每一条入口都要调用**（与坑 67「垫片要在每个入口都装」同源）：
+    推理侧在 `load()` 里调，数据整备在自己的 `traindata._load_codec()` 里调 ——
+    30-6 真机冒烟时踩到：一个从未 warmup 过的新起服务直接跑 `POST /v1/train/prepare`，
+    sys.path 里还没有上游，于是 `import irodori_tts` 直接 ImportError。
+    **路径注入不是「加载模型」的副作用，而是独立的准入动作。**
+    """
     if str(settings.upstream_dir) not in sys.path:
         sys.path.insert(0, str(settings.upstream_dir))
 
@@ -62,18 +70,21 @@ def status() -> dict[str, Any]:
     }
 
 
-def check_vram_admission(settings: Settings, *, loaded: bool, task: str = "infer") -> dict[str, Any]:
+def check_vram_admission(
+    settings: Settings, *, loaded: bool, task: str = "infer", batch: Optional[int] = None
+) -> dict[str, Any]:
     """显存准入。返回当前显存读数；不足时抛 `VRAM_INSUFFICIENT`(503)。
 
     - `loaded=True`（模型已常驻）→ 直接放行，不算「空闲 − 需求」（坑 26）；
     - nvidia-smi 与 torch 读数差 >1GB 时，报错文案直接说「被其它进程占用」；
     - `task="prepare"`（数据整备）按 codec 档判 —— 它只加载 DACVAE，
-      拿推理的 4.7GB 去卡它就纯属误伤（30-5）。
+      拿推理的 4.7GB 去卡它就纯属误伤（30-5）；
+    - `task="train"` 还要看 `batch`：门槛跟着 batch 涨（默认沿用固定档 5120）。
     """
     vram = vram_mb()
     if loaded or vram is None:
-        return {"vram": vram, "required_mb": required_vram_mb(settings.precision, task)}
-    required = required_vram_mb(settings.precision, task)
+        return {"vram": vram, "required_mb": required_vram_mb(settings.precision, task, batch)}
+    required = required_vram_mb(settings.precision, task, batch)
     free = vram["free_mb"]
     if free >= required:
         return {"vram": vram, "required_mb": required}
@@ -116,7 +127,7 @@ def load(settings: Settings) -> tuple[Any, bool]:
     global _RUNTIME, _RUNTIME_KEY, loaded_at, last_error
 
     with _STATE_LOCK:
-        _ensure_upstream_on_path(settings)
+        ensure_upstream_on_path(settings)
         from irodori_tts.inference_runtime import (  # noqa: PLC0415 - lazy：venv 里才有
             RuntimeKey,
             get_cached_runtime,
@@ -182,6 +193,34 @@ def unload(settings: Settings) -> dict[str, Any]:
         )
         print(f"[irodori] 模型已卸载（归还约 {freed} MB）", flush=True)
         return {"loaded": False, "freed_mb": freed, "vram": after, "before": before}
+
+
+def release_idle_vram() -> Optional[int]:
+    """把「申请过但已不用」的显存还给驱动，返回归还量（MB）。
+
+    为什么需要它：torch 的缓存分配器会把用过的显存块留在自己手里（`reserved`），
+    哪怕 Python 侧的对象已经释放了，nvidia-smi 看到的仍然是「被占」。8GB 的机器上
+    这很致命 —— 30-6 真机实测：整备（S2 加载 DACVAE）跑完之后，服务进程仍抱着
+    约 1.2GB 不放，紧接着的训练直接被自己的残留显存卡住（准入门槛不够）。
+    现在整备任务的 `finally` 里会调一次，**把卡让给下一步**。
+    """
+    try:
+        import gc
+
+        import torch  # noqa: PLC0415 - 惰性：没 CUDA 的机器上不该在 import 期就崩
+    except Exception:  # pragma: no cover - 环境缺失
+        return None
+    before = vram_mb()
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+    after = vram_mb()
+    if before is None or after is None:
+        return None
+    freed = after["free_mb"] - before["free_mb"]
+    if freed > 64:
+        print(f"[irodori] 已归还闲置显存约 {freed} MB", flush=True)
+    return freed
 
 
 def try_acquire_busy() -> bool:

@@ -10,10 +10,11 @@
 - 最新完成：**阶段 30-2 = Irodori 推理链路**（10.13 01:50 BY Qoder）—— `/v1/catalog`（emoji 56 个 + 官方释义 45 条**从上游源码 ast 解析**）、`/v1/warmup|unload|synth|speakers`（懒加载 + 显存准入「已加载跳过」+ 日语校验 + 服务端切句 ≤25 字/段拼接 + 参考三形态互斥 + 409 合成互斥）+ 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；验证脚本 **31/31**（含网关透传真跑）；**C 段真机合成已于 10.13 19:00 跑通**（39/40，唯一失败是 RTF 阈值口径 —— 服务端口径本就高于阶段 28 的 bench 口径，已按实测改为 0.35）
 - 最新完成：**阶段 30-3 = Irodori 长尾护栏**（10.13 19:10 BY Qoder）—— **段间外推降步**（每段后外推整条耗时，超 `0.9×IRODORI_TIMEOUT` 就把剩余段降到 20 步 + 换 seed；依据阶段 28 实测 40 步 89s → 20 步 2.16s）+ **墙钟看门狗**（专用工作线程 + 504 `IRODORI_TIMEOUT`，带 `retry_suggestion`）；**加载不计入采样预算**（否则小预算首次请求必假超时）；超时后合成权留到孤儿线程段间检查点退出（期间 409 文案区分「仍在收尾」）；catalog 暴露 `guard` 段；前端 `lib/irodori.ts` + `types/irodori.ts`。验证脚本 **69/69**（56 项假 runtime 单测 + **13 项真机**：真机降步 200/`retried=true`、超预算 504/`downgraded=true`、收尾期 409）
 - 最新完成：**阶段 30-4 = 音色库多片段长参考**（10.13 20:10 BY Qoder）—— `VoiceRecord` 只加不改地新增可选 `ref_clips`（多片段长参考）/ `engine_tags`（适用引擎标注）/ `speaker_embeds`（30-6 训练产物位）；**两侧都不吞字段**（Node 的 `readIndex/_persist` 与 Python 的 `Voice.to_dict/_persist` 都只在有值时写键）；网关新增片段增删改 + 试听 4 个端点；**Irodori 侧补上回落链** —— `ref_voice` 现在「有长参考就用长参考，没有才回落 3~10s 主音频」，并在响应里回显 `ref_source`/`ref_clip_count`；前端音色库行展开新增「日语长参考」区（多片上传/逐片试听/逐片转写/引擎标签）。验证 **74 项**（Node 31 + Python 24 + Irodori 19，含真机走长参考合成）
+- 最新完成：**阶段 30-6 = 训练 S3（Speaker Inversion 编排）**（10.16 04:19 BY Qoder）—— 自动 batch 探测 + 子进程训练编排（上游 `train.py` 只有 `__main__` 入口）+ 进度/取消/ETA + 产物核对（safetensors 读回 `speaker_embedding`）+ 登记进音色库；**真机闭环已跑通**：整备 6 条 → 训 100 步（loss 0.91→0.70，约 0.5s/步）→ `speaker_id` 合成出音 4.32s/48kHz；离线验证 68/68；修掉三个真机才暴露的问题（sys.path 漏入口 / latent 相对路径口径 / torch allocator 不还显存），新增坑 69~72
 - 最新完成：**阶段 30-5 = 训练 S1+S2（数据整备 + latent 编码 + manifest 非空硬断言 + JobStore）**（10.14 03:38 BY Qoder）—— `traindata.py`（三来源收集：音色库长参考 / 上传目录 / 显式列表，**来源互斥**；`DACVAECodec.encode_file` 直编 latent 写 `manifest.jsonl`）+ **守卫一落地**（`written` 不等于待编码条数一律 422 `TRAIN_MANIFEST_EMPTY`，且**不留**半份 manifest）+ `jobs.py`（形态对齐 trainer，取消用 Event、重启后 running 转 cancelled）+ `routers/train.py`（`plan`/`upload`/`prepare`/`datasets`/`jobs` 全套；S3 明确 501）+ catalog 训练段常量。验证脚本 **63/63**（含真机：20 条 → `written=20`；破坏解码全失败 / 部分失败均 422；取消留痕清理）
-- 下一阶段：**阶段 30-6（训练 S3）**：自动 batch 探测 + SI 编排 + 进度/取消/ETA + 产物登记到 `speaker_embeds` + `speaker_id` 推理闭环。前置：训练档权重 `npm run irodori:weights -- --training`（bf16 2.9GB，**30-5 期间已开始下载**），以及用实测回填「冒烟小档」步数（现暂定 400）
+- 下一阶段：**阶段 30-7（前端完整化）**：`IrodoriTtsPage`（合成页）+ `IrodoriTrainingPage`（三步向导：数据 → 整备 → 训练，JobStore 进度/取消/ETA、「重试（降步）」按钮）+ 设置页服务开关 + 预加载账本回填 + 文档/走查。前置：训练档权重已就位（bf16 基座 2.9GB 已下载）、S3 服务端已可用
 - 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；**30-2 的 C 段真机合成补测**（腾显存后 `python .tmp/verify_irodori_infer.py`）；训练档权重下载（`npm run irodori:weights -- --training`，30-6 开工前必须完成）
-- 未完成的任务：阶段 30-6…30-7；训练档权重（bf16 2.9GB）需在 30-6 前下载完
+- 未完成的任务：阶段 30-7（前端 + 设置页 + 走查）；训练档权重（bf16 2.9GB）**已下载完成**
 - 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
@@ -2485,7 +2486,7 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 - 本次文档更新时间：10.12 13:47
 
-## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder][30-4 完成时间：10.13 20:10 BY Qoder][30-5 完成时间：10.14 03:38 BY Qoder]
+## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder][30-4 完成时间：10.13 20:10 BY Qoder][30-5 完成时间：10.14 03:38 BY Qoder][30-6 完成时间：10.16 04:19 BY Qoder]
 
 - 分支：feature/vc-svc
 - 立项依据：用户 10.09 裁决「**做克隆和训练**」（并明确 Genie-TTS 与 dots.tts 弃用）。
@@ -2843,6 +2844,68 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
   `/v1/train/plan` 的 `estimate_note` 里已写明不是保证值。
 
 - 本次文档更新时间：10.14 03:38 [BY Qoder]（阶段 30-5：训练 S1+S2 + 守卫一 + JobStore；验证 63/63 含真机）
+
+#### 30-6 明细（10.16 完成）[计划时间：10.16 04:00 BY Qoder][完成时间：10.16 04:19 BY Qoder]
+
+**已完成**
+
+| 交付物 | 说明 |
+| --- | --- |
+| `irodori/app/si_train.py`（新增） | S3 编排：**上游 `train.py` 走子进程**（它只有 `if __name__ == "__main__"` 一个入口，无可编程函数）。一次跑完四件事 —— 命令构造 / 进度解析 / batch 推荐与探测 / 产物收集与断言 / 失败分类 / 音色库登记 |
+| 命令构造 | 沿用阶段 28 已跑通的探针形态，补 `--speaker-inversion`（不依赖 yaml 默认值）、`--init-checkpoint` 指 bf16 基座（量化档不能训）、`--num-workers 0`（Windows DataLoader spawn 重入）、`--gradient-checkpointing`、`--no-wandb`、`--device cuda`（不静默落 CPU）、`--log-every` 覆盖上游的 20 |
+| 进度 / ETA | stdout 逐行解析 `step=… loss=…`（科学计数法也认）→ JobStore 细进度 + 「预计还需 X」；**读线程与判断线程分开**（模型加载那几十秒一行都不输出，直接 `for line in stdout` 会让「取消」要等训练开始才有反应） |
+| 取消 | 阶段之间检查 + 子进程终止走 `terminate()` → 8s → `taskkill /t /f`（坑 45：只 terminate 会留孙子进程占显存） |
+| 自动 batch | `probe_batch()` 真跑 batch 2 × 2 步量峰值 → 按空闲显存的 `auto_batch_headroom`(=0.85) 反推，上限 8；探测不可用/失败时退回 `heuristic_batch()`（阶段 28 净占画像：batch 2≈4630MB / batch 8≈5410MB，每样本 ~130MB）。显式给 `batch` 就跳过探测 |
+| 产物与断言 | 收 `checkpoint_final.speaker.safetensors` + 周期 ckpt → 复制到 `<data_dir>/speakers/<id>.speaker.safetensors`（`synth.resolve_reference` 的对外契约目录），并用 safetensors **读回校验** `speaker_embedding` 形状；**退出码 0 但没产物 → `TRAIN_NO_ARTIFACT`**（上游静默行为的第二道守卫，与 30-5 守卫一同源） |
+| 音色库登记 | `register_speaker_embed()` 把产物写进 `speaker_embeds`（第三个写同一份 JSON 的进程 → 坑 27/65 铁律：写前重读、只改目标记录一个键、其它字段原样、原子写、同 `speaker_id` 去重）。**未指定 voice_id 时只登记到 `/v1/speakers`，训练不算失败** |
+| 失败分类 | `classify_failure()` 把退出码翻成 TRAIN_OOM / TRAIN_NETWORK / CODEC_LOAD_FAILED / DATASET_NOT_FOUND / TRAIN_FAILED，每条 hint 都落到具体动作（降 batch / 查 HF_HOME / 重跑整备） |
+| 路由 | `POST /v1/train` 落地（四阶段 job：`plan → train → save → register`，入队前卸载推理模型 + 按 **batch 分档**的准入）；新增 `POST|GET /v1/train/auto_batch`（默认只给启发式预览，`probe=1` 才真跑）；`plan` 的 S3 状态改为「基座 + 数据集都齐才 ready」；catalog 打开 `s3_ready=True` 并暴露自动 batch 参数 |
+| 显存治理 | `required_vram_mb(task="train", batch=…)` **门槛跟着 batch 走**（batch 2 → 4630MB、batch 8 → 5410MB，下限 4200）—— 原来固定 5120 会误伤小 batch；新增 `engine.release_idle_vram()`：整备结束后把 allocator 抱着的 ~1.2GB 还给驱动 |
+| `.tmp/verify_irodori_train_s3.py` | 离线验证 **68/68**（命令构造 / batch 画像 / 数据集守卫 / 任务生命周期含 409·取消·OOM·无产物·基座缺失 / 进度解析 / 失败分类 / 回归），假 runner + 真的 safetensors 产物 |
+| `.tmp/smoke_irodori_s3.py` | 真机闭环脚本（HTTP 驱动：整备 → 训练 → `speaker_id` 合成），产物落 `.tmp/irodori_s3_smoke.wav` |
+
+**已验证（真机跑通，bf16 基座 + 6 条日语样本）**
+
+| 项 | 结果 |
+| --- | --- |
+| ★ S1+S2 | 6 条 → `written=6`（660 frames，26.4s 语音） |
+| ★ S3 训练（12 步 / batch 2） | 82s（含约 60s 基座加载），loss 0.908 → 0.893，产物 `smoke30-6-12.speaker.safetensors` 形状 `[16, 768]` |
+| ★ S3 训练（100 步 / batch 2） | 111s（训练段约 50s ⇒ **约 0.5 s/步**），loss 0.908 → ~0.70（`dur_mae` 21.8 → 14.9） |
+| ★ `speaker_id` 推理闭环 | `/v1/synth` 传 `speaker_id` → 出音 4.32~4.56s / 48kHz / 20 步，`ref_source=speaker_embed` |
+| 训练期间互斥 | 训练中合成请求 409 `ENGINE_BUSY`（busy 锁贯穿整个 job） |
+| 显存 | 本机 8GB、桌面常占 2.6~3.9GB；batch 2 的 4630MB 门槛在空闲 5.2GB 时放行，**空闲 4.0GB 时如实 503** —— 这条不是缺陷，是真没卡 |
+
+**过程中修掉的三个真问题（都是真机才暴露的）**
+
+1. **`sys.path` 注入漏了一个入口**：`irodori_tts` 的路径原来是 `engine.load()` 的副作用，
+   一个从未 warmup 过的新起服务直接跑 `/v1/train/prepare` → `No module named 'irodori_tts'`。
+   修法：改成公开的 `engine.ensure_upstream_on_path()`，整备入口自己也调一次（坑 67 的同款教训：
+   **全局副作用要在每一条入口都做**）。
+2. **`latent_path` 的解析口径写错**：manifest 里存的是**相对 manifest 目录**的路径
+   （上游 `dataset.py::_resolve_latent_path` 就是这个口径），我却按进程 cwd 去判存在性
+   → 刚整备好的 6 条全被判成「latent 丢失」。修法：照抄上游口径（`manifest.parent` 为基准）。
+3. **整备不归还显存 → 紧随其后的训练被自己上一步卡住**：torch 的缓存分配器把 codec 用过的
+   约 1.2GB 留在手里（nvidia-smi 仍算占用），`prepare` 之后空闲从 5261MB 掉到 4079MB。
+   修法：`engine.release_idle_vram()`（gc + `empty_cache`），在整备任务的 `finally` 里调。
+
+**未完成（交接 30-7）**
+
+- 前端 `IrodoriTrainingPage`（三步向导 + JobStore 进度/取消/ETA + 「重试（降步）」按钮）与设置页开关。
+- 网关 `/api/irodori/*` 现在透传的是通配路径，`/v1/train*` 能过；但**前端正式接入前要确认 multipart 上传与长轮询的超时档位**。
+- 「冒烟小档 = 400 步」实测后**仍保留 400**：100 步已能从 0.91 掉到 0.70 且只要 ~50s
+  （batch 2、6 条短样本），400 步约 4~5 分钟，作为「跑通闭环」的量级合理；
+  正式的 2000/3000 步留给耳朵验收后再定。**估时口径 `seconds_per_step=2.2` 明显偏保守**
+  （实测 0.5 s/步），但保守估时比乐观估时安全，暂不改。
+- 音色质量**未做耳朵验收**：本次样本只有 6 条同一句的短片段，只证明链路通，不证明像不像。
+
+**风险**
+
+- 本机 8GB，训练独占显卡：桌面占满时（实测空闲 <4.6GB）训练会如实 503，需要用户先腾显存。
+- 真机只跑了 batch 2（batch 8 在本机当前状态下进不去），外推的 batch 画像仍是阶段 28 的数据。
+- 训练数据质量直接决定产物：本次 6 条样本转写与音频并非严格一一对应（来自阶段 28 的情感样本），
+  只作流程验收，正式固化音色要用 ≥10 条带转写的纯净日语短句。
+
+- 本次文档更新时间：10.16 04:19 [BY Qoder]（阶段 30-6：训练 S3 —— 自动 batch + 子进程训练编排 + 进度/取消/ETA + 产物登记 + `speaker_id` 闭环；离线 68/68 + 真机跑通；新增坑 69~72）
 
 ### 涉及文件（预估）
 

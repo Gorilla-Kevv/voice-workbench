@@ -113,12 +113,18 @@
   错误码：`NO_JA_ONLY` / `REF_REQUIRED` / `REF_CONFLICT` / `REF_TOO_SHORT` / `VOICE_NOT_FOUND` /
   `TEXT_TOO_LONG` / `VRAM_INSUFFICIENT`(503) / `ENGINE_BUSY`(409，含「上一次仍在收尾」) /
   `ENGINE_LOAD_FAILED`(503) / `IRODORI_TIMEOUT`(504)
-- Irodori 训练端点（阶段 30-5，**尚未在网关透传**，前端 30-7 才用）：
-  `POST /v1/train/plan`（**只体检不执行**：三步状态 + 数据诊断 + 步数档/估时）、
+- Irodori 训练端点（阶段 30-5/30-6，**尚未在网关透传**，前端 30-7 才用）：
+  `POST /v1/train/plan`（**只体检不执行**：三步状态 + 数据诊断 + 步数档/估时 + batch 推荐预览）、
   `POST /v1/train/upload`（multipart + zip，落 `<data_dir>/uploads/<dataset_id>/`）、
-  `POST /v1/train/prepare`（入队跑 S1+S2，返回 job；**与推理互斥**，入队前会卸载常驻模型）、
-  `GET /v1/train/datasets`、`GET /v1/jobs[/:id]`、`POST /v1/jobs/:id/cancel`（终态幂等）、
-  `POST /v1/train`（S3，**明确 501 `TRAIN_S3_NOT_READY`**）。
+  `POST /v1/train/prepare`（入队跑 S1+S2，返回 job；**与推理互斥**，入队前会卸载常驻模型、
+  结束后 `release_idle_vram()` 归还 allocator 缓存）、
+  `POST /v1/train`（**S3，30-6 已落地**：`plan→train→save→register` 四阶段 job；
+  入队前卸载推理模型 + 按 **batch 分档**的准入；自动 batch 探测可显式 `batch` 跳过）、
+  `POST|GET /v1/train/auto_batch`（默认按空闲显存给启发式推荐，`probe=1` 才真跑两步量峰值）、
+  `GET /v1/train/datasets`、`GET /v1/jobs[/:id]`、`POST /v1/jobs/:id/cancel`（终态幂等）。
+  产物：`<data_dir>/trainings/<dataset>-<job>/checkpoint_final.speaker.safetensors`
+  → 复制到 `<data_dir>/speakers/<speaker_id>.speaker.safetensors`（`/v1/synth` 的 `speaker_id` 直接认它）
+  → 可选登记进音色库的 `speaker_embeds`。
   训练错误码：`TRAIN_MANIFEST_EMPTY`(422，**守卫一**) / `TRAIN_NO_SOURCE` / `TRAIN_MULTI_SOURCE` /
   `TRAIN_NO_DATA` / `DATASET_ID_INVALID` / `DATASET_NOT_FOUND` / `JOB_CANCELLED` / `JOB_NOT_FOUND` /
   `METADATA_BROKEN` / `CODEC_LOAD_FAILED`(503)
@@ -769,6 +775,37 @@
     改成**显式拒绝**并报 `DATASET_ID_INVALID`。zip 上传同理：必须校验解压目标
     `resolve()` 后仍在目标目录内（zip 条目名可以写 `../../`）。
 
+69. **`sys.path` 注入是准入动作，不是「加载模型」的副作用（阶段 30-6 真机踩到）**
+    上游源码目录（`upstream/Irodori-TTS`）原来是 `engine.load()` 里顺手挂进 `sys.path` 的。
+    于是**一个从未 warmup 过的新起服务**直接跑 `POST /v1/train/prepare` 会报
+    `UPSTREAM_MISSING: No module named 'irodori_tts'` —— 30-5 的真机验证没踩到，
+    是因为那次之前已经把推理模型加载过一遍。
+    **修法**：改成公开的 `engine.ensure_upstream_on_path()`，推理侧与整备侧**各调一次**。
+    推论与坑 67 完全同构：**全局副作用（垫片、路径注入、monkeypatch）要在每一条可能的入口都做**，
+    不能指望别人先跑过一遍。
+
+70. **manifest 里的 `latent_path` 是「相对 manifest 目录」，不是相对 cwd（阶段 30-6 真机踩到）**
+    上游 `dataset.py::_resolve_latent_path()` 明确：非绝对路径就按 `manifest_dir` 拼。
+    而训练跑在**另一个进程**里（cwd 未设，继承服务自己的），我第一版按 `Path(...).is_file()`
+    从 cwd 判存在性 → 刚整备好的 6 条全被判成「latent 丢失」，报 `TRAIN_NO_DATA`。
+    **凡是读 manifest 做校验的地方，都要照抄上游的解析口径**，不要自己猜。
+
+71. **torch 的缓存分配器会把显存抱在手里不还 → 下一步被自己上一步卡住（阶段 30-6 真机实测）**
+    整备（S2 加载 DACVAE）跑完后，Python 侧的 codec 对象已经释放，但 allocator 仍 reserved
+    约 1.2GB，nvidia-smi 照旧算作占用：空闲从 **5261MB 掉到 4079MB**，紧随其后的训练被
+    自己的上一阶段拦在准入门槛外（报错里还会误说成「被其它进程占用」）。
+    **修法**：`engine.release_idle_vram()`（gc + `torch.cuda.empty_cache()`），
+    在整备任务的 `finally` 里调（成功/失败/取消都覆盖）。
+    推论：**8GB 卡上「分阶段的长任务」必须显式归还** —— 分配器的缓存是我们自己的账，
+    不能算到用户头上。
+
+72. **训练准入门槛要跟着 batch 走，不能给一个固定值（阶段 30-6）**
+    方案 §6.3 原本给训练定了固定的 5120MB（按 batch 8 估）。用它在 batch 1/2 的跑局上拦人，
+    就是拿大 batch 的需求去挡小 batch —— 与坑 24「显存门槛要按精度分档」是同一类错误。
+    现为 `config.train_required_vram_mb(batch)`：batch 2 → 4630MB、batch 8 → 5410MB
+    （阶段 28 净占画像，每样本约 130MB），下限 4200MB（基座本体就约 3GB）。
+    推论：**凡是「会随请求参数变化」的资源需求，门槛都得参数化**，固定值只会误伤或放行错。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -912,6 +949,18 @@
   catalog 训练段常量、`config` 新增 prepare 显存档（实测 codec 483MB，编码峰值 30s→2285MB，取 2500）。
   验证 **63/63**（含真机：20 条 → `written=20`；破坏解码全失败 / 部分失败均 422 且不留半份 manifest；
   取消留痕清理；接口层 plan→prepare→轮询 succeeded）。新增坑 66/67/68。
+- **Irodori 训练 S3 已交付（阶段 30-6，10.16 BY Qoder）**：`si_train.py` 把上游 `train.py`
+  **当子进程跑**（它只有 `if __name__ == "__main__"` 一个入口，且取消需要干净的进程边界）；
+  四阶段 job（`plan` 自动 batch → `train` 逐行解析 stdout 出进度/ETA → `save` 收产物并断言 →
+  `register` 登记进音色库）；产物复制到 `<data_dir>/speakers/` 并**读回校验 `speaker_embedding` 形状**；
+  退出码 0 但没产物 = `TRAIN_NO_ARTIFACT`（上游静默行为的第二道守卫，与守卫一同源）。
+  **真机闭环已跑通**：整备 6 条 → 训 100 步（loss 0.91→0.70，约 0.5s/步，111s 含加载）
+  → `/v1/synth` 传 `speaker_id` 出音 4.32s/48kHz。离线验证 68/68。
+  真机修掉三个问题（**全都是只有真跑才会暴露的**）：① `sys.path` 注入原来是 `engine.load()`
+  的副作用，新起服务直接跑整备 → `No module named 'irodori_tts'`；② `latent_path` 是
+  **相对 manifest 目录**（上游 `dataset.py::_resolve_latent_path` 的口径），按进程 cwd 判存在性
+  会把刚整备好的条目全判成丢失；③ torch allocator 把整备用过的 ~1.2GB 抱在手里不还，
+  紧随其后的训练被**自己上一步**卡住。新增坑 69~72。
 
 ### 验收标准
 
@@ -932,9 +981,9 @@
 | 低 | 变声 / 翻唱两页的**合成下拉**换源到 `/api/models` | 阶段 34 有意留后（无功能收益 + 要动已验证的转换主链路），建议与「变声 / 翻唱真机加载验证」同一轮做。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
 | 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
 | 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
-| **中** | ~~阶段 30-5：训练 S1+S2~~ **已完成（10.14）**；下一小段 **阶段 30-6（训练 S3）** | 30-6：自动 batch 探测 + SI 训练编排 + 进度/取消/ETA + 产物 `.speaker.safetensors` 登记进音色库 `speaker_embeds` + `speaker_id` 推理闭环（50 步小跑通 → 用它合成 → 耳朵验收）。**前置**：`npm run irodori:weights -- --training` 下 bf16 基座（2.9GB）+ 用实测回填「冒烟小档」步数（现暂定 400）。方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §6 与 §9 |
+| **中** | ~~阶段 30-6（训练 S3）~~ **已完成（10.16）**；下一小段 **阶段 30-7（前端完整化）** | 30-7：`IrodoriTtsPage` + `IrodoriTrainingPage`（三步向导 + JobStore 进度/取消/ETA + 「重试（降步）」按钮）+ 设置页服务开关 + 预加载账本回填 + 浏览器走查。**遗留给用户的耳朵验收**：本次 100 步产出的音色像不像参考人（数据只有 6 条同一句的短片段，只证明链路通）。方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §8 与 §9 |
 | 中 | ~~Irodori 30-2 的 C 段真机合成补测~~ **已完成（10.13 19:00）** | `verify_irodori_infer.py` 39/40（唯一失败是已修正口径的 RTF 阈值）。注：C 段需要显存 ≥4700MB，桌面占用时脚本会如实跳过 |
-| 低 | Irodori 训练档权重下载 | `npm run irodori:weights -- --training`（bf16 基座 2.9GB）。**30-6 开工前必须**（30-5 只用到 codec，不需要它） |
+| 低 | ~~Irodori 训练档权重下载~~ | **已完成**（bf16 基座 3.06GB 已落 `irodori/models/irodori_bf16/`，字节数与清单一致）。30-6 真机训练就是用这份基座跑的 |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
 | 高 | 端到端实测阶段 6 的新 UI | **走查已做完一半**（阶段 23）：训练页 s2→s1 顺序 / 官方 hint / 完成卡 E-S 解释、设置页权重下拉（**实测出下拉显示空白，已修**，见坑 22）均浏览器验过；仍缺 ① 带 `slice` 阶段的任务来验切分结果面板（现有历史任务无一含切分），② 权重「加载所选权重」联动（本机 `GPT/SoVITS_weights_v2ProPlus/` 为空，没有训练产物可选） |
 | 高 | **用实际合成对比网易 vs IndexTTS，决定主力** | **IndexTTS 已接入**（阶段 26），两套都可跑：网易稳态 RTF 2.0~2.5 / 常驻 4.9 GB；IndexTTS 暖态 RTF ≈ 2.2、显存被抢时 5~14 / 常驻实测 ≈ 5.3 GB。主力由**用户听感 + 使用测试**拍板；定完回填 preload 账本门槛与默认项 |
@@ -981,3 +1030,5 @@
 > 本次文档更新时间：10.13 20:15 [BY Qoder]（阶段 30-4：音色库多片段长参考 —— `ref_clips`/`engine_tags`/`speaker_embeds` 只加不改 + **两侧都不吞字段** + Irodori `ref_voice` 回落链（长参考优先）+ 前端「日语长参考」区。验证 74 项（Node 31 / Python 24 / Irodori 19，含真机走长参考合成）。新增坑 65：两个进程共写的索引，加字段要两侧都认）
 
 > 本次文档更新时间：10.14 03:38 [BY Qoder]（阶段 30-5：训练 S1+S2 —— 三来源数据整备 + `DACVAECodec` latent 编码 + **manifest 非空硬断言**（`TRAIN_MANIFEST_EMPTY`，部分失败与全失败同等处理）+ JobStore + 训练五端点（S3 明确 501）。验证 63/63 含真机。新增坑 66/67/68：静默跳过的批处理要有自己的计数断言、垫片要在每个入口都装、进目录名的 id 要显式拒绝而非过滤）
+
+> 本次文档更新时间：10.16 04:25 [BY Qoder]（阶段 30-6：训练 S3——上游 train.py 走子进程 + 自动 batch 探测 + 四阶段 job（plan/train/save/register）+ 产物读回校验 + 音色库登记 + /v1/train/auto_batch；真机闭环已跑通（整备 6 条 → 训 100 步 loss 0.91→0.70 → speaker_id 合成 4.32s/48kHz）；离线 68/68。新增坑 69~72）

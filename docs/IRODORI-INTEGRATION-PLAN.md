@@ -200,7 +200,7 @@ S2 结束后 **written 行数必须 > 0 且等于输入片段数**，否则 `TRA
 | **30-3** | 长尾护栏：服务端看门狗 + 自动降步重试一次 + `IRODORI_TIMEOUT`；网关 `proxyTimeoutMs` 档位；客户端"重试（降步）"按钮 | `irodori/app/synth.py`、`server/src/routes/irodori.ts`、`app/src/lib/irodori.ts` | 构造 40 步 + 已知坏 seed（阶段 28 的 seed 42 场景）→ 必须在护栏内返回且 `retried=true` |
 | **30-4** | 音色库多片段长参考：`ref_clips/engine_tags/speaker_embeds` 扩展 + 网关/trainer 双向兼容 + UI 补录区 | `server/src/services/voiceLibrary.ts`、`server/src/routes/voicelib.ts`、`trainer/app/sovits/voices.py`、`VoiceLibraryPage` | 旧音色记录在 GPT-SoVITS 合成不回归；新增长参考后 Irodori 克隆相似度**用户耳朵验收**（重点：5.4s 短参考 vs 30s 多段参考的对比） |
 | **30-5** | 训练 S1+S2：数据导入/转写来源 + latent 编码 + **manifest 非空断言** + JobStore | `irodori/app/{traindata,jobs,routers/train}.py` | ✅ **已完成（10.14，63/63）**：真机喂 20 条 → `written=20`；断掉解码路径（全失败与部分失败）均 `TRAIN_MANIFEST_EMPTY`(422) 且不留半份 manifest |
-| **30-6** | 训练 S3：自动 batch 探测 + SI 训练编排 + 进度/取消/ETA + 产物登记 + `--ref-embed` 推理闭环 | `irodori/app/speakers.py`、`IrodoriTrainingPage` | 小步数（50 步）跑完 → 产出 `.speaker.safetensors` → 用 `speaker_id` 合成成功且音色与参考一致（耳朵验收）；batch 探测值与实际显存不冲突 |
+| **30-6** ✅ **已完成（10.16，离线 68/68 + 真机闭环）** | 训练 S3：自动 batch 探测 + SI 训练编排 + 进度/取消/ETA + 产物登记 + `speaker_id` 推理闭环 | `irodori/app/si_train.py`、`routers/train.py`、`config.py`、`engine.py`、`traindata.py` | ✅ 12 步（loss 0.908→0.893）与 100 步（→0.698）都产出 `checkpoint_final.speaker.safetensors`（`[16, 768]`）→ `/v1/synth` 传 `speaker_id` 出音 4.32~4.56s / 48kHz（`ref_source=speaker_embed`）。**耳朵验收仍待用户**：语料只有 6 条同一句的短片段，只证明链路通 |
 | **30-7** | 前端完整化 + 设置页 + 预加载账本回填 + 文档/走查（含 `docs/IRODORI-INTEGRATION.md`、HANDOFF 坑更新） | `app/src/pages/*`、`AppShell`/`PAGE_META`、`preload.ts`、`ResourceBudget` | 浏览器整链路走查（未启动→启动→合成→训练→固化→复用），控制台无新报错；侧栏/设置页状态一致（不重犯阶段 27补7 的两套探活问题） |
 
 依赖关系：30-1 → 30-2 → {30-3, 30-4} → 30-5 → 30-6 → 30-7。30-4 与 30-3 可并行。

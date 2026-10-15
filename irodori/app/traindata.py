@@ -539,6 +539,12 @@ def _load_codec(settings: Settings):
     """
     from .hardware import resolve_device  # noqa: PLC0415
 
+    # ★ 自己的一条入口，就得自己把 sys.path 挂好（坑 67 的同款教训）：
+    # 整备常常跑在一个从未 warmup 过的新起服务上，那时 `engine.load()` 还没被调用过，
+    # 指望它顺手注入路径会让 S2 直接以 ImportError 失败（30-6 真机冒烟实测）。
+    from .engine import ensure_upstream_on_path  # noqa: PLC0415 - 惰性，避免 import 环
+
+    ensure_upstream_on_path(settings)
     device = resolve_device(settings.device, allow_cpu=settings.allow_cpu)
     try:
         from irodori_tts.codec import DACVAECodec  # noqa: PLC0415

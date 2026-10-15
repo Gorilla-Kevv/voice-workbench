@@ -36,21 +36,55 @@ REQUIRED_VRAM_MB: dict[str, int] = {
     #:   （torch 口径，不含 CUDA context）。取 2500 MB：撑得住 30s 的长片段，
     #:   又远低于推理档的 4700 MB（不该拿推理的门槛去卡一个只需要 codec 的任务）。
     "prepare": 2500,
+    #: SI 训练（S3，30-6）：**门槛跟着 batch 走**（见 `train_required_vram_mb`），
+    #: 固定档这 5120 MB 只作为「未指定 batch 时」的默认值。方案 §6.3 原本给的正是
+    #: 这个数（按 batch 8 + 梯度检查点，含桌面波动余量）—— 但用它去拦 batch 1 的跑局
+    #: 是误伤，与坑 24「门槛要按精度分档」是同一类错误。
+    "train": 5120,
 }
 
+#: 训练显存画像（阶段 28 实测净占，`docs/IRODORI-TTS-EVALUATION.md` §5.1）：
+#: batch 2 整卡峰值 6131 MB、batch 8 整卡峰值 6911 MB，当时桌面占 1.3~1.7GB
+#: ⇒ 训练进程自己约 batch 2 = 4630 MB / batch 8 = 5410 MB，**每样本约 130 MB**。
+#: 只训 16 个 embedding token、基座冻结，所以 batch 之外的一切基本是常数 —— 线性外推成立。
+TRAIN_NET_BASELINE_BATCH = 2
+TRAIN_NET_BASELINE_MB = 4630
+TRAIN_PER_SAMPLE_MB = 130
+#: 门槛下限：基座本体载入就约 3GB，低于这个数 batch 再小也没意义
+TRAIN_VRAM_FLOOR_MB = 4200
 
-def required_vram_mb(precision: str = "fp32", task: str = "infer") -> int:
+
+def train_required_vram_mb(batch: Optional[int] = None) -> int:
+    """训练准入基准（MB），按实际 batch 取值。
+
+    与 `si_train.estimated_net_mb()` 同一份画像，放在这里是刻意的：`required_vram_mb`
+    是准入的**唯一事实源**（坑 19），算术不能在两个模块里各写一遍。
+    """
+    size = TRAIN_NET_BASELINE_BATCH if batch is None else max(1, int(batch))
+    return max(
+        TRAIN_VRAM_FLOOR_MB,
+        TRAIN_NET_BASELINE_MB + (size - TRAIN_NET_BASELINE_BATCH) * TRAIN_PER_SAMPLE_MB,
+    )
+
+
+def required_vram_mb(
+    precision: str = "fp32", task: str = "infer", batch: Optional[int] = None
+) -> int:
     """准入基准（MB）。
 
     `task` 决定看哪一档：
     - `infer`：只按 int4 档报（`fp32` 与 `bf16` 在这套权重上差约 400MB，
       准入宁保守勿乐观 —— 差 400MB 卡住的代价远大于多等一会儿）；
     - `prepare`：数据整备只加载 codec，按 codec 档报（准备阶段把 TTS 模型卸载了，
-      不该拿 4.7GB 去卡一个只需要 codec 的任务）。
+      不该拿 4.7GB 去卡一个只需要 codec 的任务）；
+    - `train`：SI 训练（30-6）。训前会把推理模型卸掉，所以这是**净占**口径，
+      且按实际 batch 取值（batch 越大门槛越高）。
     """
     _ = precision  # 保留参数：将来若换权重档要按精度分流
     if task == "prepare":
         return REQUIRED_VRAM_MB["prepare"]
+    if task == "train":
+        return train_required_vram_mb(batch)
     return REQUIRED_VRAM_MB["int4"]
 
 
@@ -114,6 +148,20 @@ class Settings:
     #: 只用于给用户算「大概要跑多久」，不是保证值。
     seconds_per_step: float = 2.2
 
+    # ---- S3（30-6）----
+    #: 训练日志的上报粒度（步）。上游 yaml 是 20 —— 太粗：1000 步的训练
+    #: 只有 50 个进度点，前端轮询时会显得卡住。非幂等的命令行参数，按需覆盖。
+    train_log_every: int = 5
+    #: 自动 batch 探测的试跑参数（batch 2 跑 2 步，见方案 §6.4）
+    train_probe_batch: int = 2
+    train_probe_steps: int = 2
+    #: batch 探测的显存安全系数：只吃空闲显存的这个比例，留余量给桌面波动
+    #: （Windows 桌面的浏览器/资源管理器会临时抢几百 MB，且不在我们进程里记账）
+    auto_batch_headroom: float = 0.85
+    #: 单次训练的墙钟上限（小时）。超过 12 小时基本是跑飞了 —— 与其让它占着显卡，
+    #: 不如明确失败并让用户看日志。0 = 不限制。
+    train_max_hours: float = 12.0
+
     #: 任务/上传产物目录（gitignore）
     data_dir: Path = field(default_factory=lambda: IRODORI_DIR / ".data")
     uploads_dir: Path = field(default_factory=lambda: IRODORI_DIR / ".data" / "uploads")
@@ -147,6 +195,23 @@ class Settings:
             settings.downgrade_steps = int(_env("IRODORI_DOWNGRADE_STEPS", "20") or 20)
         except ValueError:
             settings.downgrade_steps = 20
+        for name, cast in (
+            ("smoke_steps", int),
+            ("max_train_batch", int),
+            ("seconds_per_step", float),
+            ("train_log_every", int),
+            ("train_probe_batch", int),
+            ("train_probe_steps", int),
+            ("auto_batch_headroom", float),
+            ("train_max_hours", float),
+        ):
+            raw = _env("IRODORI_" + name.upper())
+            if not raw:
+                continue
+            try:
+                setattr(settings, name, cast(raw))
+            except ValueError:
+                pass  # 环境变量写错不该让服务起不来：留默认值
         return settings
 
     # ------------------------------------------------------------------
@@ -162,6 +227,34 @@ class Settings:
     def datasets_dir(self) -> Path:
         """整备好的数据集根目录（`<data_dir>/datasets/<id>/manifest.jsonl`）。"""
         return self.data_dir / "datasets"
+
+    @property
+    def speakers_dir(self) -> Path:
+        """固化的 speaker embedding 目录（`<data_dir>/speakers`）。
+
+        `synth.resolve_reference()` 就按 `<id>.speaker.safetensors` 在这一个目录下找 ——
+        训练产物最后也会复制到这里，别在别处再立一份约定。
+        """
+        return self.data_dir / "speakers"
+
+    @property
+    def trainings_dir(self) -> Path:
+        """S3 的原始产物目录（`<data_dir>/trainings/<job>`），上游 ckpt 落这
+        里，`publish_speaker()` 再把最终产物复制到 `speakers/`。
+
+        两层是为了隔离「上游自己的命名习惯」（`checkpoint_final…`、
+        `checkpoint_0000250…`）与「我们对外的 id」（音色 id / 说话人名）。
+        """
+        return self.data_dir / "trainings"
+
+    @property
+    def si_config_file(self) -> Path:
+        """上游 SI 训练配置（零改动原则：不复制出来改，直接指 upstream 那一份）。"""
+        return self.upstream_dir / "configs" / "train_v4_small_speaker_inversion.yaml"
+
+    @property
+    def train_script(self) -> Path:
+        return self.upstream_dir / "train.py"
 
     @property
     def int4_model_file(self) -> Path:
@@ -195,10 +288,18 @@ class Settings:
             "uploads_dir": str(self.uploads_dir),
             "datasets_dir": str(self.datasets_dir),
             "jobs_dir": str(self.jobs_dir),
+            "speakers_dir": str(self.speakers_dir),
+            "trainings_dir": str(self.trainings_dir),
+            "si_config": str(self.si_config_file),
             "smoke_steps": self.smoke_steps,
             "train_step_presets": list(self.train_step_presets),
             "max_train_batch": self.max_train_batch,
             "seconds_per_step": self.seconds_per_step,
+            "train_log_every": self.train_log_every,
+            "train_probe_batch": self.train_probe_batch,
+            "train_probe_steps": self.train_probe_steps,
+            "auto_batch_headroom": self.auto_batch_headroom,
+            "train_max_hours": self.train_max_hours,
         }
 
 
