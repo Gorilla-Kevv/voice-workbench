@@ -371,9 +371,20 @@ export function AppShell({
           </div>
         </div>
 
+        {/* 窄屏：横向一排、整条滚动。⚠️ 分组必须 shrink-0 —— 否则分组会被压到比
+            内容还窄，里面的按钮（shrink-0）向右溢出、直接画到下一组的按钮上，
+            所有导航文字叠成一团（2026-10-17 用户窄屏实测）。
+            教训：**外层容器的滚动不能替代内层分组的不可收缩**，两层都要管。 */}
         <nav className="scrollbar-thin flex gap-1 overflow-x-auto px-3 pb-3 lg:flex-1 lg:flex-col lg:overflow-y-auto lg:px-3 lg:pb-3">
-          {NAV_GROUPS.map((group) => (
-            <div key={group.title} className="flex gap-1 lg:block">
+          {NAV_GROUPS.map((group, index) => (
+            <div
+              key={group.title}
+              className={cn(
+                'flex shrink-0 gap-1 lg:block',
+                // 窄屏给组与组之间一道竖线，滚动时能看出「这是两段」
+                index > 0 && 'max-lg:border-l max-lg:border-sidebar-border/70 max-lg:pl-1.5',
+              )}
+            >
               <p className="hidden px-3 pb-1 pt-3 text-[10px] font-medium uppercase tracking-wider text-muted-foreground lg:block">
                 {group.title}
               </p>
