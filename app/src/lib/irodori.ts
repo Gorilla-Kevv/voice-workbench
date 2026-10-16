@@ -12,12 +12,19 @@
 
 import { RequestError } from '@/lib/errors';
 import type {
+  IrodoriAutoBatchResult,
   IrodoriCatalog,
+  IrodoriDataset,
   IrodoriHealth,
+  IrodoriJob,
   IrodoriSpeaker,
   IrodoriSynthPayload,
   IrodoriSynthResult,
   IrodoriTimeoutDetails,
+  IrodoriTrainPayload,
+  IrodoriTrainPlan,
+  IrodoriTrainPlanPayload,
+  IrodoriUploadResult,
 } from '@/types';
 
 /** 经 Node 网关的默认入口 */
@@ -154,4 +161,50 @@ export const irodoriApi = {
    */
   synthesize: (payload: IrodoriSynthPayload, baseUrl?: string): Promise<IrodoriSynthResult> =>
     irodoriRequest('/v1/synth', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 0 }, baseUrl),
+
+  // -------------------------------------------------------------------------
+  // 训练：S1+S2（整备）与 S3（SI 训练）都走 JobStore，形态与 trainer 的 /v1/jobs 同构
+  // -------------------------------------------------------------------------
+
+  /** 只体检不执行：三步状态 + 数据诊断 + batch 推荐预览 */
+  trainPlan: (payload: IrodoriTrainPlanPayload, baseUrl?: string): Promise<IrodoriTrainPlan> =>
+    irodoriRequest('/v1/train/plan', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 30_000 }, baseUrl),
+
+  /**
+   * 上传语料（multipart，可含 .zip）。
+   *
+   * Content-Type 交给浏览器自己带 boundary —— `irodoriRequest` 见到 FormData 会跳过
+   * `application/json`，这是它与其它调用唯一的差别。
+   */
+  trainUpload: (files: File[], datasetId: string, baseUrl?: string): Promise<IrodoriUploadResult> => {
+    const form = new FormData();
+    for (const file of files) form.append('files', file);
+    if (datasetId.trim()) form.append('dataset_id', datasetId.trim());
+    // 上传可能是一整个 zip，给足时间（服务端解压 + 落盘）
+    return irodoriRequest('/v1/train/upload', { method: 'POST', body: form, timeoutMs: 0 }, baseUrl);
+  },
+
+  /** 入队跑 S1+S2；与推理互斥（服务端会先卸载常驻模型） */
+  trainPrepare: (payload: IrodoriTrainPlanPayload, baseUrl?: string): Promise<{ ok: boolean; job: IrodoriJob }> =>
+    irodoriRequest('/v1/train/prepare', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 }, baseUrl),
+
+  /** 入队跑 S3（自动 batch → 训练 → 产物 → 登记）；训练期间合成一律 409 */
+  train: (payload: IrodoriTrainPayload, baseUrl?: string): Promise<{ ok: boolean; job: IrodoriJob; batch?: unknown }> =>
+    irodoriRequest('/v1/train', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 }, baseUrl),
+
+  /** 自动 batch 推荐。`probed=true` 会真的把基座载起来跑两步（约 1~2 分钟） */
+  autoBatch: (
+    payload: { dataset_id?: string; probe?: boolean } = {},
+    baseUrl?: string,
+  ): Promise<IrodoriAutoBatchResult> =>
+    irodoriRequest('/v1/train/auto_batch', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 0 }, baseUrl),
+
+  datasets: (baseUrl?: string): Promise<{ ok: boolean; datasets: IrodoriDataset[]; count: number }> =>
+    irodoriRequest('/v1/train/datasets', { method: 'GET', timeoutMs: 15_000 }, baseUrl),
+
+  job: (id: string, baseUrl?: string): Promise<{ ok: boolean; job: IrodoriJob }> =>
+    irodoriRequest(`/v1/jobs/${encodeURIComponent(id)}`, { method: 'GET', timeoutMs: 15_000 }, baseUrl),
+
+  cancelJob: (id: string, baseUrl?: string): Promise<{ ok: boolean; job: IrodoriJob; cancelled: boolean }> =>
+    irodoriRequest(`/v1/jobs/${encodeURIComponent(id)}/cancel`, { method: 'POST', timeoutMs: 15_000 }, baseUrl),
 };

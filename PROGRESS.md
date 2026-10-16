@@ -10,11 +10,12 @@
 - 最新完成：**阶段 30-2 = Irodori 推理链路**（10.13 01:50 BY Qoder）—— `/v1/catalog`（emoji 56 个 + 官方释义 45 条**从上游源码 ast 解析**）、`/v1/warmup|unload|synth|speakers`（懒加载 + 显存准入「已加载跳过」+ 日语校验 + 服务端切句 ≤25 字/段拼接 + 参考三形态互斥 + 409 合成互斥）+ 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；验证脚本 **31/31**（含网关透传真跑）；**C 段真机合成已于 10.13 19:00 跑通**（39/40，唯一失败是 RTF 阈值口径 —— 服务端口径本就高于阶段 28 的 bench 口径，已按实测改为 0.35）
 - 最新完成：**阶段 30-3 = Irodori 长尾护栏**（10.13 19:10 BY Qoder）—— **段间外推降步**（每段后外推整条耗时，超 `0.9×IRODORI_TIMEOUT` 就把剩余段降到 20 步 + 换 seed；依据阶段 28 实测 40 步 89s → 20 步 2.16s）+ **墙钟看门狗**（专用工作线程 + 504 `IRODORI_TIMEOUT`，带 `retry_suggestion`）；**加载不计入采样预算**（否则小预算首次请求必假超时）；超时后合成权留到孤儿线程段间检查点退出（期间 409 文案区分「仍在收尾」）；catalog 暴露 `guard` 段；前端 `lib/irodori.ts` + `types/irodori.ts`。验证脚本 **69/69**（56 项假 runtime 单测 + **13 项真机**：真机降步 200/`retried=true`、超预算 504/`downgraded=true`、收尾期 409）
 - 最新完成：**阶段 30-4 = 音色库多片段长参考**（10.13 20:10 BY Qoder）—— `VoiceRecord` 只加不改地新增可选 `ref_clips`（多片段长参考）/ `engine_tags`（适用引擎标注）/ `speaker_embeds`（30-6 训练产物位）；**两侧都不吞字段**（Node 的 `readIndex/_persist` 与 Python 的 `Voice.to_dict/_persist` 都只在有值时写键）；网关新增片段增删改 + 试听 4 个端点；**Irodori 侧补上回落链** —— `ref_voice` 现在「有长参考就用长参考，没有才回落 3~10s 主音频」，并在响应里回显 `ref_source`/`ref_clip_count`；前端音色库行展开新增「日语长参考」区（多片上传/逐片试听/逐片转写/引擎标签）。验证 **74 项**（Node 31 + Python 24 + Irodori 19，含真机走长参考合成）
+- 最新完成：**阶段 30-7 = 前端完整化（日语合成页 + 音色固化训练页 + 设置页开关 + 资源账本）**（10.17 02:03 BY Qoder）—— 两个页面都能用了：合成页（emoji 风格 + caption + 参考三选一含固化音色 + 护栏重试走服务端建议步数）、训练页（三步向导 + 自动体检 + 自动/手动 batch + 四阶段任务面板与 ETA + 取消 + 训完跳合成页）；侧栏新分组「Irodori · 日语特化」与第四路探活；设置页 Irodori 服务开关；资源账本补 `irodori-tts` / `irodori-training` 两档；新增 `docs/IRODORI-INTEGRATION.md`。typecheck / eslint / build 全过，网关联调冒烟通过（health / service / datasets / speakers / plan / auto_batch）。**浏览器整链路走查与耳朵验收待显存空闲时由用户补**
 - 最新完成：**阶段 30-6 = 训练 S3（Speaker Inversion 编排）**（10.16 04:19 BY Qoder）—— 自动 batch 探测 + 子进程训练编排（上游 `train.py` 只有 `__main__` 入口）+ 进度/取消/ETA + 产物核对（safetensors 读回 `speaker_embedding`）+ 登记进音色库；**真机闭环已跑通**：整备 6 条 → 训 100 步（loss 0.91→0.70，约 0.5s/步）→ `speaker_id` 合成出音 4.32s/48kHz；离线验证 68/68；修掉三个真机才暴露的问题（sys.path 漏入口 / latent 相对路径口径 / torch allocator 不还显存），新增坑 69~72
 - 最新完成：**阶段 30-5 = 训练 S1+S2（数据整备 + latent 编码 + manifest 非空硬断言 + JobStore）**（10.14 03:38 BY Qoder）—— `traindata.py`（三来源收集：音色库长参考 / 上传目录 / 显式列表，**来源互斥**；`DACVAECodec.encode_file` 直编 latent 写 `manifest.jsonl`）+ **守卫一落地**（`written` 不等于待编码条数一律 422 `TRAIN_MANIFEST_EMPTY`，且**不留**半份 manifest）+ `jobs.py`（形态对齐 trainer，取消用 Event、重启后 running 转 cancelled）+ `routers/train.py`（`plan`/`upload`/`prepare`/`datasets`/`jobs` 全套；S3 明确 501）+ catalog 训练段常量。验证脚本 **63/63**（含真机：20 条 → `written=20`；破坏解码全失败 / 部分失败均 422；取消留痕清理）
-- 下一阶段：**阶段 30-7（前端完整化）**：`IrodoriTtsPage`（合成页）+ `IrodoriTrainingPage`（三步向导：数据 → 整备 → 训练，JobStore 进度/取消/ETA、「重试（降步）」按钮）+ 设置页服务开关 + 预加载账本回填 + 文档/走查。前置：训练档权重已就位（bf16 基座 2.9GB 已下载）、S3 服务端已可用
+- 下一阶段：**阶段 30 收尾（整链路走查 + Irodori 接入资源仲裁器 + 预加载账本确认）**：`IrodoriTtsPage`（合成页）+ `IrodoriTrainingPage`（三步向导：数据 → 整备 → 训练，JobStore 进度/取消/ETA、「重试（降步）」按钮）+ 设置页服务开关 + 预加载账本回填 + 文档/走查。前置：训练档权重已就位（bf16 基座 2.9GB 已下载）、S3 服务端已可用
 - 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；**30-2 的 C 段真机合成补测**（腾显存后 `python .tmp/verify_irodori_infer.py`）；训练档权重下载（`npm run irodori:weights -- --training`，30-6 开工前必须完成）
-- 未完成的任务：阶段 30-7（前端 + 设置页 + 走查）；训练档权重（bf16 2.9GB）**已下载完成**
+- 未完成的任务：阶段 30 收尾（浏览器整链路走查 + Irodori 接入资源仲裁器 + 预加载账本确认）；训练档权重（bf16 2.9GB）**已下载完成**；**耳朵验收（音色像不像本人）待用户**
 - 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
@@ -2486,7 +2487,7 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 - 本次文档更新时间：10.12 13:47
 
-## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder][30-4 完成时间：10.13 20:10 BY Qoder][30-5 完成时间：10.14 03:38 BY Qoder][30-6 完成时间：10.16 04:19 BY Qoder]
+## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder][30-4 完成时间：10.13 20:10 BY Qoder][30-5 完成时间：10.14 03:38 BY Qoder][30-6 完成时间：10.16 04:19 BY Qoder][30-7 完成时间：10.17 02:03 BY Qoder]
 
 - 分支：feature/vc-svc
 - 立项依据：用户 10.09 裁决「**做克隆和训练**」（并明确 Genie-TTS 与 dots.tts 弃用）。
@@ -2898,19 +2899,48 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
   （实测 0.5 s/步），但保守估时比乐观估时安全，暂不改。
 - 音色质量**未做耳朵验收**：本次样本只有 6 条同一句的短片段，只证明链路通，不证明像不像。
 
-**下一阶段入口（阶段 30-7）**
+#### 30-7 明细（10.17 完成）[计划时间：10.17 01:30 BY Qoder][完成时间：10.17 02:03 BY Qoder]
 
-- 目标：`IrodoriTtsPage`（日语合成页：文本框 + emoji 调色板 + caption + 参考三选一 + 步数档 + 换 seed + 结果堆叠走 `useResultStack`）
-  + `IrodoriTrainingPage`（三步向导：数据 → 整备 → 训练；JobStore 进度/取消/ETA + 训练中合成 409 的提示 + 「重试（降步）」按钮）
-  + 设置页 `irodori` 服务开关 + preload 账本与 `ResourceBudget` 回填 + 浏览器整链路走查。
-- 涉及文件（预估）：`app/src/pages/{IrodoriTtsPage,IrodoriTrainingPage}.tsx`、`app/src/lib/irodori.ts`（已存在，补训练段）、
-  `app/src/types/irodori.ts`（补训练契约）、`app/src/App.tsx`（PAGE_META/路由）、
-  `app/src/components/layout/AppShell.tsx`（导航组「日语 · Irodori 风格」）、
-  设置页服务卡、`server/src/services/preload.ts`、`app/src/lib/resources.ts`、网关 `/api/irodori/*`（确认超时档位）。
+**已完成**
+
+| 交付物 | 说明 |
+| --- | --- |
+| `app/src/pages/IrodoriTtsPage.tsx`（新增） | 日语合成页：资源预估 + 引擎状态（预热/释放）+ 文本 + **emoji 风格标记**（点一下追加）+ caption 预设 + 步数/调度/时长系数/换 seed + **参考三选一**（固化音色 / 音色库 / 本地路径）+ 结果堆叠（播放/下载/删除） |
+| 同上（护栏） | 撞长尾时按**失败那一次的请求** + 服务端建议步数重试（`withLowerSteps`，不是拿当前表单重发）；结果卡写明「从第 N 段起自动降步并换了 seed」 |
+| `app/src/pages/IrodoriTrainingPage.tsx`（新增） | 三步向导（数据 → 整备 → 训练）：来源互斥三选一 + 上传（zip 也行）+ **换来源就自动体检**（不跑编码）+ 步数档 + batch（自动探测 / 手动降档）+ 任务面板 + 训完给 `speaker_id` 与「去合成页试试」 |
+| `app/src/components/features/IrodoriJobPanel.tsx` + `hooks/useIrodoriJob.ts`（新增） | 轮询 `/v1/jobs/{id}`：四阶段灯 + 百分比 + **预计还需**（本地外推，前 10% 不给会乱跳的数字）+ 日志尾部 + 取消；终态只回调一次 |
+| `app/src/{types/irodori.ts,lib/irodori.ts}` | 补训练契约与 8 个训练端点（plan / upload(multipart) / prepare / train / auto_batch / datasets / job / cancel） |
+| `App.tsx` + `AppShell.tsx` | 导航键 `irodori-tts` / `irodori-training`、PAGE_META、LOCAL_PAGES、第四路独立探活（`irodoriTts` 模块态，与设置页同一事实源）、侧栏新分组「Irodori · 日语特化」、状态卡锚点 `service-irodori` |
+| `SettingsPage.tsx` | 新增 Irodori 服务开关卡（网关托管：开=拉起，关=卸模型 + 收进程）；`localService.ts` 把服务 id 收敛成 `RuntimeServiceId` 联合类型（拼错名字只会得到 404，所以交给类型检查） |
+| `resources.ts` + `ResourceBudget.tsx` | 新增 `irodori-tts` / `irodori-training` 两档（4700 / 4630MB，真源分别来自 `/health.configuration` 与服务端 batch 画像）、Irodori 也进 `loaded_engines` 与「释放显存」名单；**仲裁器还没接 Irodori**，那个按钮对它明确提示「还没接」而不是给个会失败的动作 |
+| `docs/IRODORI-INTEGRATION.md`（新增） | 面向使用者的一页说明：怎么开、两个页面各有什么、产物落哪、出问题看哪、已知边界 |
+
+**已验证**
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` | 通过（app + server 两遍） |
+| `npx eslint`（12 个改动文件） | 0 error / 0 warning（修掉 1 个 `react-hooks/exhaustive-deps`：新增的 `irodoriLoaded` 忘了进依赖数组） |
+| `npm run build` | 通过（1906 模块，9.79s） |
+| ★ 网关联调冒烟 | 起网关 + Irodori 服务，经 `/api/irodori/*` 打：`/health`（training_ready=True）、`/api/irodori/service`、`/v1/train/datasets`（1 个数据集 6 条）、`/v1/speakers`（2 个固化音色）、`/v1/train/plan`（s1/s2/s3 全 ready）、`/v1/train/auto_batch`（如实回「空闲只有 2115MB」） |
+
+**没做 / 做不到**
+
+- **浏览器整链路走查未做**：本轮显存只剩 2.1~2.4GB（桌面占用高），合成（需 4700MB）与训练（需 4630MB）都进不去，
+  只做到「网关 + 服务 + 全部只读端点」这一层。**留给用户在显存空闲时走一遍**：未启动 → 启动 → 合成 → 训练 → 固化 → 复用。
+- **耳朵验收仍欠着**：音色像不像本人只能人耳判断（30-6 的 100 步产物已在 `irodori/.data/speakers/` 下）。
+
+**下一阶段入口（阶段 30 收尾）**
+
+- 目标：① 用户在设置页打开 Irodori 后走一遍整链路（上面那条走查）；② Irodori 接入资源仲裁器
+  （`app/src/lib/arbiter.ts` 的 `FocusEngine` 与 `server/src/services/arbiter.ts` 补 `irodori-tts`，
+  让「把资源集中给这一个模型」对它可用）；③ 确认预加载账本里 Irodori 的条目（服务端 `preload.ts` 已有 `irodori-tts`，
+  前端账本已能读到它的加载态）。
+- 涉及文件：`server/src/services/arbiter.ts`、`app/src/lib/arbiter.ts`、`app/src/components/features/ResourceBudget.tsx`（去掉那段「还没接仲裁器」的分支）。
 - 所在分支：`feature/vc-svc`（当前分支）。
 - 验证命令：`npm run typecheck`、`cd app && npx eslint src`、`npm run build`；
   服务侧 `irodori/.venv/Scripts/python.exe .tmp/verify_irodori_train_s3.py`（离线 68/68）
-  与 `irodori/.venv/Scripts/python.exe .tmp/smoke_irodori_s3.py`（真机闭环，需 bf16 基座 + 空闲显存 ≥4.7GB）。
+  与 `irodori/.venv/Scripts/python.exe .tmp/smoke_irodori_s3.py`（真机闭环，需空闲显存 ≥4.7GB）。
 
 **风险**
 

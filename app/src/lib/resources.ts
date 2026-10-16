@@ -14,13 +14,27 @@
  */
 
 import { indexttsApi } from '@/lib/indextts';
+import { irodoriApi } from '@/lib/irodori';
 import { neteaseApi } from '@/lib/netease';
 import { sovitsApi } from '@/lib/sovits';
 import { api } from '@/lib/api';
 import type { HealthInfo } from '@/types';
 
 /** 资源型任务标识 */
-export type ResourceTask = 'netease-tts' | 'netease-asr' | 'indextts-tts' | 'sovits' | 'batch' | 'training' | 'rvc' | 'svc' | 'uvr5' | 'asr';
+export type ResourceTask =
+  | 'netease-tts'
+  | 'netease-asr'
+  | 'indextts-tts'
+  // Irodori（30-7）：日语合成（int4 档 4700）与 SI 训练（batch 分档，batch 2 = 4630）
+  | 'irodori-tts'
+  | 'irodori-training'
+  | 'sovits'
+  | 'batch'
+  | 'training'
+  | 'rvc'
+  | 'svc'
+  | 'uvr5'
+  | 'asr';
 
 /** 前端兜底常量：服务端没给数时用（单位 MB，标注来源，别凭感觉改） */
 const FALLBACK_VRAM_MB: Record<ResourceTask, number> = {
@@ -31,6 +45,11 @@ const FALLBACK_VRAM_MB: Record<ResourceTask, number> = {
   // 与 indextts/app/indextts_engine.py::REQUIRED_VRAM_MB 一致；
   // 阶段 26 实测加载后常驻约 5.3 GB（准入是加载前口径，运行中余量极小）
   'indextts-tts': 3072,
+  // ← irodori/app/config.py::REQUIRED_VRAM_MB['int4']（30-2 实测）
+  'irodori-tts': 4700,
+  // ← irodori/app/config.py::train_required_vram_mb(batch=2)（30-6 净占画像）
+  // 真值随 batch 变（batch 8 = 5410），这里按页面默认的小 batch 取
+  'irodori-training': 4630,
   // 与 trainer ENGINES 表一致
   sovits: 3072,
   batch: 3072,
@@ -46,6 +65,8 @@ const FALLBACK_RAM_MB: Record<ResourceTask, number> = {
   'netease-tts': 3072,
   'netease-asr': 4096,
   'indextts-tts': 3072,
+  'irodori-tts': 3072,
+  'irodori-training': 4096,
   sovits: 2048,
   batch: 3072,
   training: 6144,
@@ -80,6 +101,8 @@ export interface ResourceSnapshot {
   netease_tts_required_mb: number | null;
   /** IndexTTS 的门槛（服务端 catalog 的 required_vram_mb） */
   indextts_required_mb: number | null;
+  /** Irodori 的门槛（/health.configuration.required_vram_mb；int4 档） */
+  irodori_required_mb: number | null;
   /** 当前谁在占着本地引擎（null = 空闲） */
   active_engine: string | null;
   /** 各常驻引擎的加载状态（true = 已加载，其显存已计入「已用」） */
@@ -87,6 +110,7 @@ export interface ResourceSnapshot {
     'netease-tts': boolean;
     'netease-asr': boolean;
     'indextts-tts': boolean;
+    'irodori-tts': boolean;
   };
   /** GPT-SoVITS 本地服务是否被启用（默认关闭；它占着显存时才有「关掉它」这一说） */
   sovits_enabled: boolean;
@@ -129,6 +153,8 @@ const LOWER_TIPS: Record<ResourceTask, string> = {
   'netease-tts': '把长文本拆成多段分批合成，别一次塞整篇；fp16 已是低配，想更省只能换更小模型。',
   'netease-asr': '调低 R2T2 的 gpu_memory_utilization（默认 0.35），或改走 FunASR 轻量通道。',
   'indextts-tts': '把长文本拆成多段分批合成；bf16 已是低配。它常驻约 5.3 GB，跑之前先把浏览器硬件加速 / 模拟器等占显存的程序关掉。',
+  'irodori-tts': '长文本交给服务端自己分段（它有护栏与自动降步）；步数档降到 20~40 也能跑，只是细节略糙。',
+  'irodori-training': '把 batch 改成手动 1~2（自动探测会按空闲显存挑，但桌面占太多时它就挑不出来了），或先关掉占显存的程序再训。',
   sovits: '切到更小的底模版本，或缩短单次合成文本（长文本会显著抬高显存峰值）。',
   batch: '减小并发条数 / 分段长度；批量任务逐条排队跑比一次铺开省显存。',
   training: '降 batch size、缩短单段音频上限（>15 秒的先切分），或改用更小的底模。',
@@ -143,12 +169,13 @@ const UPGRADE_TIP =
 
 /** 采一次资源快照：各来源并发，任一失败都降级而不是整体失败 */
 export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
-  const [health, engines, netease, indextts, indexttsCatalog] = await Promise.all([
+  const [health, engines, netease, indextts, indexttsCatalog, irodori] = await Promise.all([
     api.health().catch(() => null),
     sovitsApi.engines().catch(() => null),
     neteaseApi.health().catch(() => null),
     indexttsApi.health().catch(() => null),
     indexttsApi.catalog().catch(() => null),
+    irodoriApi.health().catch(() => null),
   ]);
 
   const engineRequired: Record<string, number> = {};
@@ -156,9 +183,9 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
     engineRequired[engine.name] = engine.required_mb;
   }
 
-  // 显存余量：netease / indextts 都是 nvidia-smi 口径（跨进程真实值，见 HANDOFF 坑 17），
+  // 显存余量：netease / indextts / irodori 都是 nvidia-smi 口径（跨进程真实值，见 HANDOFF 坑 17），
   // 谁活着用谁的；都不可用才退回 trainer 的 torch 口径（WDDM 下会虚高）
-  const smiVram = indextts?.vram ?? netease?.vram ?? null;
+  const smiVram = irodori?.vram ?? indextts?.vram ?? netease?.vram ?? null;
   const vram_free = smiVram?.free_mb ?? engines?.free_vram_mb ?? null;
   const vram_total = smiVram?.total_mb ?? null;
   const source: ResourceSnapshot['vram_source'] = smiVram
@@ -178,6 +205,7 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
     engine_required_mb: engineRequired,
     netease_tts_required_mb: netease?.configuration?.tts_required_vram_mb ?? null,
     indextts_required_mb: indexttsCatalog?.required_vram_mb ?? null,
+    irodori_required_mb: irodori?.configuration?.required_vram_mb ?? null,
     active_engine: engines?.active ?? null,
     // 三个常驻引擎的加载态来自各自 /health（字段名各不相同，别想当然）：
     //   * 网易 TTS  —— `engines.confucius_tts.loaded`
@@ -189,6 +217,7 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
       'netease-tts': netease?.engines?.confucius_tts?.loaded === true,
       'netease-asr': netease?.engines?.r2t2?.model_loaded === true,
       'indextts-tts': indextts?.engine?.loaded === true,
+      'irodori-tts': irodori?.loaded === true,
     },
     sovits_enabled: (health as HealthInfo | null)?.sovits?.enabled === true || engines != null,
     fetched_at: Date.now(),
@@ -200,6 +229,7 @@ function isEngineLoaded(task: ResourceTask, snapshot: ResourceSnapshot): boolean
   if (task === 'netease-tts') return snapshot.loaded_engines['netease-tts'];
   if (task === 'netease-asr') return snapshot.loaded_engines['netease-asr'];
   if (task === 'indextts-tts') return snapshot.loaded_engines['indextts-tts'];
+  if (task === 'irodori-tts') return snapshot.loaded_engines['irodori-tts'];
   return false;
 }
 
@@ -207,6 +237,7 @@ function isEngineLoaded(task: ResourceTask, snapshot: ResourceSnapshot): boolean
 function vramNeed(task: ResourceTask, snapshot: ResourceSnapshot): number {
   if (task === 'netease-tts') return snapshot.netease_tts_required_mb ?? FALLBACK_VRAM_MB[task];
   if (task === 'indextts-tts') return snapshot.indextts_required_mb ?? FALLBACK_VRAM_MB[task];
+  if (task === 'irodori-tts') return snapshot.irodori_required_mb ?? FALLBACK_VRAM_MB[task];
   const engineName = task === 'training' ? 'train' : task;
   return snapshot.engine_required_mb[engineName] ?? FALLBACK_VRAM_MB[task];
 }
@@ -314,8 +345,17 @@ export async function releaseVram(handlers: {
   neteaseTtsLoaded: boolean;
   neteaseAsrLoaded: boolean;
   indexttsLoaded?: boolean;
+  irodoriLoaded?: boolean;
 }): Promise<string[]> {
   const done: string[] = [];
+  if (handlers.irodoriLoaded) {
+    try {
+      await irodoriApi.unload();
+      done.push('Irodori 引擎已卸载');
+    } catch {
+      // 卸载失败不该挡住其它路
+    }
+  }
   if (handlers.indexttsLoaded) {
     try {
       await indexttsApi.unload();
@@ -353,6 +393,8 @@ export const RESOURCE_TASK_LABEL: Record<ResourceTask, string> = {
   'netease-tts': '网易零样本合成',
   'netease-asr': '网易流式转写',
   'indextts-tts': 'IndexTTS 零样本合成',
+  'irodori-tts': 'Irodori 日语合成',
+  'irodori-training': 'Irodori 音色固化训练',
   sovits: 'GPT-SoVITS 推理',
   batch: '批量合成',
   training: '模型训练',

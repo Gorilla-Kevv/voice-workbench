@@ -8,7 +8,9 @@ import {
   FlaskConical,
   History,
   KeyRound,
+  GraduationCap,
   Landmark,
+  Languages,
   ListMusic,
   Loader2,
   Mic2,
@@ -136,6 +138,18 @@ const MODULE_STATUS_TEXT: Record<
       offline: { title: 'IndexTTS · 未启动', hint: '按需模块：npm run dev:indextts 启动（环境见 docs/INDEX-TTS-INTEGRATION.md）' },
     },
   },
+  irodoriTts: {
+    label: 'Irodori',
+    states: {
+      checking: { title: 'Irodori · 正在连接', hint: 'irodori 服务探测中，稍候自动恢复' },
+      ready: { title: 'Irodori · 已就绪', hint: '日语合成可用（emoji 风格 / 固化音色）；训练还要 bf16 基座' },
+      incomplete: {
+        title: 'Irodori · 待补齐',
+        hint: 'CUDA 不可用或权重缺失：跑 npm run irodori:check 体检；训练另需 npm run irodori:weights -- --training',
+      },
+      offline: { title: 'Irodori · 未启动', hint: '按需模块：设置页打开，或 npm run dev:irodori（:9884）' },
+    },
+  },
 };
 
 /** 导航按「用哪个模型」分组，避免用户在两条链路之间迷路 */
@@ -155,6 +169,16 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     title: 'IndexTTS · 情感可控',
     items: [
       { key: 'indextts-tts', label: '零样本合成', icon: SlidersHorizontal, hint: 'IndexTTS-2.5 · 8 维情感向量 / 语速倍率 / 5 语种' },
+    ],
+  },
+  {
+    // Irodori 是**日语特化**的第四条链路：emoji 风格标记 + caption + SI 音色固化。
+    // 与上面三组不冲突（语种与能力不同），所以独立成组 —— 导航按「用哪个模型」分，
+    // 模型名必须写在**看得见**的组名里（hint 只在 hover 时出现，不算数）。
+    title: 'Irodori · 日语特化',
+    items: [
+      { key: 'irodori-tts', label: '日语合成', icon: Languages, hint: 'Irodori-TTS · emoji 风格 / caption / 固化音色' },
+      { key: 'irodori-training', label: '音色固化训练', icon: GraduationCap, hint: 'Speaker Inversion · 训出音色 embedding 后免参考音频' },
     ],
   },
   {
@@ -261,6 +285,7 @@ const SETTINGS_SECTION_OF: Record<string, string> = {
   neteaseTts: 'service-netease',
   neteaseAsr: 'service-netease',
   indexttsTts: 'service-indextts',
+  irodoriTts: 'service-irodori',
   sovits: 'service-sovits',
   rvc: 'service-sovits',
   svc: 'service-sovits',
@@ -279,7 +304,10 @@ export function AppShell({
   children,
   header,
   sovitsState = 'offline',
-  moduleStates = { rvc: 'checking', svc: 'checking', asr: 'checking', neteaseTts: 'checking', neteaseAsr: 'checking', indexttsTts: 'checking' },
+  moduleStates = {
+    rvc: 'checking', svc: 'checking', asr: 'checking',
+    neteaseTts: 'checking', neteaseAsr: 'checking', indexttsTts: 'checking', irodoriTts: 'checking',
+  },
   onOpenSettingsSection,
 }: AppShellProps) {
   const keyReady = hasServerKey || hasUserKey;
@@ -293,7 +321,7 @@ export function AppShell({
       return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;
     }),
     { id: 'sovits', state: sovitsState, title: sovits.title, hint: sovits.hint, icon: 'server' },
-    ...(['rvc', 'svc', 'asr', 'indexttsTts'] as const).map((key) => {
+    ...(['rvc', 'svc', 'asr', 'indexttsTts', 'irodoriTts'] as const).map((key) => {
       const module = MODULE_STATUS_TEXT[key];
       const state = moduleStates[key];
       return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;

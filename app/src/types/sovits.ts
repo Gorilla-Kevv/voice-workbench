@@ -202,6 +202,13 @@ export interface ModuleStates {
   neteaseAsr: ModuleState;
   /** IndexTTS-2.5：第三个运行时（indextts/，:9883）；「未启动」是常态（按需启动） */
   indexttsTts: ModuleState;
+  /**
+   * Irodori-TTS：第四个运行时（irodori/，:9884）；「未启动」是常态（按需启动）。
+   *
+   * 只有一张卡（合成页与训练页共用同一个服务）：训练也走这一个状态位 ——
+   * 侧栏要回答的是「Irodori 服务在不在」，而不是「某个页面能不能用」。
+   */
+  irodoriTts: ModuleState;
 }
 
 /**

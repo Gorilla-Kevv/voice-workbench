@@ -91,7 +91,15 @@ export const localServiceApi = {
 };
 
 /**
- * 网易（:9882）与 IndexTTS（:9883）的启停（`/api/<id>/service`）。
+ * 网关托管的按需服务 id：网易（:9882）、IndexTTS（:9883）、Irodori（:9884）。
+ *
+ * 写成显式联合类型而不是 `string`：拼错一个名字只会得到一个 404，
+ * 而类型检查能在编译期就拦住 —— 这三个 id 是网关路由的一部分，不该靠运行时试出来。
+ */
+export type RuntimeServiceId = 'netease' | 'indextts' | 'irodori';
+
+/**
+ * 网易（:9882）、IndexTTS（:9883）与 Irodori（:9884）的启停（`/api/<id>/service`）。
  * 与 GPT-SoVITS 同一套开关语义：网关托管自己拉起的实例；
  * 外部终端起的实例关不掉，但会把常驻模型卸掉归还显存，并在 hint 里说清楚。
  */
@@ -106,10 +114,10 @@ export interface RuntimeServiceState {
 }
 
 export const runtimeServiceApi = {
-  state: (id: 'netease' | 'indextts'): Promise<RuntimeServiceState> =>
+  state: (id: RuntimeServiceId): Promise<RuntimeServiceState> =>
     serviceRequest<RuntimeServiceState>(`/api/${id}/service`, { method: 'GET', timeoutMs: 15_000 }),
 
-  toggle: (id: 'netease' | 'indextts', enabled: boolean): Promise<LocalServiceToggleResult> =>
+  toggle: (id: RuntimeServiceId, enabled: boolean): Promise<LocalServiceToggleResult> =>
     serviceRequest<LocalServiceToggleResult>(`/api/${id}/service`, {
       method: 'POST',
       body: JSON.stringify({ enabled }),
@@ -123,7 +131,7 @@ export const runtimeServiceApi = {
  * App 根组件里的侧栏探活 effect 订阅这个事件，收到后立即重读 supervisor。
  * 否则用户点了设置页的开关，要等下一轮 30s/10s 定时器才能看到侧栏翻转，体验不好。
  *
- * 三个开关（GPT-SoVITS / 网易 / IndexTTS）共用同一个事件名 —— 探活里都会重读自己的 supervisor。
+ * 四个开关（GPT-SoVITS / 网易 / IndexTTS / Irodori）共用同一个事件名 —— 探活里都会重读自己的 supervisor。
  */
 export const SERVICE_ENABLED_CHANGED_EVENT = 'service-enabled-changed';
 

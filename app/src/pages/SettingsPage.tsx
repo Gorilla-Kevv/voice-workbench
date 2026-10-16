@@ -252,8 +252,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
   const [runtimeStates, setRuntimeStates] = useState<{
     netease: RuntimeServiceState | null;
     indextts: RuntimeServiceState | null;
-  }>({ netease: null, indextts: null });
-  const [runtimeToggling, setRuntimeToggling] = useState<'netease' | 'indextts' | null>(null);
+    irodori: RuntimeServiceState | null;
+  }>({ netease: null, indextts: null, irodori: null });
+  const [runtimeToggling, setRuntimeToggling] = useState<'netease' | 'indextts' | 'irodori' | null>(null);
   /** GPT-SoVITS 高级配置（推理权重 / 默认值 / 批量）在行内是否展开 */
   const [sovitsAdvanced, setSovitsAdvanced] = useState(false);
 
@@ -265,6 +266,10 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
     runtimeServiceApi
       .state('indextts')
       .then((next) => setRuntimeStates((prev) => ({ ...prev, indextts: next })))
+      .catch(() => undefined);
+    runtimeServiceApi
+      .state('irodori')
+      .then((next) => setRuntimeStates((prev) => ({ ...prev, irodori: next })))
       .catch(() => undefined);
   }, []);
 
@@ -299,7 +304,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
   /** 给被锚点命中的区块加一圈临时高亮 */
   const flashRing = (id: string) => (flashId === id ? 'ring-2 ring-violet-500/70 transition-shadow' : '');
 
-  const toggleRuntimeService = async (id: 'netease' | 'indextts', enabled: boolean) => {
+  const toggleRuntimeService = async (id: 'netease' | 'indextts' | 'irodori', enabled: boolean) => {
     setRuntimeToggling(id);
     try {
       const result = await runtimeServiceApi.toggle(id, enabled);
@@ -550,6 +555,57 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
                 checked={runtimeStates.indextts?.enabled ?? false}
                 disabled={runtimeToggling === 'indextts' || runtimeStates.indextts == null}
                 onCheckedChange={(checked) => void toggleRuntimeService('indextts', checked === true)}
+              />
+            </div>
+          </div>
+
+          {/* Irodori-TTS（日语特化，:9884） */}
+          <div id="settings-service-irodori" className={cn('flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3', flashRing('settings-service-irodori'))}>
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-medium">
+                Irodori-TTS
+                <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9884</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                日语特化：emoji 风格标记 + caption 风格描述 + Speaker Inversion 音色固化。
+                默认<strong>关闭</strong>按需启动；环境体检：
+                <code className="mx-1 rounded bg-muted px-1">npm run irodori:check</code>
+                ，权重 <code className="mx-1 rounded bg-muted px-1">npm run irodori:weights</code>
+                （训练另需 <code className="mx-1 rounded bg-muted px-1">-- --training</code>）。
+              </p>
+              {runtimeStates.irodori && !runtimeStates.irodori.enabled && runtimeStates.irodori.reachable ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  检测到未托管的进程仍在 :9884 上运行（多为终端手动启动）。打开右侧开关可由网关接管；
+                  关闭开关则会把它收掉并归还显存。
+                </p>
+              ) : null}
+              {runtimeStates.irodori && !runtimeStates.irodori.reachable && runtimeStates.irodori.lastError ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">{runtimeStates.irodori.lastError}</p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-3 pt-1">
+              <Badge
+                variant={runtimeStates.irodori?.enabled && runtimeStates.irodori?.reachable ? 'default' : 'secondary'}
+                className={cn(
+                  'h-6 text-[11px]',
+                  runtimeStates.irodori?.enabled &&
+                    runtimeStates.irodori?.reachable &&
+                    'bg-emerald-600 hover:bg-emerald-600',
+                )}
+              >
+                {runtimeStates.irodori?.starting
+                  ? '启动中…'
+                  : runtimeStates.irodori?.enabled && runtimeStates.irodori?.reachable
+                    ? '运行中'
+                    : runtimeStates.irodori?.enabled
+                      ? '未就绪'
+                      : '未启动'}
+              </Badge>
+              <Switch
+                aria-label="启用 Irodori 服务"
+                checked={runtimeStates.irodori?.enabled ?? false}
+                disabled={runtimeToggling === 'irodori' || runtimeStates.irodori == null}
+                onCheckedChange={(checked) => void toggleRuntimeService('irodori', checked === true)}
               />
             </div>
           </div>

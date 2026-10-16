@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { GpuMonitorWindow } from '@/components/features/GpuMonitorWindow';
 import { cn } from '@/lib/utils';
 import { localServiceApi, notifyServiceEnabledChanged } from '@/lib/localService';
-import { arbiterApi } from '@/lib/arbiter';
+import { arbiterApi, type FocusEngine } from '@/lib/arbiter';
 import {
   RESOURCE_TASK_LABEL,
   estimateTask,
@@ -41,6 +41,8 @@ interface ResourceBudgetProps {
   neteaseTtsLoaded?: boolean;
   neteaseAsrLoaded?: boolean;
   indexttsLoaded?: boolean;
+  /** Irodori 是否已常驻（30-7；它同样是「加载后不再扣需求」的一类） */
+  irodoriLoaded?: boolean;
   className?: string;
 }
 
@@ -49,6 +51,7 @@ export function ResourceBudget({
   neteaseTtsLoaded = false,
   neteaseAsrLoaded = false,
   indexttsLoaded = false,
+  irodoriLoaded = false,
   className,
 }: ResourceBudgetProps) {
   const [snapshot, setSnapshot] = useState<ResourceSnapshot | null>(null);
@@ -89,7 +92,7 @@ export function ResourceBudget({
    * 而这两个状态是父组件异步拿到的：页面挂载时 `engine` 还是 null，预热完成后才变 true。
    * 只在挂载时取一次的话，界面上永远停在「未加载」的旧算式上（2026-10 用户实测）。
    */
-  const loadedKey = `${neteaseTtsLoaded}|${neteaseAsrLoaded}|${indexttsLoaded}`;
+  const loadedKey = `${neteaseTtsLoaded}|${neteaseAsrLoaded}|${indexttsLoaded}|${irodoriLoaded}`;
   const firstLoad = useRef(true);
   useEffect(() => {
     if (firstLoad.current) {
@@ -125,8 +128,16 @@ export function ResourceBudget({
   const handleFocus = useCallback(async () => {
     setFocusing(true);
     try {
-      // 批量走的是 GPT-SoVITS 引擎，仲裁器只认引擎名
-      const report = await arbiterApi.focus(task === 'batch' ? 'sovits' : task);
+      // 批量走的是 GPT-SoVITS 引擎，仲裁器只认引擎名；
+      // Irodori 还没接进仲裁器（服务端 `FocusEngine` 里没有它），直接跳过这一步 ——
+      // 宁可少一个「帮我腾显存」的按钮，也不给它一个会失败的动作。
+      const focusEngine: FocusEngine | null =
+        task === 'irodori-tts' || task === 'irodori-training' ? null : task === 'batch' ? 'sovits' : task;
+      if (!focusEngine) {
+        toast.info('这一项还没接仲裁器', { description: '显存不够时先手动关掉占显存的程序。' });
+        return;
+      }
+      const report = await arbiterApi.focus(focusEngine);
       toast.success('已把资源集中给这一个模型', {
         description: `${report.hint}${report.failed.length > 0 ? ` · ${report.failed.length} 项未成功` : ''}`,
       });
@@ -157,7 +168,7 @@ export function ResourceBudget({
   const handleRelease = useCallback(async () => {
     setReleasing(true);
     try {
-      const done = await releaseVram({ neteaseTtsLoaded, neteaseAsrLoaded, indexttsLoaded });
+      const done = await releaseVram({ neteaseTtsLoaded, neteaseAsrLoaded, indexttsLoaded, irodoriLoaded });
       if (done.length > 0) {
         toast.success('已释放显存', { description: done.join(' · ') });
       } else {
@@ -167,7 +178,7 @@ export function ResourceBudget({
     } finally {
       setReleasing(false);
     }
-  }, [neteaseAsrLoaded, neteaseTtsLoaded, indexttsLoaded, refresh]);
+  }, [neteaseAsrLoaded, neteaseTtsLoaded, indexttsLoaded, irodoriLoaded, refresh]);
 
   if (!snapshot && loading) {
     return (

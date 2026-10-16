@@ -15,11 +15,14 @@ import type { RequestError } from '@/lib/errors';
 import { getProvider } from '@/lib/providers/registry';
 import { neteaseApi } from '@/lib/netease';
 import { indexttsApi } from '@/lib/indextts';
+import { irodoriApi } from '@/lib/irodori';
 import { sovitsApi } from '@/lib/sovits';
 import { localServiceApi, runtimeServiceApi } from '@/lib/localService';
 import { AsrPage } from '@/pages/AsrPage';
 import { BatchPage } from '@/pages/BatchPage';
 import { IndexttsTtsPage } from '@/pages/IndexttsTtsPage';
+import { IrodoriTtsPage } from '@/pages/IrodoriTtsPage';
+import { IrodoriTrainingPage } from '@/pages/IrodoriTrainingPage';
 import { NeteaseAsrPage } from '@/pages/NeteaseAsrPage';
 import { NeteaseTtsPage } from '@/pages/NeteaseTtsPage';
 import { OutputsPage } from '@/pages/OutputsPage';
@@ -105,11 +108,24 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: 'IndexTTS · 零样本合成',
     description: 'IndexTTS-2.5 · 3 秒参考音频克隆，8 维情感向量与语速倍率精细可控（5 语种）',
   },
+  'irodori-tts': {
+    title: 'Irodori · 日语合成',
+    description: 'Irodori-TTS · 日语特化：emoji 风格标记 + caption 风格描述 + 固化音色直接复用',
+  },
+  'irodori-training': {
+    title: 'Irodori · 音色固化训练',
+    description: 'Speaker Inversion · 用同一个人的日语短句训出音色 embedding，之后合成不用再给参考音频',
+  },
   settings: { title: '设置', description: '配置两套模型的服务地址、密钥与合成偏好' },
 };
 
 /** 不依赖云端密钥的页面（走本地服务或纯客户端） */
-const LOCAL_PAGES: NavKey[] = ['voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc', 'asr', 'netease-tts', 'netease-asr', 'indextts-tts'];
+const LOCAL_PAGES: NavKey[] = [
+  'voices', 'batch', 'training', 'settings', 'history', 'rvc', 'svc', 'asr',
+  'netease-tts', 'netease-asr', 'indextts-tts',
+  // Irodori 是第四个本地运行时（:9884），同样不依赖云端密钥
+  'irodori-tts', 'irodori-training',
+];
 
 /**
  * 导航键 → MiMo 模型模式。
@@ -187,6 +203,8 @@ function App() {
     neteaseAsr: 'checking',
     // IndexTTS 同样是独立服务（按需启动），探活单独一轮
     indexttsTts: 'checking',
+    // Irodori 是第四个独立服务（按需启动，:9884），探活同样单独一轮
+    irodoriTts: 'checking',
   });
 
   const history = useHistory(settings.historyLimit);
@@ -245,7 +263,10 @@ function App() {
     const probe = async () => {
       let healthy = false;
       // netease 两态由独立的探活循环维护，这里只占位（false 路径同样要给全字段）
-      let nextModules: ModuleStates = { rvc: 'offline', svc: 'offline', asr: 'offline', neteaseTts: 'offline', neteaseAsr: 'offline', indexttsTts: 'offline' };
+      let nextModules: ModuleStates = {
+        rvc: 'offline', svc: 'offline', asr: 'offline',
+        neteaseTts: 'offline', neteaseAsr: 'offline', indexttsTts: 'offline', irodoriTts: 'offline',
+      };
       try {
         // 1. 先问 supervisor：用户到底要不要这个服务（这里三块卡 rvc/svc/asr 共享）
         const supervisor = await localServiceApi.state();
@@ -270,10 +291,11 @@ function App() {
               rvc: caps?.voice_conversion ? 'ready' : 'incomplete',
               svc: caps?.singing_conversion ? 'ready' : 'incomplete',
               asr: caps?.speech_recognition ? 'ready' : 'incomplete',
-              // 保留网易模块自己的探活结果，不要被这轮覆盖
+              // 保留网易 / IndexTTS / Irodori 各自探活循环的结果，不要被这轮覆盖
               neteaseTts: 'checking',
               neteaseAsr: 'checking',
               indexttsTts: 'checking',
+              irodoriTts: 'checking',
             };
           }
         }
@@ -281,12 +303,13 @@ function App() {
         // 连不上就是「还没起来」，与「起来了但没就绪」在这里无需区分
       }
       if (cancelled) return;
-      // rvc/svc/asr 用本轮结果整体替换；网易与 IndexTTS 归它们自己的探活循环管，这里原样保留
+      // rvc/svc/asr 用本轮结果整体替换；网易、IndexTTS、Irodori 归它们自己的探活循环管，这里原样保留
       setModuleStates((prev) => ({
         ...nextModules,
         neteaseTts: prev.neteaseTts,
         neteaseAsr: prev.neteaseAsr,
         indexttsTts: prev.indexttsTts,
+        irodoriTts: prev.irodoriTts,
       }));
 
       if (healthy) {
@@ -416,7 +439,46 @@ function App() {
     // IndexTTS 探活的依赖：服务变更广播进来时立即重探（见下方的 broadcast 监听）
   }, [serviceChangedTick]);
 
-  // 设置页 toggle 任何本地服务（GPT-SoVITS / 网易 / IndexTTS）→ 广播 service-enabled-changed。
+  // Irodori 的探活：第四个独立运行时（按需启动，:9884），策略与上面两个相同。
+  // 「incomplete」在这里是**真信号**：服务活着但没 CUDA（环境装错）或训练档基座没下，
+  // 侧栏文案分别指向 irodori:check 与 irodori:weights -- --training。
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const startedAt = Date.now();
+
+    const probe = async () => {
+      let nextState: ModuleState = 'offline';
+      try {
+        const supervisor = await runtimeServiceApi.state('irodori');
+        if (cancelled) return;
+        if (supervisor.enabled) {
+          const irodoriHealth = await irodoriApi.health();
+          if (cancelled) return;
+          nextState = irodoriHealth.cuda && irodoriHealth.weights.ready ? 'ready' : 'incomplete';
+        }
+      } catch {
+        // supervisor 也拿不到：保持 offline
+      }
+      if (cancelled) return;
+      setModuleStates((prev) => ({ ...prev, irodoriTts: nextState }));
+
+      if (nextState === 'ready') {
+        timer = window.setTimeout(probe, SOVITS_READY_POLL_MS);
+        return;
+      }
+      const wait = Date.now() - startedAt < SOVITS_FAST_WINDOW_MS ? SOVITS_FAST_RETRY_MS : SOVITS_SLOW_RETRY_MS;
+      timer = window.setTimeout(probe, wait);
+    };
+
+    void probe();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [serviceChangedTick]);
+
+  // 设置页 toggle 任何本地服务（GPT-SoVITS / 网易 / IndexTTS / Irodori）→ 广播 service-enabled-changed。
   // 上面两个探活 effect 都通过 serviceChangedTick 订阅，看到值变了立刻重启、不必等定时器窗。
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -466,7 +528,11 @@ function App() {
                   ? 'Confucius4-R2T2 · netease 本地'
                   : active === 'indextts-tts'
                     ? 'IndexTTS-2.5 · indextts 本地'
-                    : '客户端配置';
+                    : active === 'irodori-tts'
+                      ? 'Irodori-TTS · irodori 本地'
+                      : active === 'irodori-training'
+                        ? 'Irodori SI 训练 · irodori 本地'
+                        : '客户端配置';
     return { ...meta, model };
   }, [active, settings.providerId]);
 
@@ -560,6 +626,10 @@ function App() {
         ) : null}
         {active === 'netease-asr' ? <NeteaseAsrPage onFallback={() => setActive('asr')} /> : null}
         {active === 'indextts-tts' ? <IndexttsTtsPage /> : null}
+        {active === 'irodori-tts' ? <IrodoriTtsPage /> : null}
+        {active === 'irodori-training' ? (
+          <IrodoriTrainingPage onGoSynth={() => setActive('irodori-tts')} />
+        ) : null}
 
         {active === 'settings' ? (
           <SettingsPage

@@ -53,7 +53,11 @@ export type NavKey =
   /** 网易模块（Confucius4-R2T2）：流式 / 离线转写 */
   | 'netease-asr'
   /** IndexTTS-2.5：本地零样本合成（情感向量 / 语速可控） */
-  | 'indextts-tts';
+  | 'indextts-tts'
+  /** Irodori-TTS：日语特化合成（emoji 风格 + 固化音色） */
+  | 'irodori-tts'
+  /** Irodori 音色固化训练：数据 → 整备 → SI 训练 */
+  | 'irodori-training';
 
 /**
  * 本地模型服务的连接状态。

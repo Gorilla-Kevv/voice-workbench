@@ -806,6 +806,28 @@
     （阶段 28 净占画像，每样本约 130MB），下限 4200MB（基座本体就约 3GB）。
     推论：**凡是「会随请求参数变化」的资源需求，门槛都得参数化**，固定值只会误伤或放行错。
 
+73. **「同名同形」的两个 JobStore：共用 hook，不共用组件（阶段 30-7）**
+    GPT-SoVITS 的 `/v1/jobs` 与 Irodori 的 `/v1/jobs` 字段几乎一样（id/state/progress/logs），
+    很容易想「直接复用 `JobPanel`」。但两者的服务不同，且 Irodori 多了业务阶段
+    （plan / train / save / register）—— 硬塞进去就得往 `SovitsJob` 上挂一堆可选字段，
+    **两边都变脏**。现在的切法是：轮询抽成 `useIrodoriJob` hook（同一个问题，只写一遍），
+    面板各写各的（不同的数据，别互相迁就）。
+    判据：**「逻辑一样」与「数据一样」是两件事** —— 前者抽函数，后者才共组件。
+
+74. **「重试」要用失败那次的请求，不是当前表单（阶段 30-7）**
+    撞长尾后的「重试（降步）」按钮，我第一版是拿当前表单重新构造 payload
+    （`synth(suggestedSteps)`）—— 用户在失败后改过文本或参数的话，点「重试」
+    会**静默换成一条新请求**，他还以为重试的是刚才那条。
+    正确做法：把失败那次的 payload 存下来（`timedOutPayload`），重试时只在它上面改
+    服务端建议的那一个字段（`withLowerSteps`）。
+    推论：**重试 = 复现失败时的输入 + 最小改动**，不是「再点一次提交」。
+
+75. **服务 id 这类「会拼进 URL」的字符串，要收敛成联合类型（阶段 30-7）**
+    `runtimeServiceApi.state('irodori')` 如果写成 `string`，名字拼错只会得到一个 404，
+    而且要等运行时才发现。收敛成 `type RuntimeServiceId = 'netease' | 'indextts' | 'irodori'`
+    之后，新增第五个服务时**所有调用点一起报错**，改起来是编译期的事。
+    同理也适用于「引擎名」「任务档位」这类会拼进路径或当键用的字符串。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -818,7 +840,7 @@
 | GPT-SoVITS 启停接口 | `GET/POST /api/sovits/service`（`{"enabled":true}`）；开关存在 `server/.data/sovits-service.json` |
 | IndexTTS 服务 | `npm run dev:indextts`（第三个 Python 运行时：`indextts/upstream/.venv`，py3.11 + torch 2.8 cu128；端口 **9883**）；体检 `npm run indextts:check`；**阶段 26 起全链路已接入**（网关 `/api/indextts/*` 透传 + 前端「IndexTTS · 情感可控」页）；**设置页开关**（`GET/POST /api/indextts/service`，默认关） |
 | IndexTTS 方案文档 | `docs/INDEX-TTS-INTEGRATION.md`（8 阶段计划；阶段 0/1/2 完成于 25，合成实测 + 透传 + 前端 + 资源管控完成于 26） |
-| Irodori 服务 | `npm run dev:irodori`（第四个 Python 运行时：`irodori/.venv`，py3.12 + torch 2.10 cu128；端口 **9884**）；体检 `npm run irodori:check`；权重 `npm run irodori:weights`（`-- --training` 下训练档 bf16 2.9GB，30-5 前必须）；**30-2 起推理链路可用**（网关 `/api/irodori/*` 透传 + runtime/arbiter/preload 记账）；**启停接口已就位但设置页还没接 UI**（`GET/POST /api/irodori/service`，supervisor 默认停用；接 UI 是 30-7 的活）；**前端页也在 30-7**，当前用 curl/脚本调；推理链路验证 `python .tmp/verify_irodori_infer.py [--gateway]`（真合成段需显存 ≥4700MB） |
+| Irodori 服务 | `npm run dev:irodori`（第四个 Python 运行时：`irodori/.venv`，py3.12 + torch 2.10 cu128；端口 **9884**）；体检 `npm run irodori:check`；权重 `npm run irodori:weights`（`-- --training` 下训练档 bf16 2.9GB，**已下载完成**）；**30-2 起推理链路可用**（网关 `/api/irodori/*` 透传 + runtime/arbiter/preload 记账）；**30-7 起设置页有开关**（`GET/POST /api/irodori/service`，supervisor 默认停用）；前端两个页面（日语合成 / 音色固化训练）**已可用**，使用说明见 `docs/IRODORI-INTEGRATION.md`；推理链路验证 `python .tmp/verify_irodori_infer.py [--gateway]`（真合成段需显存 ≥4700MB）；训练链路验证 `python .tmp/verify_irodori_train_s3.py`（离线 68/68）与 `python .tmp/smoke_irodori_s3.py`（真机闭环，需空闲显存 ≥4.7GB） |
 | 启动预加载 | `GET /api/preload/catalog`（各模型显存代价 + 当前余量）、`POST /api/preload`（执行）、`PUT /api/preload/preference`；偏好存 `server/.data/preload.json` |
 | 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`） |
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]` |
@@ -949,6 +971,15 @@
   catalog 训练段常量、`config` 新增 prepare 显存档（实测 codec 483MB，编码峰值 30s→2285MB，取 2500）。
   验证 **63/63**（含真机：20 条 → `written=20`；破坏解码全失败 / 部分失败均 422 且不留半份 manifest；
   取消留痕清理；接口层 plan→prepare→轮询 succeeded）。新增坑 66/67/68。
+- **Irodori 前端完整化已交付（阶段 30-7，10.17 BY Qoder）**：`IrodoriTtsPage`（日语合成：emoji 风格标记 +
+  caption 预设 + 步数/调度/时长系数/换 seed + **参考三选一**（固化音色 `/` 音色库 `/` 本地路径）+ 结果堆叠；
+  撞长尾时按**失败那一次的请求** + 服务端建议步数重试）、`IrodoriTrainingPage`（三步向导：数据 → 整备 → 训练；
+  换来源自动体检、自动/手动 batch、四阶段任务面板 + ETA + 取消、训完给 `speaker_id` 并可跳合成页）、
+  `IrodoriJobPanel` + `useIrodoriJob`（轮询逻辑抽成 hook，与 GPT-SoVITS 的 `JobPanel` 共用思路不共用组件 ——
+  两个 JobStore 在不同服务里，字段只到「同名同形」）、设置页 Irodori 服务开关、
+  资源账本补 `irodori-tts` / `irodori-training` 两档、新增 `docs/IRODORI-INTEGRATION.md`。
+  typecheck / eslint / build 全过；网关联调冒烟通过（health / service / datasets / speakers / plan / auto_batch）。
+  **未做**：浏览器整链路走查（本轮显存只剩 2.1~2.4GB，合成与训练都进不去）与耳朵验收 —— 留给用户在显存空闲时补。
 - **Irodori 训练 S3 已交付（阶段 30-6，10.16 BY Qoder）**：`si_train.py` 把上游 `train.py`
   **当子进程跑**（它只有 `if __name__ == "__main__"` 一个入口，且取消需要干净的进程边界）；
   四阶段 job（`plan` 自动 batch → `train` 逐行解析 stdout 出进度/ETA → `save` 收产物并断言 →
@@ -981,7 +1012,7 @@
 | 低 | 变声 / 翻唱两页的**合成下拉**换源到 `/api/models` | 阶段 34 有意留后（无功能收益 + 要动已验证的转换主链路），建议与「变声 / 翻唱真机加载验证」同一轮做。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
 | 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
 | 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
-| **中** | ~~阶段 30-6（训练 S3）~~ **已完成（10.16）**；下一小段 **阶段 30-7（前端完整化）** | 30-7：`IrodoriTtsPage` + `IrodoriTrainingPage`（三步向导 + JobStore 进度/取消/ETA + 「重试（降步）」按钮）+ 设置页服务开关 + 预加载账本回填 + 浏览器走查。**遗留给用户的耳朵验收**：本次 100 步产出的音色像不像参考人（数据只有 6 条同一句的短片段，只证明链路通）。方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §8 与 §9 |
+| **中** | ~~阶段 30-7（前端完整化）~~ **已完成（10.17）**；剩余 **阶段 30 收尾** | ① 浏览器整链路走查（未启动 → 启动 → 合成 → 训练 → 固化 → 复用），本轮显存不够（只剩 2.1~2.4GB）没做成；② Irodori 接入资源仲裁器（`FocusEngine` 补 `irodori-tts`，资源卡的「集中资源」按钮才对它有效）；③ 预加载账本里 Irodori 条目确认。**耳朵验收仍欠着**：100 步产出的音色像不像本人（产物在 `irodori/.data/speakers/`）。使用说明见 `docs/IRODORI-INTEGRATION.md`，方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §8 与 §9 |
 | 中 | ~~Irodori 30-2 的 C 段真机合成补测~~ **已完成（10.13 19:00）** | `verify_irodori_infer.py` 39/40（唯一失败是已修正口径的 RTF 阈值）。注：C 段需要显存 ≥4700MB，桌面占用时脚本会如实跳过 |
 | 低 | ~~Irodori 训练档权重下载~~ | **已完成**（bf16 基座 3.06GB 已落 `irodori/models/irodori_bf16/`，字节数与清单一致）。30-6 真机训练就是用这份基座跑的 |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
@@ -1032,3 +1063,5 @@
 > 本次文档更新时间：10.14 03:38 [BY Qoder]（阶段 30-5：训练 S1+S2 —— 三来源数据整备 + `DACVAECodec` latent 编码 + **manifest 非空硬断言**（`TRAIN_MANIFEST_EMPTY`，部分失败与全失败同等处理）+ JobStore + 训练五端点（S3 明确 501）。验证 63/63 含真机。新增坑 66/67/68：静默跳过的批处理要有自己的计数断言、垫片要在每个入口都装、进目录名的 id 要显式拒绝而非过滤）
 
 > 本次文档更新时间：10.16 04:25 [BY Qoder]（阶段 30-6：训练 S3——上游 train.py 走子进程 + 自动 batch 探测 + 四阶段 job（plan/train/save/register）+ 产物读回校验 + 音色库登记 + /v1/train/auto_batch；真机闭环已跑通（整备 6 条 → 训 100 步 loss 0.91→0.70 → speaker_id 合成 4.32s/48kHz）；离线 68/68。新增坑 69~72）
+
+> 本次文档更新时间：10.17 02:05 [BY Qoder]（阶段 30-7：Irodori 前端完整化——日语合成页（emoji/caption/参考三选一/护栏重试）+ 音色固化训练页（三步向导 + 自动体检 + 任务面板 ETA/取消）+ 设置页服务开关 + 资源账本两档 + docs/IRODORI-INTEGRATION.md；typecheck/eslint/build 全过，网关联调冒烟通过；新增坑 73~75）
