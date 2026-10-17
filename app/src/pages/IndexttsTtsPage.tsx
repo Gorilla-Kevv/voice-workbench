@@ -9,6 +9,7 @@ import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
+import { TermTip } from '@/components/features/TermTip';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
@@ -517,7 +518,7 @@ export function IndexttsTtsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>时长系数（语速）：{durationFactor.toFixed(2)}（小 = 快，大 = 慢）</Label>
+                <Label><TermTip term="时长系数">时长系数（语速）</TermTip>：{durationFactor.toFixed(2)}（小 = 快，大 = 慢）</Label>
                 <Slider
                   value={[durationFactor]}
                   onValueChange={([value]) => setDurationFactor(value ?? 1)}
@@ -575,12 +576,17 @@ export function IndexttsTtsPage() {
                       />
                     </div>
                   ))}
-                  <p className="text-[11px] text-muted-foreground sm:col-span-2">全 0 时等同「跟随参考音频」。多维可同时给，上游会归一。</p>
+                  <p className="text-[11px] text-muted-foreground sm:col-span-2">
+                    <TermTip term="8 维情感向量">8 维情感向量</TermTip>：全 0 时等同「跟随参考音频」。多维可同时给，上游会归一。
+                  </p>
                 </div>
               ) : null}
 
               {emoMode === 'audio' ? (
                 <div className="space-y-2">
+                  <p className="text-[11px] text-muted-foreground">
+                    <TermTip term="情感参考音频">情感参考音频</TermTip>只借「情绪」，不决定音色——音色仍由上方的参考音频决定。
+                  </p>
                   <input
                     ref={emoAudioInputRef}
                     id="indextts-emo-file"
@@ -604,7 +610,7 @@ export function IndexttsTtsPage() {
                     {emoFile ? `${emoFile.name}（${(emoFile.size / 1024 / 1024).toFixed(2)} MB）` : '点击选择或拖入一段带情绪的参考音频'}
                   </Label>
                   <div className="space-y-1">
-                    <Label className="text-xs">情感强度（emo_alpha）：{emoAlpha.toFixed(2)}</Label>
+                    <Label className="text-xs"><TermTip term="情感强度（emo_alpha）">情感强度（emo_alpha）</TermTip>：{emoAlpha.toFixed(2)}</Label>
                     <Slider
                       value={[emoAlpha]}
                       onValueChange={([value]) => setEmoAlpha(value ?? 0.65)}

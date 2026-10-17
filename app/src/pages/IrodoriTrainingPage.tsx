@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { TermTip } from '@/components/features/TermTip';
 import { ErrorAlert } from '@/components/features/ErrorAlert';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { IrodoriJobPanel } from '@/components/features/IrodoriJobPanel';
@@ -383,6 +384,9 @@ export function IrodoriTrainingPage({ onGoSynth }: { onGoSynth?: () => void }) {
                     ))}
                   </ul>
                 ) : null}
+                <p className="text-[11px] text-muted-foreground">
+                  <TermTip term="数据整备">数据整备</TermTip>会把每条音频解码并编码成 latent，全部成功才产出可训练的数据集。
+                </p>
                 <Button
                   className="w-full"
                   disabled={!plan.ready_to_prepare || prepareJobId !== null}
@@ -410,13 +414,13 @@ export function IrodoriTrainingPage({ onGoSynth }: { onGoSynth?: () => void }) {
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-2 text-base">
               <FlaskConical className="size-4 text-violet-600 dark:text-violet-400" />
-              第三步 · Speaker Inversion 训练
+              第三步 · <TermTip term="Speaker Inversion">Speaker Inversion</TermTip> 训练
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>步数（冒烟小档 {training?.smoke_steps ?? 400} 步）</Label>
+                <Label><TermTip term="训练步数">步数</TermTip>（冒烟小档 {training?.smoke_steps ?? 400} 步）</Label>
                 <Select value={String(effectiveSteps)} onValueChange={(value) => setSteps(Number(value))}>
                   <SelectTrigger className="h-9">
                     <SelectValue />
@@ -438,7 +442,7 @@ export function IrodoriTrainingPage({ onGoSynth }: { onGoSynth?: () => void }) {
               </div>
 
               <div className="space-y-2">
-                <Label>batch</Label>
+                <Label><TermTip term="批大小（batch）">batch</TermTip></Label>
                 <Tabs value={batchMode} onValueChange={(value) => setBatchMode(value as 'auto' | 'manual')}>
                   <TabsList className="grid w-full grid-cols-2">
                     <TabsTrigger value="auto">自动探测</TabsTrigger>
@@ -462,7 +466,7 @@ export function IrodoriTrainingPage({ onGoSynth }: { onGoSynth?: () => void }) {
                   </Select>
                 ) : (
                   <p className="text-[11px] text-muted-foreground">
-                    开训前真跑两步量显存再定（现在估 {training?.batch.batch ?? '—'}，
+                    <TermTip term="自动 batch 探测">自动探测</TermTip>：开训前真跑两步量显存再定（现在估 {training?.batch.batch ?? '—'}，
                     来源 {training?.batch.source ?? '—'}）。显存紧张时改「手动指定」降档。
                   </p>
                 )}

@@ -13,6 +13,7 @@ import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { TermTip } from '@/components/features/TermTip';
 import { Slider } from '@/components/ui/slider';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { ErrorAlert } from '@/components/features/ErrorAlert';
@@ -469,7 +470,7 @@ export function IrodoriTtsPage() {
               <div className="space-y-2">
                 <Label className="flex items-center gap-1.5">
                   <Sparkles className="size-3.5" />
-                  emoji 风格标记
+                  <TermTip term="emoji 风格标记">emoji 风格标记</TermTip>
                 </Label>
                 <div className="flex flex-wrap gap-1.5">
                   {emojiItems.map((item) => (
@@ -489,7 +490,7 @@ export function IrodoriTtsPage() {
             ) : null}
 
             <div className="space-y-2">
-              <Label>caption（只描述情绪 / 环境 / 语域，不要描述音色）</Label>
+              <Label><TermTip term="caption">caption</TermTip>（只描述情绪 / 环境 / 语域，不要描述音色）</Label>
               <div className="flex gap-2">
                 <Select
                   value={caption}
@@ -529,7 +530,7 @@ export function IrodoriTtsPage() {
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>步数</Label>
+                <Label><TermTip term="采样步数">步数</TermTip></Label>
                 <Select value={String(effectiveSteps)} onValueChange={(value) => setSteps(Number(value))}>
                   <SelectTrigger className="h-9">
                     <SelectValue />
@@ -549,7 +550,7 @@ export function IrodoriTtsPage() {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label>采样调度</Label>
+                <Label><TermTip term="采样调度">采样调度</TermTip></Label>
                 <Select value={schedule} onValueChange={(value) => setSchedule(value as 'linear' | 'sway')}>
                   <SelectTrigger className="h-9">
                     <SelectValue />
@@ -567,7 +568,7 @@ export function IrodoriTtsPage() {
 
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label>时长系数</Label>
+                <Label><TermTip term="时长系数">时长系数</TermTip></Label>
                 <span className="text-[11px] tabular-nums text-muted-foreground">
                   {effectiveDuration.toFixed(2)}
                 </span>
@@ -655,7 +656,8 @@ export function IrodoriTtsPage() {
                 </Select>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  还没有固化音色：到「日语 · 音色固化训练」页跑一次 SI 训练即可（训完这里会自动出现）。
+                  还没有<TermTip term="固化音色">固化音色</TermTip>：到「日语 · 音色固化训练」页跑一次
+                  {' '}<TermTip term="Speaker Inversion">SI 训练</TermTip> 即可（训完这里会自动出现）。
                 </p>
               )
             ) : null}
