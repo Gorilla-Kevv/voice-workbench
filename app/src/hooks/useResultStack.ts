@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
-import { createId } from '@/hooks/useSynthesis';
 
 /**
  * 一个页面内「多条结果」的容器：新结果进栈，旧的按原样留在列表里可回看，
@@ -125,4 +124,10 @@ export function useResultStack<T>(options: UseResultStackOptions<T> = {}) {
   }, []);
 
   return { entries, push, remove, clear };
+}
+
+/** 生成本地唯一 ID（原住 useSynthesis；随结果栈底座搬到这里，避免两 hook 循环依赖） */
+export function createId(): string {
+  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }

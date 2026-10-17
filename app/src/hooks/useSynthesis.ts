@@ -1,8 +1,12 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { RequestError } from '@/lib/api';
 import { getProvider } from '@/lib/providers/registry';
 import { base64ToBlob } from '@/lib/audio';
 import type { RenderedSegment, SynthesisResult, SynthesizePayload } from '@/types';
+import { createId, useResultStack } from '@/hooks/useResultStack';
+
+// 重新导出：老的调用方一直从这儿拿 createId（hooks/useResultStack 是真正的定义处）
+export { createId };
 
 interface ResultMeta {
   /** 历史记录中展示的音色名称 */
@@ -37,8 +41,17 @@ export type SynthesisController = ReturnType<typeof useSynthesis>;
 
 export function useSynthesis(options: UseSynthesisOptions = {}) {
   const [state, setState] = useState<SubmissionState>({ loading: false, error: null, elapsed: 0 });
-  // 多条结果并存：新结果进栈，旧的留在列表里可回看（不再被下一条冲掉）
-  const [results, setResults] = useState<SynthesisResult[]>([]);
+  /*
+   * 结果走全站统一的结果栈底座（useResultStack）：
+   * - 模块级缓存让「切到别的页面再切回来」结果仍在 —— App.tsx 按导航键条件渲染，纯 state 会被整页卸载清掉；
+   * - 结果里全是 Blob 播放地址，刷新后必然失效，所以**不传 serialize**、不做 sessionStorage 持久化
+   *   （坑 18：Blob 类结果配 serialize 是必坑项）；刷新后的回看由 IndexedDB 历史记录承担；
+   * - 淘汰 / 删除时由 onEvict 释放播放地址，行为与旧实现等价，只是把账交给底座管。
+   */
+  const resultStack = useResultStack<SynthesisResult>({ storageKey: 'synthesis-results', onEvict: releaseResult });
+  // push/remove/clear 都是底座内部 useCallback 的稳定引用，解构出来既好用也让 deps 静态可读
+  const { push: pushResult, entries: stackEntries, remove: removeStackEntry, clear: clearStack } = resultStack;
+  const results = useMemo(() => stackEntries.map((entry) => entry.item), [stackEntries]);
   const timerRef = useRef<number | null>(null);
   const lastPayloadRef = useRef<{ payload: SynthesizePayload; meta: ResultMeta } | null>(null);
   // 用 ref 持有回调，避免调用方每次渲染重建对象导致 run 频繁重建
@@ -106,11 +119,7 @@ export function useSynthesis(options: UseSynthesisOptions = {}) {
         };
 
         // 入栈而不是替换：旧结果保留，只有用户显式删除或超出上限时才释放它的 Blob 地址
-        setResults((prev) => {
-          const next = [synthesisResult, ...prev];
-          next.slice(MAX_RESULTS).forEach((old) => releaseResult(old));
-          return next.slice(0, MAX_RESULTS);
-        });
+        pushResult(synthesisResult);
         setState({ loading: false, error: null, elapsed: 0 });
         optionsRef.current.onSuccess?.(synthesisResult);
         return synthesisResult;
@@ -129,7 +138,7 @@ export function useSynthesis(options: UseSynthesisOptions = {}) {
         stopTimer();
       }
     },
-    [stopTimer],
+    [stopTimer, pushResult],
   );
 
   /** 使用上次参数重新发起请求，用于错误重试 */
@@ -141,21 +150,17 @@ export function useSynthesis(options: UseSynthesisOptions = {}) {
 
   const clearError = useCallback(() => setState((prev) => ({ ...prev, error: null })), []);
 
-  /** 删除单条结果（会释放它的临时播放地址） */
-  const removeResult = useCallback((id: string) => {
-    setResults((prev) => {
-      const target = prev.find((item) => item.id === id);
-      if (target) releaseResult(target);
-      return prev.filter((item) => item.id !== id);
-    });
-  }, []);
-
-  const clearResults = useCallback(() => {
-    setResults((prev) => {
-      prev.forEach(releaseResult);
-      return [];
-    });
-  }, []);
+  /**
+   * 删除单条结果。对外仍按 SynthesisResult.id 寻址（ResultPanel 等调用方只认识它），
+   * 在这里翻译成结果栈的 entry id。
+   */
+  const removeResult = useCallback(
+    (id: string) => {
+      const entry = stackEntries.find((item) => item.item.id === id);
+      if (entry) removeStackEntry(entry.id);
+    },
+    [stackEntries, removeStackEntry],
+  );
 
   return {
     ...state,
@@ -166,20 +171,11 @@ export function useSynthesis(options: UseSynthesisOptions = {}) {
     retry,
     clearError,
     removeResult,
-    clearResults,
+    clearResults: clearStack,
   };
 }
-
-/** 一个页面里最多保留多少条结果（超出丢最旧的） */
-const MAX_RESULTS = 12;
 
 /** 释放某条结果占用的临时播放地址 */
 function releaseResult(result: SynthesisResult): void {
   result.segments.forEach((segment) => URL.revokeObjectURL(segment.url));
-}
-
-/** 生成本地唯一 ID */
-export function createId(): string {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
