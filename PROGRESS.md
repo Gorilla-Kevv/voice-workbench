@@ -3226,3 +3226,30 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
 - 建议级遗留（不阻塞）：TermTip 补 Indextts / Irodori 页；`SynthesisPage` 底座统一。
 
 - 本次文档更新时间：10.17 15:41 [BY ZCode]（阶段 35：全站一致性审查——9 维度巡检 16 页，修 1 处交互违规 + 8 处过时文案；2 项建议级记录在案）
+
+## 阶段 35补1 —— 工程技能配置 + 工作池 triage + ready-for-agent 清空（#6/#7/#8）[计划时间：10.17 15:50 BY ZCode][完成时间：10.17 22:20 BY ZCode]
+
+- 分支：feature/vc-svc
+- 背景：用户授权自动推进 tracker 工作池（「从现在开始帮我自动跑这个 tracker 的票……从 ready-for-agent」）。
+
+### 已完成
+
+| 项 | 内容 |
+| --- | --- |
+| 技能配置 | `/setup-matt-pocock-skills`：仓库根新建 `AGENTS.md`（Agent skills 段）+ `docs/agents/{issue-tracker,triage-labels,domain}.md`；GitHub 建 4 个 triage 标签（480fbc9） |
+| triage | 工作池 0 → 11 张票（#1~#5 ready-for-human 真机走查 / #6~#8 ready-for-agent / #9~#11 needs-triage），HANDOFF 下一步表头加指针（61e9f17） |
+| **#6** TermTip 补三页 | glossary 新增 IndexTTS/Irodori 特化 13 条（释义按坑 33 实测与 30 系列口径，零编造）；IndexTTS 页 4 处 / Irodori 合成页 7 处 / 训练页 5 处接入；「时长系数」两页共用一键、batch 复用既有条目（0422533，已关票） |
+| **#7** SynthesisPage 结果链路统一 | `useSynthesis` 结果段换 `useResultStack`：模块级缓存使「切页返回结果仍在」（行为升级），不传 serialize（含 Blob，坑 18），对外契约零变化、三 controller 与 ResultPanel 四引用方无感；createId 搬进 useResultStack 避免循环依赖（25429a2，已关票；MiMo 真合成冒烟需用户 key → 追加进 #1 走查清单） |
+| **#8** ddsp-svc 旧根收口 | 引擎 `model_dirs()` 加规范根第一优先（逐根闭环）+ `svc_models_dir` 写入根 + **上传落盘同步改新根**（否则新产物又落回旧根）；真迁移执行：smoke（219MB，.pt+config.yaml 成对）迁入 `models/ddsp-svc/`，旧根清空；双侧实测一致（网关 legacy=false / 引擎 catalog 从规范根读）；GPU 加载被显存准入如实拦（2686<3584MB，正确行为，留 #4）（ccdad77，已关票，回滚说明在票内） |
+
+### 测试结果
+
+- 每票独立验证：typecheck / eslint / vite build 全过；#8 另做整合包解释器库函数直调复核与 19881 端口 HTTP 实测。
+- 评审：implement 流程收尾 code-review 两轴（#6/#7/#8 均 0 硬违规；子代理被平台临时拦截时改为分轴自查）。
+
+### 未完成 / 风险
+
+- **Irodori 真机训练闭环（#5 的自动可跑部分）仍未做成**：显存窗口出现过一次（free 5080MB），确认时已回落 2773MB（桌面负载常态占 ~5.4GB）；已挂后台自动监控（30s 轮询，连续两次 ≥4700MB 才跑，防尖峰误判）——窗口一开自动跑整备→12 步训练→speaker_id 合成并回填 #5。
+- #9~#11 needs-triage 三票按规范**不替用户拍板**（#9 条件依赖 #4 真机验证、#10 需立项拷问、#11 用户曾叫停）。
+
+- 本次文档更新时间：10.17 22:20 [BY ZCode]（阶段 35补1：技能配置 + triage 11 票 + ready-for-agent 三票清空；真机训练闭环挂后台监控等窗口）

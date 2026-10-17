@@ -1101,3 +1101,5 @@
 > 本次文档更新时间：10.17 15:25 [BY ZCode]（阶段 30-8：资源仲裁接完——前端 FocusEngine/service 类型补齐、Irodori 两页开跑前 focusBeforeRun、ResourceBudget「集中资源」对 Irodori 生效、预加载账本类型同步；**修掉 preload warmup `AbortSignal.timeout(0)` 必中止的真 bug**（启动预加载的网络 warmup 此前全部必失败）；网关运行时冒烟通过；新增坑 77。阶段 30 代码全部收口，剩用户真机走查与耳朵验收）
 
 > 本次文档更新时间：10.17 15:41 [BY ZCode]（阶段 35：全站板块/页面一致性与规范审查——16 页 × 9 维度静态巡检；修 Irodori 训练页上传裸 input 未走 useFileDrop（坑 25 违规，30-7 遗漏）+ 8 处用户可见过时文案（「历史记录」→「产出记录」×6、设置页「两套模型」页头描述、「历史记录保留条数」→「云端记录保留条数」）；建议级 2 项在案（TermTip 补 Indextts/Irodori 页、SynthesisPage 旧 ResultPanel 底座统一）；纯前端改动，typecheck/eslint/build 全过）
+
+> 本次文档更新时间：10.17 22:20 [BY ZCode]（阶段 35补1：/setup-matt-pocock-skills 落地 + 工作池 triage 11 票（#1~#11，HANDOFF 下一步表已收敛至 GitHub Issues）+ ready-for-agent 三票清空——#6 TermTip 补三页 13 词条、#7 SynthesisPage 结果链路统一 useResultStack（切页返回不丢）、#8 ddsp-svc 旧根收口真迁移完成（上传落盘同步改新根）；真机训练闭环挂后台显存监控（≥4700MB 自动跑，结果 .tmp/autosmoke-result2.txt））
