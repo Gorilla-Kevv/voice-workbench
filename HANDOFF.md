@@ -1095,3 +1095,5 @@
 > 本次文档更新时间：10.17 02:05 [BY Qoder]（阶段 30-7：Irodori 前端完整化——日语合成页（emoji/caption/参考三选一/护栏重试）+ 音色固化训练页（三步向导 + 自动体检 + 任务面板 ETA/取消）+ 设置页服务开关 + 资源账本两档 + docs/IRODORI-INTEGRATION.md；typecheck/eslint/build 全过，网关联调冒烟通过；新增坑 73~75）
 
 > 本次文档更新时间：10.17 15:25 [BY ZCode]（阶段 30-8：资源仲裁接完——前端 FocusEngine/service 类型补齐、Irodori 两页开跑前 focusBeforeRun、ResourceBudget「集中资源」对 Irodori 生效、预加载账本类型同步；**修掉 preload warmup `AbortSignal.timeout(0)` 必中止的真 bug**（启动预加载的网络 warmup 此前全部必失败）；网关运行时冒烟通过；新增坑 77。阶段 30 代码全部收口，剩用户真机走查与耳朵验收）
+
+> 本次文档更新时间：10.17 15:41 [BY ZCode]（阶段 35：全站板块/页面一致性与规范审查——16 页 × 9 维度静态巡检；修 Irodori 训练页上传裸 input 未走 useFileDrop（坑 25 违规，30-7 遗漏）+ 8 处用户可见过时文案（「历史记录」→「产出记录」×6、设置页「两套模型」页头描述、「历史记录保留条数」→「云端记录保留条数」）；建议级 2 项在案（TermTip 补 Indextts/Irodori 页、SynthesisPage 旧 ResultPanel 底座统一）；纯前端改动，typecheck/eslint/build 全过）

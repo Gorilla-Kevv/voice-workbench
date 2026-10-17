@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowRight,
   CheckCircle2,
@@ -21,6 +21,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RequestError } from '@/lib/errors';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { irodoriApi } from '@/lib/irodori';
+import { useFileDrop } from '@/hooks/useFileDrop';
 import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
 import type {
@@ -59,6 +60,15 @@ export function IrodoriTrainingPage({ onGoSynth }: { onGoSynth?: () => void }) {
   const [datasetId, setDatasetId] = useState('');
   const [uploadId, setUploadId] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+
+  // 语料上传走全站统一的拖拽底座（坑 25）：支持文件夹递归、accept 过滤、回填 input.files
+  const corpusInputRef = useRef<HTMLInputElement>(null);
+  const { dragging: corpusDragging, rootProps: corpusDropProps } = useFileDrop({
+    onFiles: (picked) => setFiles(picked),
+    multiple: true,
+    accept: '.wav,.mp3,.flac,.ogg,.m4a,.zip,.txt,.jsonl,.json',
+    inputRef: corpusInputRef,
+  });
 
   const [plan, setPlan] = useState<IrodoriTrainPlan | null>(null);
   const [planning, setPlanning] = useState(false);
@@ -307,15 +317,25 @@ export function IrodoriTrainingPage({ onGoSynth }: { onGoSynth?: () => void }) {
                     className="h-9 w-full rounded-md border bg-background px-3 text-sm"
                   />
                 </div>
-                <div className="space-y-2">
+                <div
+                  {...corpusDropProps}
+                  className={cn(
+                    'space-y-2 rounded-md border border-dashed p-3 transition-colors',
+                    corpusDragging && 'border-primary bg-primary/5',
+                  )}
+                >
                   <Label>音频（可含 .zip；转写用同名 .txt 或 metadata.jsonl）</Label>
                   <input
+                    ref={corpusInputRef}
                     type="file"
                     multiple
                     accept=".wav,.mp3,.flac,.ogg,.m4a,.zip,.txt,.jsonl,.json"
                     onChange={(event) => setFiles(Array.from(event.target.files ?? []))}
                     className="w-full text-xs file:mr-2 file:rounded-md file:border file:px-2 file:py-1 file:text-xs"
                   />
+                  <p className="text-[11px] text-muted-foreground">
+                    {corpusDragging ? '松开即加入列表（支持整个文件夹）' : '把文件或文件夹拖到这里，或点击上面按钮选择'}
+                  </p>
                   {files.length > 0 ? (
                     <p className="text-[11px] text-muted-foreground">已选 {files.length} 个文件</p>
                   ) : null}

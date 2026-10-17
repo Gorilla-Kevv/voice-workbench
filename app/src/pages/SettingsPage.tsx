@@ -1180,7 +1180,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
 
           <div className="space-y-2">
             <div className="flex items-center justify-between">
-              <Label className="text-sm">历史记录保留条数</Label>
+              <Label className="text-sm">云端记录保留条数</Label>
               <span className="text-xs tabular-nums text-muted-foreground">{settings.historyLimit} 条</span>
             </div>
             <Slider

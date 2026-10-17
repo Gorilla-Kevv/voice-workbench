@@ -3,6 +3,7 @@
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
 ## 进度看板
+- 最新完成：**阶段 35 = 全站板块/页面一致性与规范审查**（10.17 15:41 BY ZCode）—— 16 页 × 9 维度静态巡检（结果栏/拖拽/资源卡/停用态/过时文案/TermTip/硬编码/错误处理/层次）：修 1 处交互违规（Irodori 训练页上传接 `useFileDrop`，30-7 遗漏）+ 8 处用户可见过时文案（「历史记录」→「产出记录」×6、设置页「两套模型」描述、保留条数 Label）；2 项建议级在案（TermTip 补 Indextts/Irodori 页、SynthesisPage 旧底座统一）；typecheck/eslint/build 全过
 - 当前正在开发任务：**阶段 30（P0）+ 31（P1）+ 32（P2）+ 33（P3·部分）已完成** —— 音色模型统一管理「看得见 + 管得住 + 产出可查 + 体验收尾」：网关 `modelRegistry.ts` + `/api/models/*` 全套读写；RVC 多根递归扫描使可见模型 5 → 18；`weight_root` 改指模型自身目录让**嵌套模型可加载**；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`；**产出记录页取代历史记录**（三源合并：`GET /v1/jobs` + `/api/models/*` + 云端 IndexedDB）；阶段 33 补了**未识别文件提示**（散文件不再被静默丢弃）与**变声 / 翻唱两页模型库接统一数据源**，并给 ddsp-svc 补了两个兼容旧根避免模型消失
 - 最新完成：**阶段 29补2 = RVC 训练前端入口（T3）已落地**（10.12 13:47 BY Qoder）——「训练音色（RVC）」独立成卡，LoRA / 全量两条官方路径都在，全量表单带**提交前预检**；typecheck / eslint / vite build 全过，**真机冒烟待用户起服务走一遍**
 - 最新完成：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本官方底模 / 微调自训权重）已落地（10.12 14:45 BY Qoder）—— `SovitsVoicePicker` 加权重来源 Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`；typecheck / eslint / vite build 全过，**真机冒烟待用户**
@@ -3181,3 +3182,47 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
 新功能候选：阶段 30（Irodori，卡 4 个拍板问题）、DDSP-SVC 训练入口（P5）、`ddsp-svc` 旧根收口。
 
 - 本次文档更新时间：10.12 14:38
+
+## 阶段 35 —— 全站板块/页面一致性与规范审查（用户真机走查前的静态巡检）[计划时间：10.17 15:25 BY ZCode][完成时间：10.17 15:41 BY ZCode]
+
+- 分支：feature/vc-svc
+- 背景：用户 10.17 腾不出显存做真机走查，指示「先推进后续工作；没有下阶段任务就审查每个板块、页面规范是否一致，检查交互 / 标注梳理 / 层次结构问题」。
+
+### 审查维度与结论（16 页 × 9 个维度）
+
+| 维度 | 结论 |
+| --- | --- |
+| 结果栏底座（坑 18：统一 `useResultStack`） | 8 个合成/转换页全走统一底座；`SynthesisPage` 用旧 `ResultPanel` + `useSynthesis`（多结果 + 删除/清空功能等价，属历史底座并行，**不改**——收益低且要动已验证主链路，记录为架构债） |
+| 拖拽/上传（坑 25：统一 `useFileDrop`） | **发现 1 处违规并修复**：`IrodoriTrainingPage` 上传区是裸 `<input type=file>`（30-7 遗漏）——无拖拽、无文件夹递归、无回填；已接 `useFileDrop`（`multiple: true` + 虚线拖放区 + 拖拽高亮 + 「松开即加入（支持整个文件夹）」提示） |
+| 资源预估卡 | 8 个重 GPU 页面全覆盖；ASR / 音色设计 / 声音克隆页不依赖本地 GPU 或服务常驻，无需 |
+| 服务停用态 | GPT-SoVITS 依赖 5 页全接 `SovitsServiceNotice`；IndexTTS / Irodori 页有各自「启动服务」CTA；网易 ASR 页状态卡齐全（开发中说明置顶）；`AsrPage` 依赖常驻的 trainer 服务，无需停用态 |
+| 过时文案（阶段 32 改名「产出记录」后的残留） | **发现 8 处用户可见残留并全部修复**（见下表） |
+| 术语提示（TermTip） | 10 页已接；Indextts / Irodori×2 / VoiceClone / VoiceDesign / Outputs 未接——**建议级不动**（补术语要保证领域准确性，且这些页参数已有内联说明，留作后续打磨） |
+| 硬编码常量（坑 19：门槛在服务端） | Irodori 前端只有兜底常量（`IRODORI_FALLBACK_TIMEOUT_SEC=180`，注释写明真源在服务端护栏），合规 |
+| 错误处理 | 空 `catch` 抽查均为「列表刷新失败保持空态」类合理场景，主链路错误都转成带 `hint` 的 `RequestError` |
+| 层次结构 | 抽查 SettingsPage（CardTitle+CardDescription 规范）/ OutputsPage（列表页无卡片层级，合理）/ 各页 CardHeader 数量正常，无明显问题 |
+
+### 已修复（8 处文案 + 1 处交互）
+
+| 文件 | 改动 |
+| --- | --- |
+| `pages/IrodoriTrainingPage.tsx` | 上传区接 `useFileDrop`（交互一致性） |
+| `components/features/ResultPanel.tsx` | 结果面板提示「已保存到历史记录」→「产出记录」 |
+| `App.tsx` | ① 合成完成 toast「已保存到历史记录」→「已保存到产出记录」；② 设置页页头描述「配置两套模型…」→「本地四套服务（GPT-SoVITS / 网易 / IndexTTS / Irodori）与云端 MiMo 的开关、密钥、开机预加载与合成偏好」（原文停留在两套模型时代） |
+| `pages/VoiceClonePage.tsx` | 示例文本「可以在历史记录中随时回听」→「产出记录」 |
+| `lib/guides.ts` | FlowGuide 三处「历史记录」→「产出记录」（`page: 'history'` 导航键保留不动） |
+| `pages/SettingsPage.tsx` | 「历史记录保留条数」→「云端记录保留条数」（该项只管 IndexedDB，本地引擎产物在服务端 —— 坑 56 的口径） |
+| `lib/storage.ts` | 3 条 IndexedDB 错误消息去掉「历史」字样（会出现在 toast 里） |
+| `components/features/ErrorBoundary.tsx` | 「历史记录不受影响」→「产出记录不受影响」 |
+
+### 测试结果
+
+- `npm run typecheck` / `npx eslint`（8 个改动文件）/ `npx vite build` 全过。
+- 纯前端改动，接口零变化；Irodori 上传的拖拽真机验证（拖文件夹）本来就在「拖拽文件夹分支真机验证」清单里（阶段 24 遗留），本轮并入同一次走查即可。
+
+### 下一阶段入口
+
+- 阶段 30 的用户侧验证（整链路走查 + 耳朵验收 + 预加载首次真验证）——**合并本次 Irodori 上传拖拽验证一起走**。
+- 建议级遗留（不阻塞）：TermTip 补 Indextts / Irodori 页；`SynthesisPage` 底座统一。
+
+- 本次文档更新时间：10.17 15:41 [BY ZCode]（阶段 35：全站一致性审查——9 维度巡检 16 页，修 1 处交互违规 + 8 处过时文案；2 项建议级记录在案）

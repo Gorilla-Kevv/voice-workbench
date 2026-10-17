@@ -21,7 +21,7 @@ interface VoiceClonePageProps {
 /** 声音克隆：上传或录制样本复刻音色（mimo-v2.5-tts-voiceclone） */
 export function VoiceClonePage({ settings, controller, maxTextLength }: VoiceClonePageProps) {
   const [sample, setSample] = useState<VoiceSample | null>(null);
-  const [text, setText] = useState('这是一段使用克隆音色合成的示例语音，可以在历史记录中随时回听。');
+  const [text, setText] = useState('这是一段使用克隆音色合成的示例语音，可以在产出记录中随时回听。');
   const [instruction, setInstruction] = useState('');
 
   const handleSubmit = () => {

@@ -116,7 +116,7 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: 'Irodori · 音色固化训练',
     description: 'Speaker Inversion · 用同一个人的日语短句训出音色 embedding，之后合成不用再给参考音频',
   },
-  settings: { title: '设置', description: '配置两套模型的服务地址、密钥与合成偏好' },
+  settings: { title: '设置', description: '本地四套服务（GPT-SoVITS / 网易 / IndexTTS / Irodori）与云端 MiMo 的开关、密钥、开机预加载与合成偏好' },
 };
 
 /** 不依赖云端密钥的页面（走本地服务或纯客户端） */
@@ -224,7 +224,7 @@ function App() {
         return;
       }
       toast.success('语音合成完成', {
-        description: `${result.voiceLabel} · ${result.segmentCount} 段 · ${result.durationSec.toFixed(1)} 秒 · 已保存到历史记录`,
+        description: `${result.voiceLabel} · ${result.segmentCount} 段 · ${result.durationSec.toFixed(1)} 秒 · 已保存到产出记录`,
       });
     },
     [addHistory],

@@ -220,7 +220,7 @@ export function ResultPanel({
               }
             />
             <p className="text-[11px] text-muted-foreground">
-              多条结果按时间倒序保留，可展开回听旧结果；已自动保存到「历史记录」，可在其中长期回听与下载
+              多条结果按时间倒序保留，可展开回听旧结果；已自动保存到「产出记录」，可在其中长期回听与下载
             </p>
           </>
         ) : null}

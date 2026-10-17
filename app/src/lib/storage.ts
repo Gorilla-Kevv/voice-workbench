@@ -47,7 +47,7 @@ export async function saveRecord(record: HistoryRecord, blobs: Blob[]): Promise<
     tx.objectStore(STORE_HISTORY).put(record);
     tx.objectStore(STORE_AUDIO).put({ id: record.id, blobs });
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error('保存历史记录失败'));
+    tx.onerror = () => reject(tx.error ?? new Error('保存记录失败'));
   });
 }
 
@@ -90,7 +90,7 @@ export async function deleteRecord(id: string): Promise<void> {
     tx.objectStore(STORE_HISTORY).delete(id);
     tx.objectStore(STORE_AUDIO).delete(id);
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error('删除历史记录失败'));
+    tx.onerror = () => reject(tx.error ?? new Error('删除记录失败'));
   });
 }
 
@@ -102,7 +102,7 @@ export async function clearRecords(): Promise<void> {
     tx.objectStore(STORE_HISTORY).clear();
     tx.objectStore(STORE_AUDIO).clear();
     tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error ?? new Error('清空历史记录失败'));
+    tx.onerror = () => reject(tx.error ?? new Error('清空记录失败'));
   });
 }
 

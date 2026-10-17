@@ -103,7 +103,7 @@ export class AppErrorBoundary extends Component<Props, State> {
 
           <p className="text-xs leading-relaxed text-muted-foreground">
             重新加载无效时，多半是本地保存的配置有问题，用「重置本地配置后重载」即可
-            （只会清掉设置项，历史记录不受影响）。把上面的错误信息与浏览器控制台的
+            （只会清掉设置项，产出记录不受影响）。把上面的错误信息与浏览器控制台的
             完整日志一起反馈，能更快定位。
           </p>
         </div>
