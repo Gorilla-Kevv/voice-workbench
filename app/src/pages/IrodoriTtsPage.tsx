@@ -22,6 +22,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
+import { focusBeforeRun } from '@/lib/arbiter';
 import { irodoriApi, isIrodoriTimeout, irodoriRetrySuggestion, withLowerSteps } from '@/lib/irodori';
 import { notifyServiceEnabledChanged, runtimeServiceApi } from '@/lib/localService';
 import { voiceApi } from '@/lib/voices';
@@ -215,6 +216,8 @@ export function IrodoriTtsPage() {
     setLoading(true);
     void (async () => {
       try {
+        // 开跑前把本系统内其它服务的常驻模型让出去（仲裁失败不阻塞，准入由服务端把关）
+        void focusBeforeRun('irodori-tts', 3600);
         const payload = override ?? buildPayload();
         const response = await irodoriApi.synthesize(payload);
         setTimedOutPayload(null);
@@ -252,6 +255,8 @@ export function IrodoriTtsPage() {
   const warmup = async () => {
     setWarming(true);
     try {
+      // 载入显存前先让另一端把常驻模型卸掉（同 IndexTTS 页的 handleWarmup）
+      await focusBeforeRun('irodori-tts', 3600);
       await irodoriApi.warmup();
       setHealth(await irodoriApi.health());
       toast.success('模型已载入显存', { description: '之后的合成不再重复加载。' });

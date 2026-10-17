@@ -19,6 +19,7 @@ import { IrodoriJobPanel } from '@/components/features/IrodoriJobPanel';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { RequestError } from '@/lib/errors';
+import { focusBeforeRun } from '@/lib/arbiter';
 import { irodoriApi } from '@/lib/irodori';
 import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
@@ -165,6 +166,8 @@ export function IrodoriTrainingPage({ onGoSynth }: { onGoSynth?: () => void }) {
     setError(null);
     setTrainedSpeaker(null);
     try {
+      // 整备要编 latent，先让本系统内其它服务的常驻模型让位（irodori 自己的推理模型由服务端入队前卸载）
+      void focusBeforeRun('irodori-tts', 3600);
       const response = await irodoriApi.trainPrepare(planPayload);
       setPrepareJobId(response.job.id);
       toast.info('数据整备已入队', { description: '它会先卸载常驻模型，再把音频编成 latent。' });
@@ -202,6 +205,8 @@ export function IrodoriTrainingPage({ onGoSynth }: { onGoSynth?: () => void }) {
     setError(null);
     setTrainedSpeaker(null);
     try {
+      // 训练是小时级长任务，仲裁持有期给 6 小时（对齐 GPT-SoVITS 训练页），过期前任务早已收尾
+      void focusBeforeRun('irodori-training', 6 * 3600);
       const response = await irodoriApi.train({
         dataset_id: datasetId,
         steps: effectiveSteps,

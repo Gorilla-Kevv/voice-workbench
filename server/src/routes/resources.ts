@@ -17,7 +17,19 @@ import { resourceArbiter, type FocusEngine } from '../services/arbiter.js';
  */
 export const resourcesRouter = Router();
 
-const ENGINES: FocusEngine[] = ['netease-tts', 'netease-asr', 'indextts-tts', 'irodori-tts', 'sovits', 'training', 'rvc', 'svc', 'uvr5', 'asr'];
+const ENGINES: FocusEngine[] = [
+  'netease-tts',
+  'netease-asr',
+  'indextts-tts',
+  'irodori-tts',
+  'irodori-training',
+  'sovits',
+  'training',
+  'rvc',
+  'svc',
+  'uvr5',
+  'asr',
+];
 
 resourcesRouter.post('/focus', async (req, res) => {
   const engine = String(req.body?.engine ?? '') as FocusEngine;

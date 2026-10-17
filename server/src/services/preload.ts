@@ -44,11 +44,12 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
     label: '网易 Confucius4-TTS',
     vram_mb: 6144,
     warmup: async () => {
+      // 不传 signal = 真正的「不设超时」。别写 AbortSignal.timeout(0)：
+      // 那是「0ms 后中止」，实测首装请求 99ms 就被打断（TimeoutError），预加载必失败。
       await fetch(`${config.netease.baseUrl}/v1/confucius/warmup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
-        signal: AbortSignal.timeout(0), // 首次加载数十秒，不设超时
       });
     },
     release: async () => {
@@ -64,11 +65,11 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
     label: 'IndexTTS-2.5',
     vram_mb: 3072,
     warmup: async () => {
+      // 同上：不传 signal（首次装要跑辅助模型网络探测，实测约 4 分钟）
       await fetch(`${config.indextts.baseUrl}/v1/warmup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
-        signal: AbortSignal.timeout(0), // 首装要跑一遍辅助模型探测（实测约 4 分钟），不设超时
       });
     },
     release: async () => {
@@ -84,11 +85,11 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
     label: 'Irodori-TTS（日语）',
     vram_mb: 4700,
     warmup: async () => {
+      // 同上：不传 signal（实测加载 ~20s）
       await fetch(`${config.irodori.baseUrl}/v1/warmup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
-        signal: AbortSignal.timeout(0), // 实测加载 ~20s，不设超时
       });
     },
     release: async () => {

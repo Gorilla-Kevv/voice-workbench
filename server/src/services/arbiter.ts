@@ -26,7 +26,18 @@ import { logger } from '../lib/logger.js';
  */
 
 /** 本系统内的引擎标识 → 它属于哪个服务 */
-export type FocusEngine = 'netease-tts' | 'netease-asr' | 'indextts-tts' | 'irodori-tts' | 'sovits' | 'training' | 'rvc' | 'svc' | 'uvr5' | 'asr';
+export type FocusEngine =
+  | 'netease-tts'
+  | 'netease-asr'
+  | 'indextts-tts'
+  | 'irodori-tts'
+  | 'irodori-training'
+  | 'sovits'
+  | 'training'
+  | 'rvc'
+  | 'svc'
+  | 'uvr5'
+  | 'asr';
 
 type ServiceName = 'sovits' | 'netease' | 'indextts' | 'irodori';
 
@@ -44,7 +55,9 @@ const RELEASE_ENDPOINTS: Record<ServiceName, string[]> = {
 function serviceOf(engine: FocusEngine): ServiceName {
   if (engine === 'netease-tts' || engine === 'netease-asr') return 'netease';
   if (engine === 'indextts-tts') return 'indextts';
-  if (engine === 'irodori-tts') return 'irodori';
+  // 合成与训练共用一个 Irodori 服务；训练时它自己会卸掉本服务的推理模型（prepare/train 入队逻辑），
+  // 仲裁负责的是「另一端」三个服务
+  if (engine === 'irodori-tts' || engine === 'irodori-training') return 'irodori';
   return 'sovits';
 }
 

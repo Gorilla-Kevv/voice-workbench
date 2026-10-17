@@ -8,7 +8,7 @@ import { RequestError } from '@/lib/errors';
  * 选谁就等于把这块资源给谁（另一套会被让出）。
  */
 
-export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'sovits' | 'none';
+export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'irodori-tts' | 'sovits' | 'none';
 export type PreloadPreference = PreloadModel | 'ask';
 
 export interface PreloadModelInfo {

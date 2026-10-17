@@ -836,6 +836,15 @@
     教训：**「可滚动的外层」管的是整体放不下，「不可收缩的内层」管的是每块自己不变形**，
     两层都要显式声明，缺一个就会出现这种「元素互相叠画」的布局事故。
 
+77. **`AbortSignal.timeout(0)` 不是「不设超时」，是「0ms 后中止」（阶段 30-8 实测）**
+    `preload.ts` 三处 warmup（netease / indextts / irodori）写了 `signal: AbortSignal.timeout(0)`，
+    注释以为这是「不设超时」。Node 实测：3 秒才响应的请求在 **99ms** 就被 TimeoutError 打断 ——
+    也就是说**启动预加载里所有走网络的 warmup 全都必失败**（只有 sovits 走 supervisor 幸免），
+    此前没暴露只因预加载一直没被真用过。修法：想要「不设超时」就**不传 `signal`**（fetch 默认无限等待）。
+    推论：**超时语义要查文档实证，别按直觉写** —— 想表达「不限时」的参数，写 0 往往是最快的死法。
+    另注意 undici fetch 自带 headersTimeout（默认约 300s），warmup 超过它会以另一种方式挂；
+    目前最慢的 warmup（indextts ~4min）在界内，若未来有更慢的加载要显式放大。
+
 ## 命令
 
 | 用途 | 命令 |
@@ -1001,6 +1010,17 @@
   会把刚整备好的条目全判成丢失；③ torch allocator 把整备用过的 ~1.2GB 抱在手里不还，
   紧随其后的训练被**自己上一步**卡住。新增坑 69~72。
 
+- **Irodori 资源仲裁收尾已完成（阶段 30-8，10.17 BY ZCode）**：核对确认服务端 arbiter/preload 早在 30-2
+  已接 Irodori，剩余缺口全在前端 —— `app/src/lib/arbiter.ts` 的 `FocusEngine` 补 `irodori-tts` /
+  `irodori-training`（服务端同步补 `irodori-training`，service 联合类型补 `'irodori'`）、两个 Irodori 页面
+  开跑前接 `focusBeforeRun`（warmup `await` 3600 / synth `void` 3600 / 整备 3600 / 训练 6h）、
+  ResourceBudget 去掉「还没接仲裁器」分支（「集中资源」按钮对 Irodori 生效）、`lib/preload.ts` 的
+  `PreloadModel` 补 `irodori-tts`。**顺带修掉一个真 bug**：`server/src/services/preload.ts` 三处 warmup 的
+  `AbortSignal.timeout(0)` 实际是「0ms 后中止」（实测 3s 请求 99ms 被打断）——
+  启动预加载的网络 warmup 此前全部必失败，已改为不传 signal（坑 77）。
+  网关运行时冒烟通过（focus 两个新引擎 200、伪造引擎 400、preload catalog 列 irodori 4700）。
+  **遗留**：浏览器整链路真机走查 + 耳朵验收（本轮显存 free 478MB，需 ≥4.7GB）。
+
 ### 验收标准
 
 - `npm run typecheck` 通过
@@ -1020,7 +1040,7 @@
 | 低 | 变声 / 翻唱两页的**合成下拉**换源到 `/api/models` | 阶段 34 有意留后（无功能收益 + 要动已验证的转换主链路），建议与「变声 / 翻唱真机加载验证」同一轮做。方案见 `docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §P3 |
 | 中 | **变声 / 翻唱页换源后的真机加载验证（阶段 33 遗留）** | 已验证「引擎 id 集合 == 注册表主权重茎集合（13/13）」与数据源可用，但**没真跑 GPU 加载**。用户在页面上点一次「热加载」即可确认 |
 | 低 | `ddsp-svc` 的两个旧根收口 | P1 的迁移脚本只做了 `rvc`；DDSP-SVC 的模型仍在 `trainer/.data/svc/models`（阶段 33 补的是只读兼容根） |
-| **中** | ~~阶段 30-7（前端完整化）~~ **已完成（10.17）**；剩余 **阶段 30 收尾** | ① 浏览器整链路走查（未启动 → 启动 → 合成 → 训练 → 固化 → 复用），本轮显存不够（只剩 2.1~2.4GB）没做成；② Irodori 接入资源仲裁器（`FocusEngine` 补 `irodori-tts`，资源卡的「集中资源」按钮才对它有效）；③ 预加载账本里 Irodori 条目确认。**耳朵验收仍欠着**：100 步产出的音色像不像本人（产物在 `irodori/.data/speakers/`）。使用说明见 `docs/IRODORI-INTEGRATION.md`，方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §8 与 §9 |
+| **中** | ~~阶段 30-7（前端完整化）~~ **已完成（10.17）**；~~阶段 30 收尾代码（仲裁器 + 预加载账本）~~ **已完成（30-8，10.17）**；剩余 **阶段 30 用户侧验证** | ① 浏览器整链路走查（未启动 → 启动 → 合成 → 训练 → 固化 → 复用）——30-8 本轮显存只剩 478MB（Premiere / AE / Epic 占用），需空闲 ≥4.7GB；② 耳朵验收（音色像不像本人，产物在 `irodori/.data/speakers/`）；③ 启动预加载首次真验证（30-8 修掉 warmup `AbortSignal.timeout(0)` 必中止的 bug，坑 77）。使用说明见 `docs/IRODORI-INTEGRATION.md`，方案见 `docs/IRODORI-INTEGRATION-PLAN.md` §8 与 §9 |
 | 中 | ~~Irodori 30-2 的 C 段真机合成补测~~ **已完成（10.13 19:00）** | `verify_irodori_infer.py` 39/40（唯一失败是已修正口径的 RTF 阈值）。注：C 段需要显存 ≥4700MB，桌面占用时脚本会如实跳过 |
 | 低 | ~~Irodori 训练档权重下载~~ | **已完成**（bf16 基座 3.06GB 已落 `irodori/models/irodori_bf16/`，字节数与清单一致）。30-6 真机训练就是用这份基座跑的 |
 | 高 | **决策：Irodori-TTS 是否接入（阶段 28 已给完整实测）** | 用户 10.08 明确 **Genie-TTS 与 dots.tts 弃用**（dots.tts 试点作废）。接力评估的 Irodori-TTS 是**真日语特化 + 真情感控制**：日语 only（ModernBERT-ja + 日语 DACVAE 48kHz），emoji 45 个实测能把 F0 从 223 抬到 271 / 压到 173，🤭 让静音帧 25→78（非语言人声），caption 拉开 F0 1.77 倍；**int4 + 6 步 sway 在本机 RTF 0.121，是 8.6GB 卡上最快的引擎**；训练侧 Speaker Inversion batch 8 实测 2.2 s/步、净占 ~4.4GB、3000 步 ≈1.8h 可一晚出结果。**代价三条**：仅日语、男声 emoji 几乎无效（我们库里就是男声）、Windows 依赖链要自己填坑（坑 33）。建议接入形态 = 跑 `Irodori-TTS-Server`（OpenAI 兼容 `POST /v1/audio/speech`，已暴露 caption/num_steps/speed/音色 CRUD）+ 网关 `/api/irodori/*` 透传 + arbiter/preload 记账 + **请求超时护栏**。详见 `docs/IRODORI-TTS-EVALUATION.md` §7 |
@@ -1073,3 +1093,5 @@
 > 本次文档更新时间：10.16 04:25 [BY Qoder]（阶段 30-6：训练 S3——上游 train.py 走子进程 + 自动 batch 探测 + 四阶段 job（plan/train/save/register）+ 产物读回校验 + 音色库登记 + /v1/train/auto_batch；真机闭环已跑通（整备 6 条 → 训 100 步 loss 0.91→0.70 → speaker_id 合成 4.32s/48kHz）；离线 68/68。新增坑 69~72）
 
 > 本次文档更新时间：10.17 02:05 [BY Qoder]（阶段 30-7：Irodori 前端完整化——日语合成页（emoji/caption/参考三选一/护栏重试）+ 音色固化训练页（三步向导 + 自动体检 + 任务面板 ETA/取消）+ 设置页服务开关 + 资源账本两档 + docs/IRODORI-INTEGRATION.md；typecheck/eslint/build 全过，网关联调冒烟通过；新增坑 73~75）
+
+> 本次文档更新时间：10.17 15:25 [BY ZCode]（阶段 30-8：资源仲裁接完——前端 FocusEngine/service 类型补齐、Irodori 两页开跑前 focusBeforeRun、ResourceBudget「集中资源」对 Irodori 生效、预加载账本类型同步；**修掉 preload warmup `AbortSignal.timeout(0)` 必中止的真 bug**（启动预加载的网络 warmup 此前全部必失败）；网关运行时冒烟通过；新增坑 77。阶段 30 代码全部收口，剩用户真机走查与耳朵验收）

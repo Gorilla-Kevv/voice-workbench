@@ -129,14 +129,8 @@ export function ResourceBudget({
     setFocusing(true);
     try {
       // 批量走的是 GPT-SoVITS 引擎，仲裁器只认引擎名；
-      // Irodori 还没接进仲裁器（服务端 `FocusEngine` 里没有它），直接跳过这一步 ——
-      // 宁可少一个「帮我腾显存」的按钮，也不给它一个会失败的动作。
-      const focusEngine: FocusEngine | null =
-        task === 'irodori-tts' || task === 'irodori-training' ? null : task === 'batch' ? 'sovits' : task;
-      if (!focusEngine) {
-        toast.info('这一项还没接仲裁器', { description: '显存不够时先手动关掉占显存的程序。' });
-        return;
-      }
+      // irodori-tts / irodori-training 已进两端的 FocusEngine（30-8 接入）
+      const focusEngine: FocusEngine = task === 'batch' ? 'sovits' : task;
       const report = await arbiterApi.focus(focusEngine);
       toast.success('已把资源集中给这一个模型', {
         description: `${report.hint}${report.failed.length > 0 ? ` · ${report.failed.length} 项未成功` : ''}`,

@@ -10,12 +10,13 @@
 - 最新完成：**阶段 30-2 = Irodori 推理链路**（10.13 01:50 BY Qoder）—— `/v1/catalog`（emoji 56 个 + 官方释义 45 条**从上游源码 ast 解析**）、`/v1/warmup|unload|synth|speakers`（懒加载 + 显存准入「已加载跳过」+ 日语校验 + 服务端切句 ≤25 字/段拼接 + 参考三形态互斥 + 409 合成互斥）+ 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；验证脚本 **31/31**（含网关透传真跑）；**C 段真机合成已于 10.13 19:00 跑通**（39/40，唯一失败是 RTF 阈值口径 —— 服务端口径本就高于阶段 28 的 bench 口径，已按实测改为 0.35）
 - 最新完成：**阶段 30-3 = Irodori 长尾护栏**（10.13 19:10 BY Qoder）—— **段间外推降步**（每段后外推整条耗时，超 `0.9×IRODORI_TIMEOUT` 就把剩余段降到 20 步 + 换 seed；依据阶段 28 实测 40 步 89s → 20 步 2.16s）+ **墙钟看门狗**（专用工作线程 + 504 `IRODORI_TIMEOUT`，带 `retry_suggestion`）；**加载不计入采样预算**（否则小预算首次请求必假超时）；超时后合成权留到孤儿线程段间检查点退出（期间 409 文案区分「仍在收尾」）；catalog 暴露 `guard` 段；前端 `lib/irodori.ts` + `types/irodori.ts`。验证脚本 **69/69**（56 项假 runtime 单测 + **13 项真机**：真机降步 200/`retried=true`、超预算 504/`downgraded=true`、收尾期 409）
 - 最新完成：**阶段 30-4 = 音色库多片段长参考**（10.13 20:10 BY Qoder）—— `VoiceRecord` 只加不改地新增可选 `ref_clips`（多片段长参考）/ `engine_tags`（适用引擎标注）/ `speaker_embeds`（30-6 训练产物位）；**两侧都不吞字段**（Node 的 `readIndex/_persist` 与 Python 的 `Voice.to_dict/_persist` 都只在有值时写键）；网关新增片段增删改 + 试听 4 个端点；**Irodori 侧补上回落链** —— `ref_voice` 现在「有长参考就用长参考，没有才回落 3~10s 主音频」，并在响应里回显 `ref_source`/`ref_clip_count`；前端音色库行展开新增「日语长参考」区（多片上传/逐片试听/逐片转写/引擎标签）。验证 **74 项**（Node 31 + Python 24 + Irodori 19，含真机走长参考合成）
+- 最新完成：**阶段 30-8 = 阶段 30 收尾（资源仲裁接完 + 预加载账本确认 + 修预加载 warmup 必失败的 timeout bug）**（10.17 15:25 BY ZCode）—— 核对确认服务端 arbiter/preload 早在 30-2 已接 Irodori，缺口全在前端：`lib/arbiter.ts` 类型补 `irodori-tts`/`irodori-training` 与 `service:'irodori'`、两个 Irodori 页面开跑前接 `focusBeforeRun`（warmup await / synth void / 整备 3600 / 训练 6h）、ResourceBudget 去掉「还没接仲裁器」分支、`lib/preload.ts` 补类型；**真 bug**：`preload.ts` 三处 warmup 的 `AbortSignal.timeout(0)` 注释写「不设超时」实际是 0ms 后中止（Node 实测 3s 请求 99ms 被打断）→ 启动预加载的 warmup 全部必失败，已改为不传 signal；typecheck/eslint/build 全过 + 网关运行时冒烟（focus 两个新引擎 200、伪造引擎 400、preload catalog 列 irodori 4700）；真机走查仍留用户（本轮显存 free 478MB）
 - 最新完成：**阶段 30-7 = 前端完整化（日语合成页 + 音色固化训练页 + 设置页开关 + 资源账本）**（10.17 02:03 BY Qoder）—— 两个页面都能用了：合成页（emoji 风格 + caption + 参考三选一含固化音色 + 护栏重试走服务端建议步数）、训练页（三步向导 + 自动体检 + 自动/手动 batch + 四阶段任务面板与 ETA + 取消 + 训完跳合成页）；侧栏新分组「Irodori · 日语特化」与第四路探活；设置页 Irodori 服务开关；资源账本补 `irodori-tts` / `irodori-training` 两档；新增 `docs/IRODORI-INTEGRATION.md`。typecheck / eslint / build 全过，网关联调冒烟通过（health / service / datasets / speakers / plan / auto_batch）。**浏览器整链路走查与耳朵验收待显存空闲时由用户补**
 - 最新完成：**阶段 30-6 = 训练 S3（Speaker Inversion 编排）**（10.16 04:19 BY Qoder）—— 自动 batch 探测 + 子进程训练编排（上游 `train.py` 只有 `__main__` 入口）+ 进度/取消/ETA + 产物核对（safetensors 读回 `speaker_embedding`）+ 登记进音色库；**真机闭环已跑通**：整备 6 条 → 训 100 步（loss 0.91→0.70，约 0.5s/步）→ `speaker_id` 合成出音 4.32s/48kHz；离线验证 68/68；修掉三个真机才暴露的问题（sys.path 漏入口 / latent 相对路径口径 / torch allocator 不还显存），新增坑 69~72
 - 最新完成：**阶段 30-5 = 训练 S1+S2（数据整备 + latent 编码 + manifest 非空硬断言 + JobStore）**（10.14 03:38 BY Qoder）—— `traindata.py`（三来源收集：音色库长参考 / 上传目录 / 显式列表，**来源互斥**；`DACVAECodec.encode_file` 直编 latent 写 `manifest.jsonl`）+ **守卫一落地**（`written` 不等于待编码条数一律 422 `TRAIN_MANIFEST_EMPTY`，且**不留**半份 manifest）+ `jobs.py`（形态对齐 trainer，取消用 Event、重启后 running 转 cancelled）+ `routers/train.py`（`plan`/`upload`/`prepare`/`datasets`/`jobs` 全套；S3 明确 501）+ catalog 训练段常量。验证脚本 **63/63**（含真机：20 条 → `written=20`；破坏解码全失败 / 部分失败均 422；取消留痕清理）
-- 下一阶段：**阶段 30 收尾（整链路走查 + Irodori 接入资源仲裁器 + 预加载账本确认）**：`IrodoriTtsPage`（合成页）+ `IrodoriTrainingPage`（三步向导：数据 → 整备 → 训练，JobStore 进度/取消/ETA、「重试（降步）」按钮）+ 设置页服务开关 + 预加载账本回填 + 文档/走查。前置：训练档权重已就位（bf16 基座 2.9GB 已下载）、S3 服务端已可用
+- 下一阶段：**阶段 30 已全部收口（30-8 完成，10.17）**，剩**用户侧验证**：① 浏览器整链路走查（未启动 → 启动 → 合成 → 训练 → 固化 → 复用，需显存空闲 ≥4.7GB）；② 耳朵验收（音色像不像本人，产物在 `irodori/.data/speakers/`）；③ 启动预加载首次真验证（timeout bug 修复后选 Irodori 预加载走一遍）。之后的新功能候选：变声 / 翻唱合成下拉换源（低）、`ddsp-svc` 旧根收口（低）、DDSP-SVC 训练入口（需单独立项）
 - 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；**30-2 的 C 段真机合成补测**（腾显存后 `python .tmp/verify_irodori_infer.py`）；训练档权重下载（`npm run irodori:weights -- --training`，30-6 开工前必须完成）
-- 未完成的任务：阶段 30 收尾（浏览器整链路走查 + Irodori 接入资源仲裁器 + 预加载账本确认）；训练档权重（bf16 2.9GB）**已下载完成**；**耳朵验收（音色像不像本人）待用户**
+- 未完成的任务：阶段 30 的**浏览器整链路真机走查**（显存本轮 free 478MB 没做成）与**耳朵验收**（待用户）；训练档权重（bf16 2.9GB）**已下载完成**
 - 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
 - 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
 - **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
@@ -2487,7 +2488,7 @@ P0 的导入仍走各引擎页原有的上传入口。
 
 - 本次文档更新时间：10.12 13:47
 
-## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder][30-4 完成时间：10.13 20:10 BY Qoder][30-5 完成时间：10.14 03:38 BY Qoder][30-6 完成时间：10.16 04:19 BY Qoder][30-7 完成时间：10.17 02:03 BY Qoder]
+## 阶段 30 —— Irodori-TTS 接入：日语克隆 + emoji 风格 + Speaker Inversion 音色固化 [计划时间：10.12 15:30 BY Qoder][30-1 完成时间：10.12 18:15 BY Qoder][30-2 完成时间：10.13 01:50 BY ZCode][30-3 完成时间：10.13 19:10 BY Qoder][30-4 完成时间：10.13 20:10 BY Qoder][30-5 完成时间：10.14 03:38 BY Qoder][30-6 完成时间：10.16 04:19 BY Qoder][30-7 完成时间：10.17 02:03 BY Qoder][30-8 完成时间：10.17 15:25 BY ZCode]
 
 - 分支：feature/vc-svc
 - 立项依据：用户 10.09 裁决「**做克隆和训练**」（并明确 Genie-TTS 与 dots.tts 弃用）。
@@ -2954,6 +2955,50 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
   只作流程验收，正式固化音色要用 ≥10 条带转写的纯净日语短句。
 
 - 本次文档更新时间：10.16 04:19 [BY Qoder]（阶段 30-6：训练 S3 —— 自动 batch + 子进程训练编排 + 进度/取消/ETA + 产物登记 + `speaker_id` 闭环；离线 68/68 + 真机跑通；新增坑 69~72）
+
+#### 30-8 明细（10.17 完成）—— 阶段 30 收尾：资源仲裁接完 + 预加载账本确认 + 修「预加载 warmup 必失败」的 timeout bug [计划时间：10.17 15:05 BY ZCode][完成时间：10.17 15:25 BY ZCode]
+
+- 分支：feature/vc-svc
+
+**核对结论（先说清 30-7 入口清单里 ②③ 的真实状态）**
+
+- **服务端早就接好了**：`server/src/services/arbiter.ts` 的 `FocusEngine` 含 `irodori-tts`、
+  `RELEASE_ENDPOINTS.irodori=['/v1/unload']`、`ALL_SERVICES` 含 irodori，`preload.ts` 的 MODELS 有
+  `irodori-tts 4700`（带真源注释）—— 都是 30-2「四处记账」做的。30-7 入口清单写 ②③ 剩余，**实际剩余的缺口全在前端**。
+- 真正的三处前端缺口：① `app/src/lib/arbiter.ts` 的 `FocusEngine` / `service` 联合类型没补（注释也只列三个服务）；
+  ② 两个 Irodori 页面没有像其它 7 个页面那样在开跑前调 `focusBeforeRun`；③ `lib/preload.ts` 的 `PreloadModel` 缺 `irodori-tts`。
+
+**已完成**
+
+| 文件 | 内容 |
+| --- | --- |
+| `server/src/services/arbiter.ts` + `routes/resources.ts` | `FocusEngine` 补 `irodori-training`（与 GPT-SoVITS 侧 `training`/`rvc`/`svc` 每任务一个标识的惯例对齐），`serviceOf` 映射到 irodori（合成/训练共用一个服务，训练时它自己卸本服务推理模型，仲裁管「另一端」）；路由白名单同步 |
+| `app/src/lib/arbiter.ts` | `FocusEngine` 补 `irodori-tts` / `irodori-training`，`FocusReport.service` / `FocusStatus.service` 补 `'irodori'`，注释补 :9884 |
+| `app/src/pages/IrodoriTtsPage.tsx` | `warmup()` 改 `await focusBeforeRun('irodori-tts', 3600)` 后再 warmup（对齐 IndexTTS 页）；`synth()` 开跑前 `void focusBeforeRun(...)`（对齐网易页，仲裁失败不阻塞） |
+| `app/src/pages/IrodoriTrainingPage.tsx` | `startPrepare` 前 `void focusBeforeRun('irodori-tts', 3600)`；`startTrain` 前 `void focusBeforeRun('irodori-training', 6*3600)`（对齐 GPT-SoVITS 训练页的长持有期） |
+| `app/src/components/features/ResourceBudget.tsx` | 去掉「这一项还没接仲裁器」的跳过分支 —— irodori 两档现在直接进 `arbiterApi.focus`，「集中资源」按钮对它们生效 |
+| `app/src/lib/preload.ts` | `PreloadModel` 补 `irodori-tts`（服务端 catalog 本就会返回它，前端类型不同步是账本规矩「改一边必改另一边」的漏项） |
+| `server/src/services/preload.ts` | **修真 bug**：netease / indextts / irodori 三处 warmup 写的 `signal: AbortSignal.timeout(0)`，注释以为它是「不设超时」，实际语义是「**0ms 后中止**」—— Node 实测 3 秒的慢请求在 99ms 就被 TimeoutError 打断。也就是说**启动预加载里所有走网络的 warmup 全都必失败**（只有 sovits 走 supervisor 幸免），此前没暴露只因预加载一直没被真用过。修法：不传 `signal`（fetch 默认无超时），注释写明原因 |
+
+**测试结果**
+
+| 项 | 结果 |
+| --- | --- |
+| `npm run typecheck` / `npx eslint`（5 个前端文件）/ `npm run build` | 全过 |
+| ★ 网关运行时冒烟 | 起网关实测：`POST /api/resources/focus` 传 `irodori-training` → 200、`service=irodori`、**实际卸载了 2 处常驻模型**（supervisor 顺手拉起的 netease）；`irodori-tts` 同过；伪造引擎 400 且 hint 列全（含两个新值）；`GET /focus` 回显 hold 状态；`/api/preload/catalog` 列出 `irodori-tts 4700`。测完已 `taskkill /t /f` 清理网关与 netease 进程树（坑 61） |
+| `AbortSignal.timeout(0)` 语义 | 本机 Node 实证：慢响应 3s 的请求 99ms 即被中止（TimeoutError）—— 上面 bug 的判定依据 |
+
+**没做 / 做不到**
+
+- **浏览器整链路真机走查与耳朵验收仍未做**：本轮显存 free 仅 478MB（Premiere / After Effects / Epic / 浏览器全家桶占着 7.4GB），合成（4700MB）与训练（4630MB）都进不去。留给用户显存空闲时走：未启动 → 启动 → 合成 → 训练 → 固化 → 复用。
+- timeout(0) 修复后，预加载 warmup 的「首次真验证」（显存空闲时选 Irodori 预加载）也顺路留给走查。
+
+**下一阶段入口**
+
+- 阶段 30 全部收口，剩**用户侧验证**（上面那条走查 + 耳朵验收）。之后的新功能候选（按 HANDOFF 下一步表）：
+  变声 / 翻唱合成下拉换源（低）、`ddsp-svc` 旧根收口（低）、DDSP-SVC 训练入口（需单独立项）。
+
+- 本次文档更新时间：10.17 15:25 [BY ZCode]（阶段 30-8：资源仲裁前端接完 + 预加载账本确认 + 修 preload warmup `AbortSignal.timeout(0)` 必中止的真 bug；网关运行时冒烟通过；真机走查仍留用户）
 
 ### 涉及文件（预估）
 
