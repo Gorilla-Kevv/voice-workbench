@@ -261,6 +261,16 @@ class Settings:
         return self.models_dir / "rvc"
 
     @property
+    def svc_models_dir(self) -> Path:
+        """DDSP-SVC 音色模型的**写入根**（收口起为 `models/ddsp-svc/`）。
+
+        对齐 rvc 的收口先例：上传导入等新建产物落这里，
+        与网关的 `modelRegistry` 类别表 `ddsp-svc` 一致；
+        旧根（`.data/svc/models` 与 `checkpoints/ddsp`）保留为只读兼容。
+        """
+        return self.models_dir / "ddsp-svc"
+
+    @property
     def rvc_model_search_dirs(self) -> List[Path]:
         """RVC 音色模型的**读取搜索目录**（新根优先，旧位置兼容）。
 
@@ -408,6 +418,7 @@ class Settings:
             self.cache_dir,
             self.vc_dir,
             self.svc_dir,
+            self.svc_models_dir,
             # 语音转文本：数据集与转写工作区
             self.asr_dir,
         ):

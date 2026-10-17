@@ -82,8 +82,13 @@ def quality_preset(key: str) -> Dict[str, Any]:
 
 
 def model_dirs(settings: Settings) -> List[Path]:
-    """音色模型的搜索目录：`.data/svc/models` 与 `models/checkpoints/ddsp`。"""
+    """音色模型的搜索目录：规范根 `models/ddsp-svc` 优先，两个旧根保留为只读兼容。
+
+    顺序遵循「逐根闭环」的查找约定（先精确后递归，命中即停）：
+    规范根里的同名模型必须赢过旧根，否则收口后用户在新根放的模型永远选不中。
+    """
     return [
+        settings.svc_models_dir,
         settings.svc_dir / "models",
         settings.checkpoints_dir / "ddsp",
     ]

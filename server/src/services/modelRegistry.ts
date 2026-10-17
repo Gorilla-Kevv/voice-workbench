@@ -113,8 +113,8 @@ export const MODEL_CATEGORIES: ModelCategorySpec[] = [
     companions: [/^config\.ya?ml$/i],
     allowed: ['.pt', '.yaml', '.yml'],
     /**
-     * 兼容读取的旧位置（阶段 33 / P3 补）：
-     * 引擎侧 `svc/bootstrap.py::model_dirs()` 一直是这两个根，而注册表只扫 `models/ddsp-svc`
+     * 兼容读取的旧位置（阶段 33 / P3 补；模型本体已于收口时迁入规范根，旧根清空后保留）：
+     * 引擎侧 `svc/catalog.py::model_dirs()` 一直认这两个根，而注册表只扫 `models/ddsp-svc`
      * —— 不补这两根，翻唱页一换数据源，已有的音色（如 `smoke`）就会**凭空消失**。
      * （RVC 在 P0 就吃过同一个亏，见坑 51。）
      */

@@ -179,7 +179,7 @@ def register(app: FastAPI, ctx) -> None:
     ) -> Any:
         """导入一个音色模型（.pt 与它的 config.yaml 一起）。"""
         label = (name.strip() or Path(model.filename or "model").stem).replace("/", "_")
-        target_dir = ctx.settings.svc_dir / "models" / label
+        target_dir = ctx.settings.svc_models_dir / label
         target_dir.mkdir(parents=True, exist_ok=True)
         model_path = target_dir / Path(model.filename or "model.pt").name
         with model_path.open("wb") as handle:
