@@ -3254,7 +3254,7 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
 
 - 本次文档更新时间：10.17 22:20 [BY ZCode]（阶段 35补1：技能配置 + triage 11 票 + ready-for-agent 三票清空；真机训练闭环挂后台监控等窗口）
 
-## 阶段 36 —— GPT-SoVITS v5 本地化（v5dev / v5turbo 第五运行时）[计划时间：10.18 02:20 BY ZCode]
+## 阶段 36 —— GPT-SoVITS v5 本地化（v5dev / v5turbo 第五运行时）[计划时间：10.18 02:20 BY ZCode][完成时间：10.18 15:10 BY ZCode]
 
 - 分支：feature/vc-svc
 - 背景：用户报告上游 RVC-Boss/GPT-SoVITS 更新 v5 模型，要求本地化配置。调研结论（2026-10-18 实查上游仓库）：
@@ -3264,3 +3264,27 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
   - **方案**：对齐 indextts / irodori 的「独立运行时」先例——`gsv5/` 独立 venv（py3.12 + cu128）+ 上游 main 源码（upstream/ 只读）+ 权重下载校验 + 共享底模用 junction 复用整合包 + 网关透传 + 前端接入；**训练侧维持 v2ProPlus 整合包不动**（上游无 v5 训练配置，v5 现阶段是推理底模）。
 - 第一步（试金石）：裸环境直接调 TTS_infer_pack 跑通 v5turbo 合成一条，验证依赖树在 Windows 可行，再铺服务/网关/前端。
 - 所在分支：feature/vc-svc。验证命令（拟定）：试金石脚本 + `npm run typecheck` + 网关冒烟。
+
+### 36 完成明细（10.18 15:10 BY ZCode）
+
+**试金石全通（Windows 首跑验证）**：`gsv5/.venv`（py3.12 + torch 2.7.1+cu128 + 官方 py312 依赖树 7.5GB）+
+权重三件套（HF `gsv-v5-pretrained`：s2Gv5dev/s2Gv5turbo 各 766MB、vocoder 58MB）+ s1v3.ckpt hardlink 复用整合包 +
+hubert/roberta junction 复用。裸调 `TTS_infer_pack` 双变体合成成功：v5turbo CPU RTF 2.489（9.56s 音频）、
+v5dev CPU RTF 19.2（32 步，量级符合预期）。**坑 78**：GPU 试金石在显存 2776MB 时硬跑 → torch 溢出共享内存
+（GPU 100% 但 20 分钟不完成）——显存不满 4700 时一律等窗口或用 `GSV5_DEVICE=cpu`。
+
+**交付物**：`gsv5/` 服务（config/errors/voices/engine/api 六件 + server.py，py3.12 依赖树装在
+`gsv5/.venv`，upstream 只读 clone）+ `scripts/gsv5.mjs` launcher（--check/--skip-if-missing）+
+`npm run dev:gsv5`；网关七处接线（config/routes/gsv5.ts 透传 + runtime supervisor（设置页开关位，默认停用，
+RuntimeServiceId 加 'gsv5'）+ index 挂载 + arbiter 全域 + resources 白名单 + preload 账本 'gpt-sovits-v5' 3072）；
+前端 `Gsv5Page`（变体选择/文本/参考音色库或本地路径/语种/语速/结果堆叠/资源卡 + warmup 释放 + 服务启动 CTA）、
+导航新组「GPT-SoVITS v5 · 新一代」、lib/types/preload/localService/arbiter 账本五处同步。
+
+**实测**：health/catalog/HTTP synth（服务直连 + 网关透传双路）真合成出声（ref_voice 音色库 id 服务端直解），
+warmup 复用与暖态 RTF 下降（5.17→3.16）确认；typecheck / eslint / vite build 全过。
+
+**未完成（转票）**：① GPU RTF 实测与显存门槛校准（REQUIRED_VRAM_MB 是待实测保守值，需显存窗口）；② 设置页 gsv5 开关卡
+（v1 用 `npm run dev:gsv5` 手动启）；③ flash_attn/cuda_graph 加速未启用（可选，等 GPU 实测）；④ v5 权重下载脚本化
+（本次手工 hf-mirror，入 weights.manifest 待做）。
+
+- 本次文档更新时间：10.18 15:10 [BY ZCode]（阶段 36 完成：v5 双变体试金石通 + 独立运行时/网关/前端全链路接入）

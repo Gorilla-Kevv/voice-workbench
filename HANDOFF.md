@@ -19,6 +19,7 @@
 | 网易模块 `netease/` | **主服务**：本机 py3.12 独立 venv + torch 2.7.0+cu126 + FastAPI；端口 9882，`npm run dev` 自动拉起 |
 | GPT-SoVITS | **辅助服务**（训练链 + 批量合成仍靠它）：Python 3.9 整合包 + FastAPI；端口 9881 |
 | IndexTTS `indextts/` | 第四个运行时之一：独立 venv + FastAPI；端口 9883 |
+| GPT-SoVITS v5 `gsv5/` | **第五个运行时**（阶段 36）：`gsv5/.venv`（**py3.12 + torch 2.7.1+cu128**）+ FastAPI；端口 **9885**，`npm run dev:gsv5` 拉起。上游 main 只读 clone 在 `gsv5/upstream/`；v5 权重 `gsv5/upstream/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/`（s2Gv5dev/s2Gv5turbo/vocoder）+ s1v3.ckpt hardlink 共享整合包；端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；`GSV5_DEVICE=cpu` 可显式 CPU。**纯推理底模**（上游无 v5 训练配置，训练仍走整合包 v2ProPlus） |
 | Irodori-TTS `irodori/` | **日语特化**（阶段 30 接入中：30-1 环境 + 30-2 推理链路 + 30-3 长尾护栏 + 30-4 长参考 + **30-5 训练 S1+S2 已完成**，剩 30-6 训练编排 / 30-7 前端）：独立 venv（**py3.12 + torch 2.10.0+cu128**）+ FastAPI；端口 9884 |
 | 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重）、Irodori v4.1-Small（日语，int4 推理档 + bf16 训练基座） |
 
@@ -1098,8 +1099,18 @@
 
 > 本次文档更新时间：10.17 02:05 [BY Qoder]（阶段 30-7：Irodori 前端完整化——日语合成页（emoji/caption/参考三选一/护栏重试）+ 音色固化训练页（三步向导 + 自动体检 + 任务面板 ETA/取消）+ 设置页服务开关 + 资源账本两档 + docs/IRODORI-INTEGRATION.md；typecheck/eslint/build 全过，网关联调冒烟通过；新增坑 73~75）
 
+> 本次文档更新时间：10.18 15:10 [BY ZCode]（阶段 36：GPT-SoVITS v5 本地化——v5dev/v5turbo 双变体试金石通（py3.12 独立依赖树，Windows 官方 flash-attn wheel 路线），gsv5/ 服务 + scripts/gsv5.mjs + 网关七处接线 + Gsv5Page 前端 + 导航组；GPU RTF 实测/设置页开关/权重下载脚本化转后续；新增坑 78：显存不足时 GPU 推理溢出共享内存假死）
+
 > 本次文档更新时间：10.17 15:25 [BY ZCode]（阶段 30-8：资源仲裁接完——前端 FocusEngine/service 类型补齐、Irodori 两页开跑前 focusBeforeRun、ResourceBudget「集中资源」对 Irodori 生效、预加载账本类型同步；**修掉 preload warmup `AbortSignal.timeout(0)` 必中止的真 bug**（启动预加载的网络 warmup 此前全部必失败）；网关运行时冒烟通过；新增坑 77。阶段 30 代码全部收口，剩用户真机走查与耳朵验收）
 
 > 本次文档更新时间：10.17 15:41 [BY ZCode]（阶段 35：全站板块/页面一致性与规范审查——16 页 × 9 维度静态巡检；修 Irodori 训练页上传裸 input 未走 useFileDrop（坑 25 违规，30-7 遗漏）+ 8 处用户可见过时文案（「历史记录」→「产出记录」×6、设置页「两套模型」页头描述、「历史记录保留条数」→「云端记录保留条数」）；建议级 2 项在案（TermTip 补 Indextts/Irodori 页、SynthesisPage 旧 ResultPanel 底座统一）；纯前端改动，typecheck/eslint/build 全过）
 
 > 本次文档更新时间：10.17 22:20 [BY ZCode]（阶段 35补1：/setup-matt-pocock-skills 落地 + 工作池 triage 11 票（#1~#11，HANDOFF 下一步表已收敛至 GitHub Issues）+ ready-for-agent 三票清空——#6 TermTip 补三页 13 词条、#7 SynthesisPage 结果链路统一 useResultStack（切页返回不丢）、#8 ddsp-svc 旧根收口真迁移完成（上传落盘同步改新根）；真机训练闭环挂后台显存监控（≥4700MB 自动跑，结果 .tmp/autosmoke-result2.txt））
+
+78. **显存不足时 GPU 推理会「溢出共享内存」假死（阶段 36 实测）**
+    Windows + WDDM 下，显存接近占满时 torch 会把溢出的部分搬到**共享内存（系统内存 + PCIe 搬运）**，
+    表现为 `nvidia-smi` GPU 利用率 100%、CPU 时间持续上涨、但合成 20+ 分钟不出结果——不是死循环，
+    是「在 PCIe 上算」。试金石 v5turbo 4 步本应秒级，在 2776MB 空闲显存下硬跑就撞了这个。
+    **推论**：带 GPU 的服务准入门槛必须是硬门槛（本项目各服务已是），任何「裸调脚本/试金石」也必须
+    先看 `nvidia-smi free`；不满门槛就等窗口或显式 `GSV5_DEVICE=cpu`。另一个信号组合：
+    「GPU 100% + 显存 used≈total + 无输出」= 溢出假死，直接杀进程重查显存。
