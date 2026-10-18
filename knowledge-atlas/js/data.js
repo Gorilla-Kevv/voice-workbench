@@ -149,6 +149,23 @@ const SECTIONS = [
       },
       {
         "heading": "ChatTTS（对话流拟真人发音人）",
+        "meta": { "status": "classic", "note": "首创高拟真语气词与口语停顿" },
+        "paragraphs": [
+          "ChatTTS 专为对话场景设计：在每句发音中自动生成微妙的吸气、清嗓、轻笑与口语化停顿，听感非常接近真实人类在日常交谈或播客中的状态。适合有声书、对话机器人与长音频伴读。"
+        ]
+      },
+      {
+        "heading": "Fish Audio / Drama 3（多角色长文本旗舰，显存门槛天花板）",
+        "meta": { "status": "active", "note": "39 AI, INC.（fishaudio）；开源边界与命名坑极多，2026-10-19 HF API 实查" },
+        "paragraphs": [
+          "<b>Drama 3</b>：35B 总参 / 每 token 激活 3B 的 MoE 主干 + Codebook-MTP 解码器（10 codebook 因果解码）；多角色一条文本最多 16 个说话人标签（&lt;|speaker:0..15|&gt;）；长文本自动分块流式；25+ 语种；官方口径 <b>48GB 显存（FP8）且禁 CPU/MPS</b>——8GB 卡差三个量级，正确用法是走 fish.audio API 或 SGLang-Omni/vLLM-Omni 部署到 48GB 卡。",
+          "<b>开源边界（命名坑）</b>：可下载的只有 drama-3（38.63 GiB）、drama-3-int4（22.25，非官方量化）、S2-Pro（10.24，官方支持 CPU 路径）、s1-mini（3.36）、fish-speech-1.5（1.19）；产品端宣传的 <b>S2.1 Pro / S1 4B 是闭源仅 API</b>——HF 官方 org 11 个仓库逐个核过，别把发布稿当开源。",
+          "<b>许可三档</b>：Drama 3 / S2-Pro = Fish Audio Research License（研究免费、商用另授权）；s1-mini / 1.x = CC-BY-NC-SA-4.0（非商业）；代码库 = Community License（年收入低于 50 万美元方可商用）——「开源」不等于「可商用」。模型卡另含声音克隆合规条款（未经本人同意不得模仿可识别真人声音）。",
+          "<b>两个工程坑</b>：① codec.pth 与 S2-Pro 耦合——checkpoint 缺它会回落到 s2-pro 的声码器，部署时两包常要一起下；② 官方服务形态只有 SGLang-Omni / vLLM-Omni / 自带 api_server+WebUI，ComfyUI 节点全是社区移植（最高星 300），其中「8GB 可跑」的方案是专家常驻系统内存的换血 hack，32GB 内存正卡下沿且 RTF 约 4.6，别当官方能力引用。"
+        ]
+      },
+      {
+        "heading": "ChatTTS（对话流拟真人发音人）",
         "meta": {
           "status": "classic",
           "note": "首创高拟真语气词与口语停顿"
@@ -514,7 +531,8 @@ const RESOURCE_MAP = [
   { blockIdx: 1, resName: "Ultimate Vocal Remover (UVR5)" },
   { blockIdx: 0, resName: "SenseVoice" },
   { blockIdx: 0, resName: "DiffSinger" }
-];
+,
+  { "name": "Fish Audio / fish-speech（Drama 3）", "category": "TTS", "url": "https://github.com/fishaudio/fish-speech", "desc": "多角色长文本 TTS 旗舰 Drama 3（35B MoE，48GB 档）与消费级 S1-mini / Fish Speech 1.5；开源边界与许可见条目详述" }];
 
 if (typeof window !== "undefined") {
   window.VOICE_KNOWLEDGE_DATA = { SECTIONS, GLOSSARY, RESOURCES, RESOURCE_MAP };
