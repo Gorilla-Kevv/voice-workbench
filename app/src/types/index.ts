@@ -25,6 +25,8 @@ export * from './indextts';
 
 // Irodori-TTS 模块（irodori/，第四个 Python 运行时；日语特化 + emoji 风格）
 export * from './irodori';
+// GPT-SoVITS v5 模块（gsv5/，第五个 Python 运行时；新一代推理底模 v5dev/v5turbo）
+export * from './gsv5';
 
 /** 产出记录页（三源合并：服务端任务 / 本地模型 / 云端合成） */
 export * from './outputs';
@@ -57,7 +59,9 @@ export type NavKey =
   /** Irodori-TTS：日语特化合成（emoji 风格 + 固化音色） */
   | 'irodori-tts'
   /** Irodori 音色固化训练：数据 → 整备 → SI 训练 */
-  | 'irodori-training';
+  | 'irodori-training'
+  /** GPT-SoVITS v5：新一代推理底模（v5turbo / v5dev） */
+  | 'gpt-sovits-v5';
 
 /**
  * 本地模型服务的连接状态。

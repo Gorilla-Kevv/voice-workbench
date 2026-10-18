@@ -25,7 +25,7 @@ const PROJECT_ROOT = path.resolve(HERE, '..', '..', '..');
 
 export interface RuntimeSpec {
   /** 服务标识，同时决定 flag 文件名 */
-  id: 'netease' | 'indextts' | 'irodori';
+  id: 'netease' | 'indextts' | 'irodori' | 'gsv5';
   label: string;
   /** 网关侧读取的服务地址（config 里可被环境变量覆盖） */
   baseUrl: () => string;
@@ -361,5 +361,21 @@ export const irodoriSupervisor = new RuntimeSupervisor({
   readyTimeoutMs: 300_000,
 });
 
+export const gsv5Supervisor = new RuntimeSupervisor({
+  id: 'gsv5',
+  label: 'GPT-SoVITS v5',
+  baseUrl: () => config.gsv5.baseUrl,
+  script: 'scripts/gsv5.mjs',
+  unloadEndpoints: ['/v1/unload'],
+  hints: ['gsv5', 'gpt-sovits-v5', 'v5'],
+  defaultEnabled: false,
+  readyTimeoutMs: 300_000,
+});
+
 /** 网关自己的启动/退出钩子按这张表遍历，新增运行时只加实例 */
-export const runtimeSupervisors: RuntimeSupervisor[] = [neteaseSupervisor, indexttsSupervisor, irodoriSupervisor];
+export const runtimeSupervisors: RuntimeSupervisor[] = [
+  neteaseSupervisor,
+  indexttsSupervisor,
+  irodoriSupervisor,
+  gsv5Supervisor,
+];

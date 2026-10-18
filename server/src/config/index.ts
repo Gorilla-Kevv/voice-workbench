@@ -130,6 +130,15 @@ export const config = {
     /** 代理请求超时（毫秒）。见上方注释：必须宽于服务端的 IRODORI_TIMEOUT */
     proxyTimeoutMs: num(process.env.IRODORI_PROXY_TIMEOUT_MS, 240_000),
   },
+  /**
+   * GPT-SoVITS v5 本地服务（gsv5/，第五个 Python 运行时）的接入配置（阶段 36）。
+   * 与 netease / indextts / irodori 同一模式：supervisor 托管（设置页开关，默认停用）。
+   */
+  gsv5: {
+    baseUrl: (process.env.GSV5_URL?.trim() || 'http://127.0.0.1:9885').replace(/\/+$/, ''),
+    /** 代理请求超时（毫秒）。v5turbo 很快、v5dev 32 步较慢，0 = 不超时 */
+    proxyTimeoutMs: num(process.env.GSV5_PROXY_TIMEOUT_MS, 0),
+  },
 } as const;
 
 export const isProduction = config.env === 'production';

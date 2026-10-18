@@ -23,6 +23,7 @@ const ENGINES: FocusEngine[] = [
   'indextts-tts',
   'irodori-tts',
   'irodori-training',
+  'gpt-sovits-v5',
   'sovits',
   'training',
   'rvc',

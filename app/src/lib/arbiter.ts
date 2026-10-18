@@ -7,7 +7,7 @@ import { RequestError } from '@/lib/errors';
  * 网关会把本系统内**另一个**服务上的常驻模型全部卸载，把显存整块让出来。
  *
  * 边界（与服务端一致）：只作用于本项目自己拉起的几个 Python 服务
- * （GPT-SoVITS :9881 / 网易 :9882 / IndexTTS :9883 / Irodori :9884），
+ * （GPT-SoVITS :9881 / 网易 :9882 / IndexTTS :9883 / Irodori :9884 / GPT-SoVITS v5 :9885），
  * 不触碰电脑上其它任何进程。别的程序占的显存，仲裁管不了 ——
  * 那部分由资源预估卡提示用户自己关。
  */
@@ -18,6 +18,7 @@ export type FocusEngine =
   | 'indextts-tts'
   | 'irodori-tts'
   | 'irodori-training'
+  | 'gpt-sovits-v5'
   | 'sovits'
   | 'training'
   | 'rvc'
@@ -28,7 +29,7 @@ export type FocusEngine =
 export interface FocusReport {
   ok: boolean;
   engine: FocusEngine;
-  service: 'sovits' | 'netease' | 'indextts' | 'irodori';
+  service: 'sovits' | 'netease' | 'indextts' | 'irodori' | 'gsv5';
   released: string[];
   failed: { target: string; reason: string }[];
   targetReachable: boolean;
@@ -38,7 +39,7 @@ export interface FocusReport {
 export interface FocusStatus {
   ok: boolean;
   engine: FocusEngine | null;
-  service: 'sovits' | 'netease' | 'indextts' | 'irodori' | null;
+  service: 'sovits' | 'netease' | 'indextts' | 'irodori' | 'gsv5' | null;
   remainSec: number;
 }
 

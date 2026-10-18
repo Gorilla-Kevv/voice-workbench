@@ -22,6 +22,7 @@ import { AsrPage } from '@/pages/AsrPage';
 import { BatchPage } from '@/pages/BatchPage';
 import { IndexttsTtsPage } from '@/pages/IndexttsTtsPage';
 import { IrodoriTtsPage } from '@/pages/IrodoriTtsPage';
+import { Gsv5Page } from '@/pages/Gsv5Page';
 import { IrodoriTrainingPage } from '@/pages/IrodoriTrainingPage';
 import { NeteaseAsrPage } from '@/pages/NeteaseAsrPage';
 import { NeteaseTtsPage } from '@/pages/NeteaseTtsPage';
@@ -116,6 +117,10 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: 'Irodori · 音色固化训练',
     description: 'Speaker Inversion · 用同一个人的日语短句训出音色 embedding，之后合成不用再给参考音频',
   },
+  'gpt-sovits-v5': {
+    title: 'GPT-SoVITS v5 合成',
+    description: 'GPT-SoVITS v5turbo / v5dev 新一代底模：免 SoVITS 微调、音色相似度显著提升、新 vocoder 减少高频伪影',
+  },
   settings: { title: '设置', description: '本地四套服务（GPT-SoVITS / 网易 / IndexTTS / Irodori）与云端 MiMo 的开关、密钥、开机预加载与合成偏好' },
 };
 
@@ -125,6 +130,8 @@ const LOCAL_PAGES: NavKey[] = [
   'netease-tts', 'netease-asr', 'indextts-tts',
   // Irodori 是第四个本地运行时（:9884），同样不依赖云端密钥
   'irodori-tts', 'irodori-training',
+  // GPT-SoVITS v5 是第五个本地运行时（:9885，py3.12 独立 venv）
+  'gpt-sovits-v5',
 ];
 
 /**
@@ -532,7 +539,9 @@ function App() {
                       ? 'Irodori-TTS · irodori 本地'
                       : active === 'irodori-training'
                         ? 'Irodori SI 训练 · irodori 本地'
-                        : '客户端配置';
+                        : active === 'gpt-sovits-v5'
+                          ? 'GPT-SoVITS v5 · gsv5 本地'
+                          : '客户端配置';
     return { ...meta, model };
   }, [active, settings.providerId]);
 
@@ -630,6 +639,7 @@ function App() {
         {active === 'irodori-training' ? (
           <IrodoriTrainingPage onGoSynth={() => setActive('irodori-tts')} />
         ) : null}
+        {active === 'gpt-sovits-v5' ? <Gsv5Page /> : null}
 
         {active === 'settings' ? (
           <SettingsPage

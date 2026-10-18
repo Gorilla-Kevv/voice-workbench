@@ -15,6 +15,7 @@
 
 import { indexttsApi } from '@/lib/indextts';
 import { irodoriApi } from '@/lib/irodori';
+import { gsv5Api } from '@/lib/gsv5';
 import { neteaseApi } from '@/lib/netease';
 import { sovitsApi } from '@/lib/sovits';
 import { api } from '@/lib/api';
@@ -28,6 +29,8 @@ export type ResourceTask =
   // Irodori（30-7）：日语合成（int4 档 4700）与 SI 训练（batch 分档，batch 2 = 4630）
   | 'irodori-tts'
   | 'irodori-training'
+  // GPT-SoVITS v5（36）：turbo 门槛 3072 为待实测保守值；dev 档 3584（见 gsv5/app/config.py）
+  | 'gpt-sovits-v5'
   | 'sovits'
   | 'batch'
   | 'training'
@@ -50,6 +53,8 @@ const FALLBACK_VRAM_MB: Record<ResourceTask, number> = {
   // ← irodori/app/config.py::train_required_vram_mb(batch=2)（30-6 净占画像）
   // 真值随 batch 变（batch 8 = 5410），这里按页面默认的小 batch 取
   'irodori-training': 4630,
+  // ← gsv5/app/config.py::REQUIRED_VRAM_MB['v5turbo']（**待 GPU 实测校准**的保守值）
+  'gpt-sovits-v5': 3072,
   // 与 trainer ENGINES 表一致
   sovits: 3072,
   batch: 3072,
@@ -67,6 +72,7 @@ const FALLBACK_RAM_MB: Record<ResourceTask, number> = {
   'indextts-tts': 3072,
   'irodori-tts': 3072,
   'irodori-training': 4096,
+  'gpt-sovits-v5': 2048,
   sovits: 2048,
   batch: 3072,
   training: 6144,
@@ -111,6 +117,7 @@ export interface ResourceSnapshot {
     'netease-asr': boolean;
     'indextts-tts': boolean;
     'irodori-tts': boolean;
+    'gpt-sovits-v5': boolean;
   };
   /** GPT-SoVITS 本地服务是否被启用（默认关闭；它占着显存时才有「关掉它」这一说） */
   sovits_enabled: boolean;
@@ -155,6 +162,7 @@ const LOWER_TIPS: Record<ResourceTask, string> = {
   'indextts-tts': '把长文本拆成多段分批合成；bf16 已是低配。它常驻约 5.3 GB，跑之前先把浏览器硬件加速 / 模拟器等占显存的程序关掉。',
   'irodori-tts': '长文本交给服务端自己分段（它有护栏与自动降步）；步数档降到 20~40 也能跑，只是细节略糙。',
   'irodori-training': '把 batch 改成手动 1~2（自动探测会按空闲显存挑，但桌面占太多时它就挑不出来了），或先关掉占显存的程序再训。',
+  'gpt-sovits-v5': '用 v5turbo 变体（4 步）替代 v5dev（32 步）；长文本交给服务端切分，一次别塞整篇。',
   sovits: '切到更小的底模版本，或缩短单次合成文本（长文本会显著抬高显存峰值）。',
   batch: '减小并发条数 / 分段长度；批量任务逐条排队跑比一次铺开省显存。',
   training: '降 batch size、缩短单段音频上限（>15 秒的先切分），或改用更小的底模。',
@@ -169,13 +177,14 @@ const UPGRADE_TIP =
 
 /** 采一次资源快照：各来源并发，任一失败都降级而不是整体失败 */
 export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
-  const [health, engines, netease, indextts, indexttsCatalog, irodori] = await Promise.all([
+  const [health, engines, netease, indextts, indexttsCatalog, irodori, gsv5] = await Promise.all([
     api.health().catch(() => null),
     sovitsApi.engines().catch(() => null),
     neteaseApi.health().catch(() => null),
     indexttsApi.health().catch(() => null),
     indexttsApi.catalog().catch(() => null),
     irodoriApi.health().catch(() => null),
+    gsv5Api.health().catch(() => null),
   ]);
 
   const engineRequired: Record<string, number> = {};
@@ -218,6 +227,7 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
       'netease-asr': netease?.engines?.r2t2?.model_loaded === true,
       'indextts-tts': indextts?.engine?.loaded === true,
       'irodori-tts': irodori?.loaded === true,
+      'gpt-sovits-v5': gsv5?.engine?.loaded === true,
     },
     sovits_enabled: (health as HealthInfo | null)?.sovits?.enabled === true || engines != null,
     fetched_at: Date.now(),
@@ -230,6 +240,7 @@ function isEngineLoaded(task: ResourceTask, snapshot: ResourceSnapshot): boolean
   if (task === 'netease-asr') return snapshot.loaded_engines['netease-asr'];
   if (task === 'indextts-tts') return snapshot.loaded_engines['indextts-tts'];
   if (task === 'irodori-tts') return snapshot.loaded_engines['irodori-tts'];
+  if (task === 'gpt-sovits-v5') return snapshot.loaded_engines['gpt-sovits-v5'];
   return false;
 }
 
@@ -238,6 +249,7 @@ function vramNeed(task: ResourceTask, snapshot: ResourceSnapshot): number {
   if (task === 'netease-tts') return snapshot.netease_tts_required_mb ?? FALLBACK_VRAM_MB[task];
   if (task === 'indextts-tts') return snapshot.indextts_required_mb ?? FALLBACK_VRAM_MB[task];
   if (task === 'irodori-tts') return snapshot.irodori_required_mb ?? FALLBACK_VRAM_MB[task];
+  if (task === 'gpt-sovits-v5') return snapshot.loaded_engines['gpt-sovits-v5'] ? FALLBACK_VRAM_MB[task] : FALLBACK_VRAM_MB[task];
   const engineName = task === 'training' ? 'train' : task;
   return snapshot.engine_required_mb[engineName] ?? FALLBACK_VRAM_MB[task];
 }
@@ -394,6 +406,7 @@ export const RESOURCE_TASK_LABEL: Record<ResourceTask, string> = {
   'netease-asr': '网易流式转写',
   'indextts-tts': 'IndexTTS 零样本合成',
   'irodori-tts': 'Irodori 日语合成',
+  'gpt-sovits-v5': 'GPT-SoVITS v5 合成',
   'irodori-training': 'Irodori 音色固化训练',
   sovits: 'GPT-SoVITS 推理',
   batch: '批量合成',

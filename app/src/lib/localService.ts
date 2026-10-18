@@ -96,7 +96,7 @@ export const localServiceApi = {
  * 写成显式联合类型而不是 `string`：拼错一个名字只会得到一个 404，
  * 而类型检查能在编译期就拦住 —— 这三个 id 是网关路由的一部分，不该靠运行时试出来。
  */
-export type RuntimeServiceId = 'netease' | 'indextts' | 'irodori';
+export type RuntimeServiceId = 'netease' | 'indextts' | 'irodori' | 'gsv5';
 
 /**
  * 网易（:9882）、IndexTTS（:9883）与 Irodori（:9884）的启停（`/api/<id>/service`）。

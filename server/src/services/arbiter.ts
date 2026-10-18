@@ -12,6 +12,7 @@ import { logger } from '../lib/logger.js';
  *   - 网易模块服务（`config.netease.baseUrl`，默认 127.0.0.1:9882）
  *   - IndexTTS 服务（`config.indextts.baseUrl`，默认 127.0.0.1:9883）
  *   - Irodori 服务（`config.irodori.baseUrl`，默认 127.0.0.1:9884）
+ *   - GPT-SoVITS v5 服务（`config.gsv5.baseUrl`，默认 127.0.0.1:9885）
  * 仲裁器**只向这几个地址发请求**，而且发之前会校验目标是回环地址（见 `assertOwnService`）。
  * 它不扫描进程、不 taskkill 任何 PID、不认识也不触碰电脑上其它任何程序 ——
  * 浏览器、安卓模拟器、游戏占的显存一概不管（那部分由界面提示用户自己处理）。
@@ -32,6 +33,7 @@ export type FocusEngine =
   | 'indextts-tts'
   | 'irodori-tts'
   | 'irodori-training'
+  | 'gpt-sovits-v5'
   | 'sovits'
   | 'training'
   | 'rvc'
@@ -39,9 +41,9 @@ export type FocusEngine =
   | 'uvr5'
   | 'asr';
 
-type ServiceName = 'sovits' | 'netease' | 'indextts' | 'irodori';
+type ServiceName = 'sovits' | 'netease' | 'indextts' | 'irodori' | 'gsv5';
 
-const ALL_SERVICES: ServiceName[] = ['sovits', 'netease', 'indextts', 'irodori'];
+const ALL_SERVICES: ServiceName[] = ['sovits', 'netease', 'indextts', 'irodori', 'gsv5'];
 
 /** 每个服务的「卸载自己全部模型」入口（POST），按优先级排列 */
 const RELEASE_ENDPOINTS: Record<ServiceName, string[]> = {
@@ -50,6 +52,7 @@ const RELEASE_ENDPOINTS: Record<ServiceName, string[]> = {
   netease: ['/v1/confucius/unload', '/v1/r2t2/unload'],
   indextts: ['/v1/unload'],
   irodori: ['/v1/unload'],
+  gsv5: ['/v1/unload'],
 };
 
 function serviceOf(engine: FocusEngine): ServiceName {
@@ -58,6 +61,7 @@ function serviceOf(engine: FocusEngine): ServiceName {
   // 合成与训练共用一个 Irodori 服务；训练时它自己会卸掉本服务的推理模型（prepare/train 入队逻辑），
   // 仲裁负责的是「另一端」三个服务
   if (engine === 'irodori-tts' || engine === 'irodori-training') return 'irodori';
+  if (engine === 'gpt-sovits-v5') return 'gsv5';
   return 'sovits';
 }
 
@@ -65,6 +69,7 @@ function baseUrlOf(service: ServiceName): string {
   if (service === 'netease') return config.netease.baseUrl;
   if (service === 'indextts') return config.indextts.baseUrl;
   if (service === 'irodori') return config.irodori.baseUrl;
+  if (service === 'gsv5') return config.gsv5.baseUrl;
   return config.sovits.baseUrl;
 }
 

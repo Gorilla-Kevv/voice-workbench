@@ -8,11 +8,12 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js';
 import { apiRouter } from './routes/index.js';
 import { indexttsProxyRouter } from './routes/indextts.js';
 import { irodoriProxyRouter } from './routes/irodori.js';
+import { gsv5ProxyRouter } from './routes/gsv5.js';
 import { neteaseProxyRouter } from './routes/netease.js';
 import { createRuntimeServiceRouter } from './routes/runtimeService.js';
 import { voicelibRouter } from './routes/voicelib.js';
 import { modelsRouter } from './routes/models.js';
-import { irodoriSupervisor, indexttsSupervisor, neteaseSupervisor, runtimeSupervisors } from './services/runtime.js';
+import { gsv5Supervisor, irodoriSupervisor, indexttsSupervisor, neteaseSupervisor, runtimeSupervisors } from './services/runtime.js';
 import { sovitsProxyRouter, sovitsServiceRouter } from './routes/sovits.js';
 import { preloadService } from './services/preload.js';
 import { sovitsSupervisor } from './services/sovits.js';
@@ -42,10 +43,12 @@ app.use('/api/sovits/service', sovitsServiceRouter);
 app.use('/api/netease/service', createRuntimeServiceRouter(neteaseSupervisor, '网易 Confucius4-TTS'));
 app.use('/api/indextts/service', createRuntimeServiceRouter(indexttsSupervisor, 'IndexTTS'));
 app.use('/api/irodori/service', createRuntimeServiceRouter(irodoriSupervisor, 'Irodori-TTS（日语）'));
+app.use('/api/gsv5/service', createRuntimeServiceRouter(gsv5Supervisor, 'GPT-SoVITS v5'));
 app.use('/api/sovits', sovitsProxyRouter);
 app.use('/api/netease', neteaseProxyRouter);
 app.use('/api/indextts', indexttsProxyRouter);
 app.use('/api/irodori', irodoriProxyRouter);
+app.use('/api/gsv5', gsv5ProxyRouter);
 
 // 音色库是网关原生接口（数据在仓库根 voicelib/，不依赖任何 Python 服务）。
 // 它自己声明 raw/json body 解析器，所以必须挂在下面的全局 express.json() 之前。

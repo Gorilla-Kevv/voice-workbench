@@ -16,7 +16,7 @@ import { sovitsSupervisor } from './sovits.js';
  * 8 GB 卡装不下两套常驻模型，所以预加载的第一件事是**把另一套让出去**。
  */
 
-export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'irodori-tts' | 'sovits' | 'none';
+export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'irodori-tts' | 'gpt-sovits-v5' | 'sovits' | 'none';
 
 /**
  * 每个模型的显存账本。
@@ -101,6 +101,26 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
       }).catch(() => undefined);
     },
   },
+  'gpt-sovits-v5': {
+    label: 'GPT-SoVITS v5（turbo）',
+    vram_mb: 3072,
+    warmup: async () => {
+      // v5turbo 门槛（3072MB）是**待实测的保守值**，首次 GPU 冒烟后回填
+      await fetch(`${config.gsv5.baseUrl}/v1/warmup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+    },
+    release: async () => {
+      await fetch(`${config.gsv5.baseUrl}/v1/unload`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+        signal: AbortSignal.timeout(30_000),
+      }).catch(() => undefined);
+    },
+  },
   sovits: {
     label: 'GPT-SoVITS',
     vram_mb: 3072,
@@ -139,7 +159,7 @@ interface Preference {
 function readPreference(): Preference {
   try {
     const parsed = JSON.parse(fs.readFileSync(FLAG_FILE, 'utf8')) as Partial<Preference>;
-    if (parsed.model && ['netease-tts', 'indextts-tts', 'irodori-tts', 'sovits', 'none', 'ask'].includes(parsed.model)) {
+    if (parsed.model && ['netease-tts', 'indextts-tts', 'irodori-tts', 'gpt-sovits-v5', 'sovits', 'none', 'ask'].includes(parsed.model)) {
       return { model: parsed.model as Preference['model'], updatedAt: parsed.updatedAt ?? 0 };
     }
   } catch {

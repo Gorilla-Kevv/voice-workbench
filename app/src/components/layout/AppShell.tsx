@@ -182,6 +182,14 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     ],
   },
   {
+    // GPT-SoVITS v5（36）：新一代推理底模（v5turbo/v5dev），独立运行时 :9885，
+    // 与「GPT-SoVITS 本地」组（:9881 整合包）是**两个服务**——组名写清版本避免混淆。
+    title: 'GPT-SoVITS v5 · 新一代',
+    items: [
+      { key: 'gpt-sovits-v5', label: 'v5 合成', icon: Waves, hint: 'GPT-SoVITS v5turbo / v5dev · 新 vocoder 免微调高相似度' },
+    ],
+  },
+  {
     title: 'MiMo 云端',
     items: [
       { key: 'synthesis', label: '通用合成', icon: AudioLines, hint: '官方预置音色' },
