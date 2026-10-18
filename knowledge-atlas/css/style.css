@@ -1,4 +1,6 @@
-/* 暗色高科技极简视觉风格 */
+/* AI 声音知识图谱 · 暗色 GitHub 风（Read 模式：为理解结构化，阅读体验值得停留）
+ * 硬底线：正文对比度 ≥ 4.5:1（#c9d1d9 on #161b22 ≈ 9.9:1）；动效只动 transform/opacity；
+ * prefers-reduced-motion 下全部动效关闭。 */
 :root {
   --bg-dark: #0d1117;
   --bg-card: #161b22;
@@ -7,26 +9,70 @@
   --text-dim: #8b949e;
   --accent: #58a6ff;
   --accent-green: #3fb950;
+  --radius: 10px;
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg-dark); color: var(--text-main); }
+body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; background: var(--bg-dark); color: var(--text-main); }
+
 .app-layout { display: flex; height: 100vh; overflow: hidden; }
-.sidebar { width: 280px; background: #010409; border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 14px; gap: 16px; }
-.brand h2 { font-size: 18px; color: var(--accent); }
+
+/* ---------- 侧栏 ---------- */
+.sidebar { width: 280px; flex-shrink: 0; background: #010409; border-right: 1px solid var(--border); display: flex; flex-direction: column; padding: 20px 14px; gap: 14px; }
+.brand h2 { font-size: 17px; color: var(--accent); }
 .badge { display: inline-block; font-size: 11px; padding: 2px 8px; border-radius: 12px; background: rgba(88,166,255,0.15); color: var(--accent); margin-top: 4px; }
-.nav-menu { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; }
-.nav-btn { text-align: left; background: none; border: 1px solid transparent; color: var(--text-main); padding: 10px 14px; border-radius: 8px; font-size: 14px; cursor: pointer; transition: 0.2s; }
+
+.search-wrap { display: flex; flex-direction: column; gap: 6px; }
+#searchBox { width: 100%; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text-main); font-size: 13px; outline: none; }
+#searchBox:focus-visible { border-color: var(--accent); box-shadow: 0 0 0 2px rgba(88,166,255,0.25); }
+.search-meta { font-size: 11px; color: var(--text-dim); }
+
+.nav-menu { display: flex; flex-direction: column; gap: 6px; overflow-y: auto; flex: 1; }
+.nav-btn { text-align: left; background: none; border: 1px solid transparent; color: var(--text-main); padding: 10px 14px; border-radius: 8px; font-size: 14px; cursor: pointer; transition: background 0.2s, border-color 0.2s, color 0.2s; }
 .nav-btn:hover { background: rgba(255,255,255,0.06); }
+.nav-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .nav-btn.active { background: rgba(88,166,255,0.15); border-color: rgba(88,166,255,0.4); color: var(--accent); font-weight: 600; }
-.content-view { flex: 1; overflow-y: auto; padding: 32px 48px; }
+.nav-btn.hit { border-color: rgba(63,185,80,0.55); }
+.nav-btn.hit::after { content: "·"; color: var(--accent-green); font-weight: 700; margin-left: 6px; }
+
+.sidebar-foot { font-size: 10px; color: var(--text-dim); line-height: 1.6; border-top: 1px solid var(--border); padding-top: 10px; }
+.sidebar-foot code { color: var(--text-dim); font-size: 10px; }
+
+/* ---------- 内容区（Read 模式铁律：限行宽） ---------- */
+.content-view { flex: 1; overflow-y: auto; padding: 32px 48px; scroll-behavior: smooth; }
+.content-header, .blocks-container { max-width: 960px; margin-left: auto; margin-right: auto; }
 .content-header { margin-bottom: 24px; border-bottom: 1px solid var(--border); padding-bottom: 16px; }
 .content-header h1 { font-size: 26px; margin-bottom: 6px; }
-.content-header p { color: var(--text-dim); font-size: 14px; }
-.knowledge-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
-.knowledge-card h3 { font-size: 18px; margin-bottom: 10px; color: #fff; }
+.content-header p { color: var(--text-dim); font-size: 14px; line-height: 1.7; }
+
+.knowledge-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); }
+.knowledge-card h3 { font-size: 18px; margin-bottom: 10px; color: #fff; line-height: 1.4; }
 .meta-tag { font-size: 12px; color: var(--accent-green); margin-bottom: 12px; }
-.knowledge-card p { font-size: 14px; line-height: 1.7; color: #c9d1d9; margin-bottom: 12px; }
-.data-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 13px; }
-.data-table th, .data-table td { border: 1px solid var(--border); padding: 10px 14px; text-align: left; }
-.data-table th { background: rgba(255,255,255,0.04); color: #fff; }
-.callout-box { background: rgba(56,239,125,0.1); border-left: 4px solid var(--accent-green); padding: 12px 16px; border-radius: 4px; font-size: 13px; margin-top: 12px; }
+.knowledge-card p { font-size: 14px; line-height: 1.8; color: #c9d1d9; margin-bottom: 12px; }
+.knowledge-card p:last-child { margin-bottom: 0; }
+.knowledge-card strong { color: #fff; }
+.knowledge-card code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12.5px; background: rgba(110,118,129,0.25); padding: 1px 6px; border-radius: 5px; }
+
+.table-title { font-size: 13px; color: var(--text-dim); margin: 16px 0 8px; }
+.table-scroll { overflow-x: auto; border-radius: 8px; border: 1px solid var(--border); }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th, .data-table td { border-bottom: 1px solid var(--border); padding: 10px 14px; text-align: left; vertical-align: top; line-height: 1.6; }
+.data-table th { background: rgba(255,255,255,0.04); color: #fff; white-space: nowrap; }
+.data-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.data-table tbody tr:hover { background: rgba(88,166,255,0.06); }
+
+.callout-box { background: rgba(56,239,125,0.1); border-left: 4px solid var(--accent-green); padding: 12px 16px; border-radius: 4px; font-size: 13px; line-height: 1.7; margin-top: 12px; }
+.callout-box code { font-size: 12px; background: rgba(110,118,129,0.25); padding: 1px 5px; border-radius: 4px; }
+
+/* ---------- 移动端：侧栏转顶部横滚条 ---------- */
+@media (max-width: 900px) {
+  .app-layout { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
+  .sidebar { width: 100%; border-right: none; border-bottom: 1px solid var(--border); padding: 14px; gap: 10px; }
+  .nav-menu { flex-direction: row; overflow-x: auto; padding-bottom: 4px; }
+  .nav-btn { flex-shrink: 0; white-space: nowrap; padding: 8px 12px; }
+  .content-view { padding: 20px 16px; overflow: visible; }
+  .knowledge-card { padding: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; scroll-behavior: auto !important; }
+}

@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="AI 声音知识图谱：TTS、ASR、RVC 声音克隆、AI 翻唱与音频工程的实战知识库，含 voice-workbench 五运行时落地实录。" />
   <title>AI 声音知识图谱 · 语音大模型与克隆全景</title>
   <link rel="stylesheet" href="css/style.css" />
 </head>
@@ -13,7 +14,12 @@
         <h2>🎙️ AI 声音知识图谱</h2>
         <span class="badge">voice-workbench</span>
       </div>
-      <nav class="nav-menu" id="navMenu"></nav>
+      <div class="search-wrap">
+        <input type="search" id="searchBox" placeholder="搜索术语与条目…" autocomplete="off" />
+        <div id="searchMeta" class="search-meta" hidden></div>
+      </div>
+      <nav class="nav-menu" id="navMenu" aria-label="知识篇目"></nav>
+      <footer class="sidebar-foot">由 <code>knowledge-export/build.js</code> 生成 · 数据源 <code>knowledge-atlas/js/data.js</code></footer>
     </aside>
     <main class="content-view" id="contentView">
       <header class="content-header" id="contentHeader">
@@ -30,47 +36,113 @@
     const container = document.getElementById("blocksContainer");
     const secTitle = document.getElementById("secTitle");
     const secSummary = document.getElementById("secSummary");
+    const searchBox = document.getElementById("searchBox");
+    const searchMeta = document.getElementById("searchMeta");
+
+    const STATUS_TEXT = { active: "现役主流", classic: "经典架构", legacy: "偏旧参考" };
+
+    /* 段落里的标记安全渲染：先整体转义 HTML（<laughter> 这类内容不能被浏览器当标签吞掉），
+       再把数据源自己的 <b> 标记与 `code` 标记转回真实标签。顺序不能反。 */
+    function renderInline(text) {
+      return String(text)
+        .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+        .replace(/&lt;b&gt;([\s\S]*?)&lt;\/b&gt;/g, "<strong>$1</strong>")
+        .replace(/`([^`]+)`/g, "<code>$1</code>");
+    }
 
     function renderSection(sec) {
-      secTitle.textContent = `${sec.icon} ${sec.title} (${sec.en})`;
+      secTitle.textContent = `${sec.icon} ${sec.title} · ${sec.en}`;
       secSummary.textContent = sec.summary;
       container.innerHTML = "";
 
       sec.sections.forEach((b) => {
         const card = document.createElement("section");
         card.className = "knowledge-card";
-        let html = `<h3>${b.heading}</h3>`;
+        let html = `<h3>${renderInline(b.heading)}</h3>`;
         if (b.meta) {
-          html += `<div class="meta-tag">状态: ${b.meta.status} ${b.meta.note ? '｜ ' + b.meta.note : ''}</div>`;
+          const status = STATUS_TEXT[b.meta.status] || b.meta.status || "";
+          html += `<div class="meta-tag">${status}${b.meta.note ? "｜" + renderInline(b.meta.note) : ""}</div>`;
         }
-        (b.paragraphs || []).forEach(p => { html += `<p>${p}</p>`; });
+        (b.paragraphs || []).forEach((p) => { html += `<p>${renderInline(p)}</p>`; });
         if (b.table) {
-          html += `<div class="table-title"><b>${b.table.title}</b></div><table class="data-table"><thead><tr>` +
-            b.table.head.map(h => `<th>${h}</th>`).join("") + `</tr></thead><tbody>` +
-            b.table.rows.map(r => `<tr>` + r.map(c => `<td>${c}</td>`).join("") + `</tr>`).join("") +
-            `</tbody></table>`;
+          html += `<div class="table-title">${renderInline(b.table.title)}</div>` +
+            `<div class="table-scroll"><table class="data-table"><thead><tr>` +
+            b.table.head.map((h) => `<th>${renderInline(h)}</th>`).join("") +
+            `</tr></thead><tbody>` +
+            b.table.rows.map((r) => `<tr>` + r.map((c) => `<td>${renderInline(c)}</td>`).join("") + `</tr>`).join("") +
+            `</tbody></table></div>`;
         }
         if (b.callout) {
-          html += `<div class="callout-box"><b>【${b.callout.title}】</b>${b.callout.text}</div>`;
+          html += `<div class="callout-box"><b>【${renderInline(b.callout.title)}】</b>${renderInline(b.callout.text)}</div>`;
         }
         card.innerHTML = html;
         container.appendChild(card);
       });
+      window.scrollTo({ top: 0 });
     }
 
-    data.SECTIONS.forEach((sec, idx) => {
-      const btn = document.createElement("button");
-      btn.className = "nav-btn" + (idx === 0 ? " active" : "");
-      btn.textContent = `${sec.icon} ${sec.title}`;
-      btn.onclick = () => {
-        document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
-        btn.classList.add("active");
-        renderSection(sec);
-      };
-      nav.appendChild(btn);
+    /* 导航 + hash 路由：刷新/分享保状态（#/basics 等） */
+    function buildNav() {
+      nav.innerHTML = "";
+      data.SECTIONS.forEach((sec) => {
+        const btn = document.createElement("button");
+        btn.className = "nav-btn";
+        btn.type = "button";
+        btn.dataset.id = sec.id;
+        btn.textContent = `${sec.icon} ${sec.title}`;
+        btn.onclick = () => { location.hash = `#/${sec.id}`; };
+        nav.appendChild(btn);
+      });
+    }
+
+    function setActive(id) {
+      document.querySelectorAll(".nav-btn").forEach((b) => {
+        b.classList.toggle("active", b.dataset.id === id);
+        if (b.dataset.id === id) b.scrollIntoView({ block: "nearest" });
+      });
+    }
+
+    function route() {
+      const id = (location.hash.replace(/^#\//, "") || data.SECTIONS[0].id);
+      const sec = data.SECTIONS.find((s) => s.id === id) || data.SECTIONS[0];
+      setActive(sec.id);
+      renderSection(sec);
+    }
+    window.addEventListener("hashchange", route);
+
+    /* 全文搜索：命中篇目在导航上高亮计数，输入清空即还原 */
+    function searchText(query) {
+      const q = query.trim().toLowerCase();
+      const hits = {};
+      if (!q) { searchMeta.hidden = true; return hits; }
+      let total = 0;
+      data.SECTIONS.forEach((sec) => {
+        let count = 0;
+        const inTitle = (sec.title + sec.en + sec.summary).toLowerCase().includes(q);
+        sec.sections.forEach((b) => {
+          const hay = [b.heading, b.meta && (b.meta.status + b.meta.note), ...(b.paragraphs || []),
+            b.table ? [b.table.title, ...b.table.head, ...b.table.rows.flat()] : [],
+            b.callout ? b.callout.title + b.callout.text : ""].flat().join(" ").toLowerCase();
+          if (inTitle || hay.includes(q)) count += 1;
+        });
+        if (inTitle || count > 0) { hits[sec.id] = count; total += inTitle ? count + 1 : count; }
+      });
+      searchMeta.hidden = false;
+      searchMeta.textContent = total > 0 ? `命中 ${total} 处，高亮篇目` : "无命中";
+      return hits;
+    }
+
+    searchBox.addEventListener("input", () => {
+      const hits = searchText(searchBox.value);
+      document.querySelectorAll(".nav-btn").forEach((b) => {
+        const hit = hits[b.dataset.id];
+        b.classList.toggle("hit", !!hit);
+        b.title = hit ? `命中 ${hit} 个条目` : "";
+      });
     });
 
-    if (data.SECTIONS.length) renderSection(data.SECTIONS[0]);
+    buildNav();
+    route();
   </script>
 </body>
 </html>
