@@ -520,7 +520,8 @@ const RESOURCES = [
   { "name": "IndexTTS-2.5", "category": "TTS", "url": "https://github.com/index-tts/index-tts", "desc": "工业级零样本 TTS：8 维情感向量、拼音注音、语速倍率精细可控" },
   { "name": "Confucius4-TTS", "category": "TTS", "url": "https://github.com/netease-youdao/Confucius4-TTS", "desc": "网易有道 1.3B 零样本克隆：免参考文本、跨语种无口音、情感迁移" },
   { "name": "Confucius4-R2T2", "category": "ASR", "url": "https://github.com/netease-youdao/Confucius4-R2T2", "desc": "Qwen3-ASR 基座的 append-only 真流式转写（离线 transformers 后端 Windows 可用）" },
-  { "name": "DDSP-SVC", "category": "SVC", "url": "https://github.com/yxlllc/DDSP-SVC", "desc": "轻量高频质感好的歌声转换；.pt 必须配同目录 config.yaml" }];
+  { "name": "DDSP-SVC", "category": "SVC", "url": "https://github.com/yxlllc/DDSP-SVC", "desc": "轻量高频质感好的歌声转换；.pt 必须配同目录 config.yaml" },
+  { "name": "Fish Audio / fish-speech（Drama 3）", "category": "TTS", "url": "https://github.com/fishaudio/fish-speech", "desc": "多角色长文本 TTS 旗舰 Drama 3（35B MoE，48GB 档）与消费级 S1-mini / Fish Speech 1.5；开源边界与许可见条目详述" }];
 
 const RESOURCE_MAP = [
   { blockIdx: 0, resName: "GPT-SoVITS" },
@@ -531,8 +532,7 @@ const RESOURCE_MAP = [
   { blockIdx: 1, resName: "Ultimate Vocal Remover (UVR5)" },
   { blockIdx: 0, resName: "SenseVoice" },
   { blockIdx: 0, resName: "DiffSinger" }
-,
-  { "name": "Fish Audio / fish-speech（Drama 3）", "category": "TTS", "url": "https://github.com/fishaudio/fish-speech", "desc": "多角色长文本 TTS 旗舰 Drama 3（35B MoE，48GB 档）与消费级 S1-mini / Fish Speech 1.5；开源边界与许可见条目详述" }];
+];
 
 if (typeof window !== "undefined") {
   window.VOICE_KNOWLEDGE_DATA = { SECTIONS, GLOSSARY, RESOURCES, RESOURCE_MAP };
