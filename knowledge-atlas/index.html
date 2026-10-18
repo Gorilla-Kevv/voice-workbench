@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>AI 声音知识图谱 · 语音大模型与克隆全景</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="brand">
+        <h2>🎙️ AI 声音知识图谱</h2>
+        <span class="badge">voice-workbench</span>
+      </div>
+      <nav class="nav-menu" id="navMenu"></nav>
+    </aside>
+    <main class="content-view" id="contentView">
+      <header class="content-header" id="contentHeader">
+        <h1 id="secTitle">AI 声音知识体系</h1>
+        <p id="secSummary">系统梳理 TTS、ASR、RVC 声音克隆、AI 翻唱与音频工程。</p>
+      </header>
+      <div class="blocks-container" id="blocksContainer"></div>
+    </main>
+  </div>
+  <script src="js/data.js"></script>
+  <script>
+    const data = window.VOICE_KNOWLEDGE_DATA;
+    const nav = document.getElementById("navMenu");
+    const container = document.getElementById("blocksContainer");
+    const secTitle = document.getElementById("secTitle");
+    const secSummary = document.getElementById("secSummary");
+
+    function renderSection(sec) {
+      secTitle.textContent = `${sec.icon} ${sec.title} (${sec.en})`;
+      secSummary.textContent = sec.summary;
+      container.innerHTML = "";
+
+      sec.sections.forEach((b) => {
+        const card = document.createElement("section");
+        card.className = "knowledge-card";
+        let html = `<h3>${b.heading}</h3>`;
+        if (b.meta) {
+          html += `<div class="meta-tag">状态: ${b.meta.status} ${b.meta.note ? '｜ ' + b.meta.note : ''}</div>`;
+        }
+        (b.paragraphs || []).forEach(p => { html += `<p>${p}</p>`; });
+        if (b.table) {
+          html += `<div class="table-title"><b>${b.table.title}</b></div><table class="data-table"><thead><tr>` +
+            b.table.head.map(h => `<th>${h}</th>`).join("") + `</tr></thead><tbody>` +
+            b.table.rows.map(r => `<tr>` + r.map(c => `<td>${c}</td>`).join("") + `</tr>`).join("") +
+            `</tbody></table>`;
+        }
+        if (b.callout) {
+          html += `<div class="callout-box"><b>【${b.callout.title}】</b>${b.callout.text}</div>`;
+        }
+        card.innerHTML = html;
+        container.appendChild(card);
+      });
+    }
+
+    data.SECTIONS.forEach((sec, idx) => {
+      const btn = document.createElement("button");
+      btn.className = "nav-btn" + (idx === 0 ? " active" : "");
+      btn.textContent = `${sec.icon} ${sec.title}`;
+      btn.onclick = () => {
+        document.querySelectorAll(".nav-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        renderSection(sec);
+      };
+      nav.appendChild(btn);
+    });
+
+    if (data.SECTIONS.length) renderSection(data.SECTIONS[0]);
+  </script>
+</body>
+</html>
