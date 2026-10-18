@@ -86,3 +86,23 @@ body { font-family: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", "Pin
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* ---------- 术语 / 资源视图（K5 三视图） ---------- */
+.glossary-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.term-card { background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 14px 16px; }
+.term-card:hover { border-color: var(--hairline-strong); }
+.term-name { font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: -0.2px; }
+.term-cat { font-size: 10.5px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--primary-hover); margin: 3px 0 8px; }
+.term-card p { font-size: 12.5px; line-height: 1.7; color: var(--ink-muted); margin: 0; }
+
+.res-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.res-card { display: block; background: var(--surface-2); border: 1px solid var(--hairline); border-radius: var(--radius); padding: 14px 16px; text-decoration: none; color: inherit; transition: border-color 0.15s, transform 0.15s; }
+.res-card:hover { border-color: rgba(94,106,210,0.55); transform: translateY(-1px); }
+.res-card:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.res-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.res-name { font-size: 14px; font-weight: 600; color: var(--ink); letter-spacing: -0.2px; }
+.res-arrow { color: var(--ink-tertiary); font-size: 13px; }
+.res-card:hover .res-arrow { color: var(--primary-hover); }
+.res-cat { font-size: 10.5px; font-weight: 600; letter-spacing: 0.4px; text-transform: uppercase; color: var(--ink-subtle); margin: 3px 0 8px; }
+.res-card p { font-size: 12.5px; line-height: 1.65; color: var(--ink-muted); margin: 0 0 8px; }
+.res-url { display: block; font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 10.5px; color: var(--ink-tertiary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
