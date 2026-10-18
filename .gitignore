@@ -72,3 +72,11 @@ irodori/upstream/
 irodori/models/
 irodori/.data/
 irodori/.tmp/
+
+# GPT-SoVITS v5（gsv5/）：第五运行时（阶段 36）。独立 venv（py3.12 + torch 2.7.1 cu128）
+# + 上游 main 源码（只读 clone）+ v5 权重（HF gsv-v5-pretrained）+ 共享底模 hardlink/junction。
+# 试金石脚本 smoke_v5.py 与权重清单（入清单后）进版本库；实际权重与缓存不进。
+gsv5/.venv/
+gsv5/upstream/
+gsv5/.uvcache/
+gsv5/smoke-out/
