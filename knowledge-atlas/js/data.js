@@ -109,7 +109,7 @@ const SECTIONS = [
         "heading": "GPT-SoVITS（花儿不哭 · 经典开源王者）",
         "meta": {
           "status": "active",
-          "note": "v1/v2/v2pro 演进，二次元与中文配音首选"
+          "note": "v1→v2→v2ProPlus 主力训练档，v5dev/v5turbo 新一代推理底模（2026-10 上游 main）"
         },
         "paragraphs": [
           "GPT-SoVITS 由开源开发者 RVC-Boss（花儿不哭）开源，是中文社区影响力最大、落地最广泛的零样本及微调 TTS 框架：",
@@ -117,41 +117,24 @@ const SECTIONS = [
           "<b>微调支持</b>：除了 5 秒零样本克隆，还支持用 1~10 分钟目标人声音频进行 <b>微调（Fine-Tuning）</b>，微调后在咬字准确度、长句稳定性和相似度上大幅碾压纯零样本方案。"
         ],
         "table": {
-          "title": "GPT-SoVITS 关键版本与配置推荐",
-          "head": [
-            "版本",
-            "采样率",
-            "适用场景",
-            "推荐参数"
-          ],
+          "title": "版本演进与本地化结论（v5 情报截至 2026-10-18 上游 main 实查）",
+          "head": ["版本", "采样率", "定位与本项目结论"],
           "rows": [
-            [
-              "v1 原始版",
-              "32kHz",
-              "轻量设备、快速体验",
-              "Top-K: 5, Top-P: 0.8, Temp: 1.0"
-            ],
-            [
-              "v2 官方演进",
-              "48kHz",
-              "高保真配音、细节饱满",
-              "Top-K: 10, Top-P: 0.85, Temp: 0.8"
-            ],
-            [
-              "v2pro / 社区魔改",
-              "48kHz / 多语种",
-              "游戏角色配音、跨语种克隆",
-              "微调步数: SoVITS 8~12 epoch, GPT 15 epoch"
-            ]
+            ["v1 原始版", "32kHz", "轻量起步；Top-K 5 / Top-P 0.8"],
+            ["v2 官方演进", "48kHz", "高保真配音主力；跨语种 5 语种互通"],
+            ["v3 / v4", "24k→48k", "v3 引入流匹配声码（32 采样步），v4 修高频金属音并降步提速"],
+            ["v2Pro / v2ProPlus", "48kHz", "voice-workbench 主力训练档：官方硬规则 40k 必配 v1 配置；底模缺失时按官方做法不带 -pg/-pd（从零训）；训练顺序 s2→s1"],
+            ["v5dev / v5turbo", "48kHz", "上游 main 双变体：turbo 默认 4 步（官方 4060Ti RTF 0.028）、dev 32 步 + cfg_rate 1.30；免 SoVITS 微调显著提升相似度、新 vocoder 减高频伪影；纯推理底模（上游无 v5 训练配置）；依赖 py3.12 + torch2.7.1（Windows 有 flash-attn wheel），整合包 py3.9 无法承载"]
           ]
+        },
+        "callout": {
+          "title": "本项目实测",
+          "text": "v5 已以独立运行时接入（gsv5/，:9885，py3.12+torch2.7.1+cu128）：双变体 CPU 试金石通过（turbo RTF 2.49 / dev 19.2），GPU RTF 待显存窗口实测。Windows/WDDM 大坑：显存不足时 torch 溢出共享内存，GPU 100% 却长期不出结果——显存不够就等窗口或显式 CPU 模式，别硬跑。"
         }
       },
       {
         "heading": "CosyVoice / CosyVoice 2（阿里通义实验室）",
-        "meta": {
-          "status": "active",
-          "note": "多模态多语种高自然度 Flow Matching 代表"
-        },
+        "meta": { "status": "active", "note": "多模态多语种高自然度 Flow Matching 代表" },
         "paragraphs": [
           "CosyVoice 是阿里于 2024–2025 年开源的语音大模型体系，采用流匹配（Flow Matching）与多条件注入：",
           "<b>核心优势</b>：① 极强的情绪与韵律控制（支持在文本中插入 `<laughter>`、`<sigh>` 等富文本控制符）；② 卓越的多语言与跨语种能力（中、英、日、粤、韩），支持中文参考音频说纯正流利英语；③ 零样本复刻稳定性极佳，彻底消除了自回归模型的重复与吞字问题。"
@@ -172,6 +155,31 @@ const SECTIONS = [
         },
         "paragraphs": [
           "ChatTTS 专为对话场景设计：在每句发音中自动生成微妙的吸气、清嗓、轻笑与口语化停顿，听感非常接近真实人类在日常交谈或播客中的状态。适合有声书、对话机器人与长音频伴读。"
+        ]
+      },
+      {
+        "heading": "Confucius4-TTS / Confucius4-R2T2（网易有道的双引擎）",
+        "meta": { "status": "active", "note": "voice-workbench 主服务：免转写克隆 + 15 语种" },
+        "paragraphs": [
+          "<b>Confucius4-TTS</b>（1.3B，Apache-2.0）：零样本克隆且<b>免参考文本</b>——别的引擎要参考音频配逐字转写，它只吃音频；14/15 语种跨语种合成无口音，支持情感迁移。实测常驻显存约 4.9GB（fp16 分档后准入 5120MB），稳态 RTF 2.0~2.5。",
+          "<b>Confucius4-R2T2</b>（Qwen3-ASR 基座）：append-only 真流式转写，延迟 200~600ms。Windows 可用性结论（踩坑实测）：流式被源码写死 vLLM-only（Linux/容器），但<b>离线转写走 transformers 后端原生可行</b>（qwen-asr 纯 Python wheel 可装）；流式需 WSL2/Docker。显存槛约 5.5/6.5GB、MAX_INFERENCE_BATCH_SIZE=1 防 KV cache 爆。"
+        ]
+      },
+      {
+        "heading": "IndexTTS-2.5（情感向量精细可控）",
+        "meta": { "status": "active", "note": "补充定位：8 维情感向量 / 拼音注音 / 语速倍率" },
+        "paragraphs": [
+          "0.8B / BF16，5 语种，独有价值是<b>8 维情感向量</b>（全 0 等同跟随参考音频，多维可叠加由服务端归一）、拼音注音与语速倍率——通用引擎没有的精细控制面。",
+          "实测画像：官方口径 2~3GB 严重偏小，<b>实际常驻约 5.3GB</b>（w2v-bert、BigVGAN、QwenEmotion、codec 全算上）；暖态 RTF 约 2.2 但对显存竞争极敏感（被挤时 5~14）。权重全在本地时首跑仍要数分钟——上游对辅助模型做网络探测超时后才回退本地。"
+        ]
+      },
+      {
+        "heading": "Irodori-TTS（日语特化 + emoji 风格控制 + Speaker Inversion 音色固化）",
+        "meta": { "status": "active", "note": "日语 only；emoji 风格是官方训练期特性" },
+        "paragraphs": [
+          "日语特化推理引擎：emoji 白名单 56 个 + caption 自然语言描述双通道风格控制（官方训练时就带 emoji 标记，caption 实测能把 F0 拉开 1.77 倍）；int4 + 4 步 sway 实测 RTF 0.121，小显存卡上最快的引擎之一。",
+          "<b>两条实测红线</b>：① emoji 对男声参考基本无效（官方 issue #9 复现，F0 锁死 ±2Hz），只能承诺节奏与插入音类风格；② Windows 依赖链三坑——torchaudio 在 torch2.9 起委托 torchcodec（cu128 无 Windows wheel，静默 0 产出），需 soundfile 垫片且要在每个入口装。",
+          "<b>Speaker Inversion（SI）音色固化</b>：从同一个人 10 条以上带转写短句蒸馏 speaker embedding（产物仅几十 KB），合成免参考音频；工程三守卫——manifest 非空硬断言（部分失败=全失败）、产物读回校验、torch allocator 显存显式归还。上游 tarball 锁定（见 docs/IRODORI-TTS-EVALUATION.md）。"
         ]
       },
       {
@@ -231,6 +239,19 @@ const SECTIONS = [
             ]
           ]
         }
+      },
+      {
+        "heading": "So-VITS-SVC 4.0 / 5.0（歌声克隆的先驱与重器）",
+        "paragraphs": [
+          "专为歌声设计的 SVC 体系。相比 RVC，So-VITS-SVC 在极高音、颤音和复杂的声乐技巧还原上更细腻，但训练成本较高（通常需要 1~2 小时精选干音与更长 epoch），且对伴奏残留极为敏感。"
+        ]
+      },
+      {
+        "heading": "DDSP-SVC（voice-workbench 翻唱链路在用）",
+        "meta": { "status": "active", "note": "轻量、高频质感好；工程约定比 RVC 严格" },
+        "paragraphs": [
+          "DDSP（数字信号处理前端 + 神经后处理）架构的 SVC：参数量小、高频质感好、实时性好。工程上与 RVC 的关键差异：<b>.pt 权重不是自包含的</b>——采样率/编码器/F0 提取器/block_size 全在同目录 config.yaml 里，缺一个就加载不了；官方导出权重几乎都叫 model.pt，真正区分音色的是<b>所在目录名</b>（目录名即 id）；删除必须 .pt 与 config.yaml 成对删，否则留孤儿配置。"
+        ]
       },
       {
         "heading": "So-VITS-SVC 4.0 / 5.0（歌声克隆的先驱与重器）",
@@ -334,8 +355,31 @@ const SECTIONS = [
           "<b>① 吞字、漏字或无限复读</b>：这是自回归（GPT-SoVITS）最典型的注意力漂移。解决办法：① 降低 Temperature（从 1.0 降至 0.7~0.8）；② 调小 Top-P（0.7~0.8）；③ 检查参考音频音素标注是否精准；④ 将过长句子用标点切为多段合成。",
           "<b>② 变声后电音感过重或嘶哑</b>：① 检索特征比（Index Rate）开太高（降至 0.6~0.7）；② F0 音高算法换成 RMVPE；③ 检查目标干音是否本身带降噪残留的金属电音；④ 调小 Protect 参数至 0.33。",
           "<b>③ 音色不像目标人（音色泄露）</b>：① 确保伴随推理提供了对应的 `.index` 索引文件；② 提高 Index Rate 至 0.8；③ 如果男女跨度大，调整变调（男变女 +12，女变男 -12）。",
-          "<b>④ 显存爆满（CUDA Out of Memory）</b>：① 调小切片长度；② 启用半精度 fp16；③ 推理批大小（batch size）设为 1。"
+          "<b>④ 显存爆满（CUDA Out of Memory）</b>：① 调小切片长度；② 启用半精度 fp16；③ 推理批大小（batch size）设为 1。",
+          "<b>⑤ 显存溢出共享内存假死（Windows/WDDM）</b>：显存接近占满时 torch 把溢出部分搬进系统内存走 PCIe，表现为 GPU 利用率 100%、CPU 持续上涨、却长时间不出结果——不是死循环，是「在 PCIe 上算」。直接杀进程，腾显存或显式 CPU 模式重来。",
+          "<b>⑥ 权重下载选路</b>：老版 huggingface_hub 对 hf-mirror 的 HEAD 拿 308 不跟随（表现为 LocalEntryNotFoundError）；实测速度 ModelScope > 本机代理 > 直连（直连撞 Xet CDN SSL 错），下载脚本应按此顺序自动选路。",
+          "<b>⑦ 整合包 embedded Python</b>：python39._pth 完全忽略 PYTHONPATH 且不给 -m 提供 sys.path——子进程按文件路径启动、入口自己补项目根，别用 -m。",
+          "<b>⑧ 音频 I/O 与路径</b>：torch.save 的 Windows 路径对奇数个非 ASCII 字符必炸（用文件对象绕开）；RVC 返回的 int16 被 np.asarray(float32) 强转会 100% 削波（浮点约定 [-1,1] vs 整数刻度）；多声道数组 frames-first，老 librosa 习惯的转置会被 libsndfile 拒绝。"
         ]
+      },
+      {
+        "heading": "voice-workbench 落地实录：五运行时与显存门槛（Agent 必读）",
+        "meta": { "status": "active", "note": "本项目事实速查；显存门槛真源在服务端" },
+        "table": {
+          "title": "运行时端口与显存门槛（2026-10）",
+          "head": ["运行时", "端口", "解释器", "显存门槛（MB）", "一句话定位"],
+          "rows": [
+            ["GPT-SoVITS 整合包（trainer）", "9881", "整合包 py3.9 / torch2.0", "推理 3072 / 训练 6144（按精度与 batch 分档）", "训练链 + 批量 + 变声/翻唱/ASR（默认停用）"],
+            ["网易 Confucius4", "9882", "netease/.venv py3.12", "TTS fp16 5120 / R2T2 6144", "主服务：免转写克隆 + 流式转写"],
+            ["IndexTTS-2.5", "9883", "indextts/upstream/.venv py3.11", "3072（常驻实际约 5.3GB）", "情感向量精细可控"],
+            ["Irodori-TTS", "9884", "irodori/.venv py3.12 / torch2.10", "推理 4700 / 训练按 batch 分档", "日语特化 + SI 音色固化"],
+            ["GPT-SoVITS v5", "9885", "gsv5/.venv py3.12 / torch2.7.1", "turbo 3072 / dev 3584（待实测校准）", "新一代推理底模（纯推理）"]
+          ]
+        },
+        "callout": {
+          "title": "架构铁律",
+          "text": "显存门槛真源永远在服务端（前端只留兜底常量）；网关做跨进程资源仲裁（只作用于自有回环服务）；音色库 voicelib/ 是多进程共写的共享存储——任何 persist 前必须重读磁盘最新表。"
+        }
       }
     ]
   }
@@ -392,7 +436,19 @@ const GLOSSARY = [
     "cat": "前端",
     "def": "Grapheme-to-Phoneme，将自然语言字符转换为国际音标或特定拼音音素序列的前端处理模块。"
   }
-];
+,
+  { "term": "底模（Pretrained Model）", "category": "训练", "explanation": "官方预训练的基础权重；微调从它出发。缺失时按官方做法不带预训练参数从零训，而不是报错。" },
+  { "term": "干音（Dry Vocal）", "category": "数据", "explanation": "无混响、无伴奏、无底噪的纯净人声——训练集与变声源的硬标准。" },
+  { "term": "变调（Pitch Shift）", "category": "调优", "explanation": "音色转换时按半音整体升降音高对齐性别/音域；男变女 +12、女变男 -12 是八度基准。" },
+  { "term": "SVC（Singing Voice Conversion）", "category": "架构", "explanation": "歌声音色转换：干音轨转目标音色再与伴奏混音，对伴奏残留与颤音还原敏感。" },
+  { "term": "跨语种合成", "category": "概念", "explanation": "用 A 语种参考音频让模型说出 B 语种文本；口音质量取决于引擎的多语种能力。" },
+  { "term": "情感向量（Emotion Vector）", "category": "概念", "explanation": "多维（如 8 维）0~1 值直接描述情绪强度的控制面；全 0 通常等同跟随参考音频。" },
+  { "term": "Speaker Embedding（说话人嵌入）", "category": "架构", "explanation": "把说话人音色压缩成的定长向量（几十 KB）；音色固化训练的产物，合成时免参考音频。" },
+  { "term": "MHA 补丁污染", "category": "工程", "explanation": "上游框架在 import 期替换 torch 全局多头注意力函数的隐性耦合——同进程引入其它引擎时必查 F.multi_head_attention_forward.__module__。" },
+  { "term": "Latent（隐空间表征）", "category": "架构", "explanation": "编解码器中间特征；训练管线常把音频预编码成 latent 落盘以省显存与重复计算。" },
+  { "term": "Manifest（训练清单）", "category": "工程", "explanation": "音频-文本-latent 的索引文件（如 JSONL）；批处理静默跳过后必须做计数断言，防「训了一晚空数据集」。" },
+  { "term": "半精度（fp16/bf16）", "category": "工程", "explanation": "显存减半的代价是数值边界敏感：上游硬编码 fp32 的输入点要做 dtype 对齐，写盘前统一转 float32。" },
+  { "term": "准入门槛（VRAM Gate）", "category": "工程", "explanation": "引擎加载前的空闲显存检查；门槛随精度/batch 等参数分档，且必须先判「已加载就跳过」防自己拦自己。" }];
 
 const RESOURCES = [
   {
@@ -443,7 +499,11 @@ const RESOURCES = [
     "url": "https://github.com/openvpi/DiffSinger",
     "desc": "专业级基于扩散机制的高保真歌声合成引擎"
   }
-];
+,
+  { "name": "IndexTTS-2.5", "category": "TTS", "url": "https://github.com/index-tts/index-tts", "desc": "工业级零样本 TTS：8 维情感向量、拼音注音、语速倍率精细可控" },
+  { "name": "Confucius4-TTS", "category": "TTS", "url": "https://github.com/netease-youdao/Confucius4-TTS", "desc": "网易有道 1.3B 零样本克隆：免参考文本、跨语种无口音、情感迁移" },
+  { "name": "Confucius4-R2T2", "category": "ASR", "url": "https://github.com/netease-youdao/Confucius4-R2T2", "desc": "Qwen3-ASR 基座的 append-only 真流式转写（离线 transformers 后端 Windows 可用）" },
+  { "name": "DDSP-SVC", "category": "SVC", "url": "https://github.com/yxlllc/DDSP-SVC", "desc": "轻量高频质感好的歌声转换；.pt 必须配同目录 config.yaml" }];
 
 const RESOURCE_MAP = [
   { blockIdx: 0, resName: "GPT-SoVITS" },

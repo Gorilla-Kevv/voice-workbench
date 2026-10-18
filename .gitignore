@@ -80,3 +80,7 @@ gsv5/.venv/
 gsv5/upstream/
 gsv5/.uvcache/
 gsv5/smoke-out/
+
+# 知识收集缓存：用户手动收集物（可能含大文件），不进库；整合成果走 knowledge-atlas
+knowledge-inbox/*
+!knowledge-inbox/README.md

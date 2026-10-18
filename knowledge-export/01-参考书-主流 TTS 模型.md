@@ -4,7 +4,7 @@
 
 ### GPT-SoVITS（花儿不哭 · 经典开源王者）
 
-> 状态：现役主流 ｜ v1/v2/v2pro 演进，二次元与中文配音首选
+> 状态：现役主流 ｜ v1→v2→v2ProPlus 主力训练档，v5dev/v5turbo 新一代推理底模（2026-10 上游 main）
 
 GPT-SoVITS 由开源开发者 RVC-Boss（花儿不哭）开源，是中文社区影响力最大、落地最广泛的零样本及微调 TTS 框架：
 
@@ -12,13 +12,17 @@ GPT-SoVITS 由开源开发者 RVC-Boss（花儿不哭）开源，是中文社区
 
 **微调支持**：除了 5 秒零样本克隆，还支持用 1~10 分钟目标人声音频进行 **微调（Fine-Tuning）**，微调后在咬字准确度、长句稳定性和相似度上大幅碾压纯零样本方案。
 
-**GPT-SoVITS 关键版本与配置推荐**
+**版本演进与本地化结论（v5 情报截至 2026-10-18 上游 main 实查）**
 
-| 版本 | 采样率 | 适用场景 | 推荐参数 |
-|---|---|---|---|
-| v1 原始版 | 32kHz | 轻量设备、快速体验 | Top-K: 5, Top-P: 0.8, Temp: 1.0 |
-| v2 官方演进 | 48kHz | 高保真配音、细节饱满 | Top-K: 10, Top-P: 0.85, Temp: 0.8 |
-| v2pro / 社区魔改 | 48kHz / 多语种 | 游戏角色配音、跨语种克隆 | 微调步数: SoVITS 8~12 epoch, GPT 15 epoch |
+| 版本 | 采样率 | 定位与本项目结论 |
+|---|---|---|
+| v1 原始版 | 32kHz | 轻量起步；Top-K 5 / Top-P 0.8 |
+| v2 官方演进 | 48kHz | 高保真配音主力；跨语种 5 语种互通 |
+| v3 / v4 | 24k→48k | v3 引入流匹配声码（32 采样步），v4 修高频金属音并降步提速 |
+| v2Pro / v2ProPlus | 48kHz | voice-workbench 主力训练档：官方硬规则 40k 必配 v1 配置；底模缺失时按官方做法不带 -pg/-pd（从零训）；训练顺序 s2→s1 |
+| v5dev / v5turbo | 48kHz | 上游 main 双变体：turbo 默认 4 步（官方 4060Ti RTF 0.028）、dev 32 步 + cfg_rate 1.30；免 SoVITS 微调显著提升相似度、新 vocoder 减高频伪影；纯推理底模（上游无 v5 训练配置）；依赖 py3.12 + torch2.7.1（Windows 有 flash-attn wheel），整合包 py3.9 无法承载 |
+
+> 【本项目实测】v5 已以独立运行时接入（gsv5/，:9885，py3.12+torch2.7.1+cu128）：双变体 CPU 试金石通过（turbo RTF 2.49 / dev 19.2），GPU RTF 待显存窗口实测。Windows/WDDM 大坑：显存不足时 torch 溢出共享内存，GPU 100% 却长期不出结果——显存不够就等窗口或显式 CPU 模式，别硬跑。
 
 ### CosyVoice / CosyVoice 2（阿里通义实验室）
 
@@ -39,6 +43,32 @@ F5-TTS（Fair Forward Flow Matching）提出了一种无需音素持续时间预
 > 状态：经典架构 ｜ 首创高拟真语气词与口语停顿
 
 ChatTTS 专为对话场景设计：在每句发音中自动生成微妙的吸气、清嗓、轻笑与口语化停顿，听感非常接近真实人类在日常交谈或播客中的状态。适合有声书、对话机器人与长音频伴读。
+
+### Confucius4-TTS / Confucius4-R2T2（网易有道的双引擎）
+
+> 状态：现役主流 ｜ voice-workbench 主服务：免转写克隆 + 15 语种
+
+**Confucius4-TTS**（1.3B，Apache-2.0）：零样本克隆且**免参考文本**——别的引擎要参考音频配逐字转写，它只吃音频；14/15 语种跨语种合成无口音，支持情感迁移。实测常驻显存约 4.9GB（fp16 分档后准入 5120MB），稳态 RTF 2.0~2.5。
+
+**Confucius4-R2T2**（Qwen3-ASR 基座）：append-only 真流式转写，延迟 200~600ms。Windows 可用性结论（踩坑实测）：流式被源码写死 vLLM-only（Linux/容器），但**离线转写走 transformers 后端原生可行**（qwen-asr 纯 Python wheel 可装）；流式需 WSL2/Docker。显存槛约 5.5/6.5GB、MAX_INFERENCE_BATCH_SIZE=1 防 KV cache 爆。
+
+### IndexTTS-2.5（情感向量精细可控）
+
+> 状态：现役主流 ｜ 补充定位：8 维情感向量 / 拼音注音 / 语速倍率
+
+0.8B / BF16，5 语种，独有价值是**8 维情感向量**（全 0 等同跟随参考音频，多维可叠加由服务端归一）、拼音注音与语速倍率——通用引擎没有的精细控制面。
+
+实测画像：官方口径 2~3GB 严重偏小，**实际常驻约 5.3GB**（w2v-bert、BigVGAN、QwenEmotion、codec 全算上）；暖态 RTF 约 2.2 但对显存竞争极敏感（被挤时 5~14）。权重全在本地时首跑仍要数分钟——上游对辅助模型做网络探测超时后才回退本地。
+
+### Irodori-TTS（日语特化 + emoji 风格控制 + Speaker Inversion 音色固化）
+
+> 状态：现役主流 ｜ 日语 only；emoji 风格是官方训练期特性
+
+日语特化推理引擎：emoji 白名单 56 个 + caption 自然语言描述双通道风格控制（官方训练时就带 emoji 标记，caption 实测能把 F0 拉开 1.77 倍）；int4 + 4 步 sway 实测 RTF 0.121，小显存卡上最快的引擎之一。
+
+**两条实测红线**：① emoji 对男声参考基本无效（官方 issue #9 复现，F0 锁死 ±2Hz），只能承诺节奏与插入音类风格；② Windows 依赖链三坑——torchaudio 在 torch2.9 起委托 torchcodec（cu128 无 Windows wheel，静默 0 产出），需 soundfile 垫片且要在每个入口装。
+
+**Speaker Inversion（SI）音色固化**：从同一个人 10 条以上带转写短句蒸馏 speaker embedding（产物仅几十 KB），合成免参考音频；工程三守卫——manifest 非空硬断言（部分失败=全失败）、产物读回校验、torch allocator 显存显式归还。上游 tarball 锁定（见 docs/IRODORI-TTS-EVALUATION.md）。
 
 ### IndexTTS 与 Irodori（二次元与游戏领域特化引擎）
 

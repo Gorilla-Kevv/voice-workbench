@@ -14,7 +14,7 @@ const strip = (s) => String(s)
   .replace(/<b>(.*?)<\/b>/gs, "**$1**")
   .replace(/<code>(.*?)<\/code>/gs, "`$1`")
   .replace(/<br\s*\/?>/g, " ")
-  .replace(/<[^>]+>/g, "")
+  .replace(/<\/?[a-zA-Z][a-zA-Z0-9]*(\s[^<>]*)?\/?>/g, "")  // 只删真 HTML 标签；<2秒 这类正文尖括号必须保留
   .replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&amp;/g, "&").replace(/&quot;/g, '"')
   .trim();
 

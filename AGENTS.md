@@ -24,4 +24,5 @@ Single-context：根 `GLOSSARY.md` + `docs/adr/`（当前尚不存在，由 `/do
 - **核心数据源**：`knowledge-atlas/js/data.js` 与 Web 交互门户 `knowledge-atlas/index.html`；
 - **Markdown 规范手册包**：`knowledge-export/*.md`（覆盖 TTS 主流模型、ASR、RVC 声音克隆、AI 翻唱、音频工程与排障）；
 - **编译与同步**：知识变更后执行 `node knowledge-export/build.js` 重新生成手册；
-- **外部调研接入**：通过中枢调度器自动接收 `bili-duty-local/data/summaries/ai voice/` 的新总结成果。
+- **外部调研接入**：bili-duty skill 的检索产出在 `F:\schoolCompWorks\cloneili-duty-local\data\summaries`，其中 **`ai voice` 子目录是本项目要的路径**——调用 bili-duty 的场景，结果从这里读取。
+- **收集缓存与整合流程**：手动收集物放 `knowledge-inbox/`（gitignore）；触发整合时走五步流程：分析文件 → 产出报告 → 验证可行性 → 横向对比 → 整合进 data.js → `node knowledge-export/build.js`。流程细则见 `knowledge-inbox/README.md`。
