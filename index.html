@@ -18,7 +18,7 @@
         <span class="badge">voice-workbench</span>
       </div>
       <div class="search-wrap">
-        <input type="search" id="searchBox" placeholder="搜索术语与条目…" autocomplete="off" />
+        <input type="search" id="searchBox" placeholder="搜索术语 / 条目 / 资源…（按 / 聚焦）" autocomplete="off" />
         <div id="searchMeta" class="search-meta" hidden></div>
       </div>
       <nav class="nav-menu" id="navMenu" aria-label="知识篇目"></nav>
@@ -51,6 +51,50 @@
         .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
         .replace(/&lt;b&gt;([\s\S]*?)&lt;\/b&gt;/g, "<strong>$1</strong>")
         .replace(/`([^`]+)`/g, "<code>$1</code>");
+    }
+
+    const VIEWS = [
+      ...data.SECTIONS.map((s) => ({ id: s.id, label: `${s.icon} ${s.title}`, kind: "section", ref: s })),
+      { id: "glossary", label: "📖 术语速查", kind: "glossary" },
+      { id: "resources", label: "🔗 工具与资源", kind: "resources" },
+    ];
+
+    function card(heading, bodyHtml) {
+      return `<section class="knowledge-card"><h3>${renderInline(heading)}</h3>${bodyHtml}</section>`;
+    }
+
+    function renderGlossary() {
+      secTitle.textContent = "📖 术语速查";
+      secSummary.textContent = `声音领域核心术语 ${data.GLOSSARY.length} 条（与项目内 glossary.ts 同源维护）。`;
+      const cats = {};
+      data.GLOSSARY.forEach((g) => { (cats[g.category] = cats[g.category] || []).push(g); });
+      let html = "";
+      Object.keys(cats).forEach((cat) => {
+        const body = `<div class="glossary-grid">` + cats[cat].map((g) =>
+          `<div class="term-card"><div class="term-name">${renderInline(g.term)}</div>` +
+          `<div class="term-cat">${renderInline(g.category)}</div>` +
+          `<p>${renderInline(g.explanation)}</p></div>`).join("") + `</div>`;
+        html += card(`${cat} · ${cats[cat].length} 条`, body);
+      });
+      container.innerHTML = html;
+    }
+
+    function renderResources() {
+      secTitle.textContent = "🔗 工具与资源";
+      secSummary.textContent = `官方开源仓库 ${data.RESOURCES.length} 项。`;
+      const cats = {};
+      data.RESOURCES.forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
+      let html = "";
+      Object.keys(cats).forEach((cat) => {
+        const body = `<div class="res-grid">` + cats[cat].map((r) =>
+          `<a class="res-card" href="${r.url}" target="_blank" rel="noopener noreferrer">` +
+          `<div class="res-top"><span class="res-name">${renderInline(r.name)}</span><span class="res-arrow">↗</span></div>` +
+          `<div class="res-cat">${renderInline(r.category)}</div>` +
+          `<p>${renderInline(r.desc)}</p>` +
+          `<code class="res-url">${r.url.replace("https://", "")}</code></a>`).join("") + `</div>`;
+        html += card(`${cat} · ${cats[cat].length} 项`, body);
+      });
+      container.innerHTML = html;
     }
 
     function renderSection(sec) {
@@ -87,12 +131,12 @@
     /* 导航 + hash 路由：刷新/分享保状态（#/basics 等） */
     function buildNav() {
       nav.innerHTML = "";
-      data.SECTIONS.forEach((sec) => {
+      VIEWS.forEach((view) => {
         const btn = document.createElement("button");
         btn.className = "nav-btn";
         btn.type = "button";
-        btn.dataset.id = sec.id;
-        btn.textContent = `${sec.icon} ${sec.title}`;
+        btn.dataset.id = view.id;
+        btn.textContent = view.label;
         btn.onclick = () => { location.hash = `#/${sec.id}`; };
         nav.appendChild(btn);
       });
@@ -106,10 +150,13 @@
     }
 
     function route() {
-      const id = (location.hash.replace(/^#\//, "") || data.SECTIONS[0].id);
-      const sec = data.SECTIONS.find((s) => s.id === id) || data.SECTIONS[0];
-      setActive(sec.id);
-      renderSection(sec);
+      const id = (location.hash.replace(/^#\//, "") || VIEWS[0].id);
+      const view = VIEWS.find((v) => v.id === id) || VIEWS[0];
+      setActive(view.id);
+      if (view.kind === "section") renderSection(view.ref);
+      else if (view.kind === "glossary") renderGlossary();
+      else renderResources();
+      window.scrollTo({ top: 0 });
     }
     window.addEventListener("hashchange", route);
 
@@ -136,7 +183,30 @@
     }
 
     searchBox.addEventListener("input", () => {
-      const hits = searchText(searchBox.value);
+      const q = searchBox.value.trim().toLowerCase();
+      const hits = {};
+      let total = 0;
+      VIEWS.forEach((v) => {
+        let count = 0;
+        if (v.kind === "section") {
+          const sc = v.ref;
+          const inTitle = (sc.title + sc.en + sc.summary).toLowerCase().includes(q);
+          if (q) sc.sections.forEach((b) => {
+            const hay = [b.heading, b.meta && (b.meta.status + b.meta.note), ...(b.paragraphs || []),
+              b.table ? [b.table.title, ...b.table.head, ...b.table.rows.flat()] : [],
+              b.callout ? b.callout.title + b.callout.text : ""].flat().join(" ").toLowerCase();
+            if (hay.includes(q)) count += 1;
+          });
+          if (inTitle) count += 1;
+        } else if (v.kind === "glossary") {
+          count = q ? data.GLOSSARY.filter((g) => (g.term + g.category + g.explanation).toLowerCase().includes(q)).length : 0;
+        } else {
+          count = q ? data.RESOURCES.filter((r) => (r.name + r.category + r.desc + r.url).toLowerCase().includes(q)).length : 0;
+        }
+        if (count > 0) { hits[v.id] = count; total += count; }
+      });
+      searchMeta.hidden = !q;
+      searchMeta.textContent = !q ? "" : total > 0 ? `命中 ${total} 处（篇目 / 术语 / 资源）` : "无命中";
       document.querySelectorAll(".nav-btn").forEach((b) => {
         const hit = hits[b.dataset.id];
         b.classList.toggle("hit", !!hit);
