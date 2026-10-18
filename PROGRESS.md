@@ -3253,3 +3253,14 @@ from irodori_tts.duration import ALLOWED_ANNOTATION_EMOJIS -> 56 个
 - #9~#11 needs-triage 三票按规范**不替用户拍板**（#9 条件依赖 #4 真机验证、#10 需立项拷问、#11 用户曾叫停）。
 
 - 本次文档更新时间：10.17 22:20 [BY ZCode]（阶段 35补1：技能配置 + triage 11 票 + ready-for-agent 三票清空；真机训练闭环挂后台监控等窗口）
+
+## 阶段 36 —— GPT-SoVITS v5 本地化（v5dev / v5turbo 第五运行时）[计划时间：10.18 02:20 BY ZCode]
+
+- 分支：feature/vc-svc
+- 背景：用户报告上游 RVC-Boss/GPT-SoVITS 更新 v5 模型，要求本地化配置。调研结论（2026-10-18 实查上游仓库）：
+  - **v5 = 两个变体**：`v5dev`（默认 32 采样步 + cfg_rate 1.30，高质量档）与 `v5turbo`（默认 4 步，README 实测 RTF 0.028@4060Ti / 0.014@4090），核心代码已进上游 main（新模块 `module/models_v5.py` 的 `synthesize_v5_mel` + `TTS_infer_pack/TTS.py` 全线版本判断）；`cuda_graph_accel_v5` 分支相对 main 仅差文档与 py3.12 requirements。
+  - **权重**：HF `lj1995/GPT-SoVITS` 的 `gsv-v5-pretrained/{s2Gv5dev.pth, s2Gv5turbo.pth, vocoder.pth}`；t2s 沿用 `s1v3.ckpt`（整合包已有）。
+  - **硬约束**：官方依赖树为 **py3.12**（`requirements-py312-win-flash_attention/` 四套 cu118/cu128）；本地整合包（20250604，py3.9 + torch2.0+cu118）代码零 v5 支持且 runtime 跑不动 —— 「塞权重」路径不存在；上游也**尚未发布 v5 整合包**（最新 release 仍 20250606v2pro）。
+  - **方案**：对齐 indextts / irodori 的「独立运行时」先例——`gsv5/` 独立 venv（py3.12 + cu128）+ 上游 main 源码（upstream/ 只读）+ 权重下载校验 + 共享底模用 junction 复用整合包 + 网关透传 + 前端接入；**训练侧维持 v2ProPlus 整合包不动**（上游无 v5 训练配置，v5 现阶段是推理底模）。
+- 第一步（试金石）：裸环境直接调 TTS_infer_pack 跑通 v5turbo 合成一条，验证依赖树在 Windows 可行，再铺服务/网关/前端。
+- 所在分支：feature/vc-svc。验证命令（拟定）：试金石脚本 + `npm run typecheck` + 网关冒烟。
