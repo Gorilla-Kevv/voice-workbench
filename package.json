@@ -23,6 +23,7 @@
     "typecheck": "npm --prefix app run typecheck && npm --prefix server run typecheck",
     "dev:indextts": "node scripts/indextts.mjs",
     "indextts:check": "node scripts/indextts.mjs --check",
+    "dev:gsv5": "node scripts/gsv5.mjs",
     "dev:irodori": "node scripts/irodori.mjs",
     "irodori:check": "node scripts/irodori.mjs --check",
     "irodori:weights": "node scripts/irodori.mjs --weights"
