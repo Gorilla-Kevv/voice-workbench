@@ -8,6 +8,7 @@ import { resourcesRouter } from './resources.js';
 import { preloadRouter } from './preload.js';
 import { indexttsSummary } from './indextts.js';
 import { irodoriSummary } from './irodori.js';
+import { gsv5Summary } from './gsv5.js';
 import { neteaseSummary } from './netease.js';
 import { sovitsSummary } from './sovits.js';
 import { ttsRouter } from './tts.js';
@@ -63,6 +64,8 @@ apiRouter.get('/health', async (_req, res) => {
       indextts: await indexttsSummary(),
       /** Irodori（按需启动的日语模块，未启动是常态） */
       irodori: await irodoriSummary(),
+      /** GPT-SoVITS v5（按需启动的新一代底模，未启动是常态） */
+      gsv5: await gsv5Summary(),
       providers: {
         mimo: { available: true, requiresKey: !config.mimoApiKey },
         'gpt-sovits': { available: sovitsSummary().reachable },

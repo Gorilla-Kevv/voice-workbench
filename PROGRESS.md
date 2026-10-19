@@ -3,33 +3,21 @@
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
 ## 进度看板
-- 最新完成：**阶段 35 = 全站板块/页面一致性与规范审查**（10.17 15:41 BY ZCode）—— 16 页 × 9 维度静态巡检（结果栏/拖拽/资源卡/停用态/过时文案/TermTip/硬编码/错误处理/层次）：修 1 处交互违规（Irodori 训练页上传接 `useFileDrop`，30-7 遗漏）+ 8 处用户可见过时文案（「历史记录」→「产出记录」×6、设置页「两套模型」描述、保留条数 Label）；2 项建议级在案（TermTip 补 Indextts/Irodori 页、SynthesisPage 旧底座统一）；typecheck/eslint/build 全过
-- 当前正在开发任务：**阶段 30（P0）+ 31（P1）+ 32（P2）+ 33（P3·部分）已完成** —— 音色模型统一管理「看得见 + 管得住 + 产出可查 + 体验收尾」：网关 `modelRegistry.ts` + `/api/models/*` 全套读写；RVC 多根递归扫描使可见模型 5 → 18；`weight_root` 改指模型自身目录让**嵌套模型可加载**；**已执行真实迁移**，18 个 RVC 模型收口到 `models/rvc/`；**产出记录页取代历史记录**（三源合并：`GET /v1/jobs` + `/api/models/*` + 云端 IndexedDB）；阶段 33 补了**未识别文件提示**（散文件不再被静默丢弃）与**变声 / 翻唱两页模型库接统一数据源**，并给 ddsp-svc 补了两个兼容旧根避免模型消失
-- 最新完成：**阶段 29补2 = RVC 训练前端入口（T3）已落地**（10.12 13:47 BY Qoder）——「训练音色（RVC）」独立成卡，LoRA / 全量两条官方路径都在，全量表单带**提交前预检**；typecheck / eslint / vite build 全过，**真机冒烟待用户起服务走一遍**
-- 最新完成：**阶段 34 = GPT-SoVITS 两段式选择器**（零样本官方底模 / 微调自训权重）已落地（10.12 14:45 BY Qoder）—— `SovitsVoicePicker` 加权重来源 Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`；typecheck / eslint / vite build 全过，**真机冒烟待用户**
-- 最新完成：**阶段 30-1 = Irodori 环境与骨架**（10.12 18:15 BY Qoder）—— `irodori/` 服务骨架 + 独立 venv（py3.12 + torch 2.10.0+cu128，CUDA 可用、cc 8.9 int4 可用）+ 权重下载器（推理档 1.2GB 与上游代码全部字节校验通过）+ **Windows 解码垫片已生效** + `/health` 实测出 `required_vram_mb: 4700`；验证脚本 26/26
-- 最新完成：**阶段 30-2 = Irodori 推理链路**（10.13 01:50 BY Qoder）—— `/v1/catalog`（emoji 56 个 + 官方释义 45 条**从上游源码 ast 解析**）、`/v1/warmup|unload|synth|speakers`（懒加载 + 显存准入「已加载跳过」+ 日语校验 + 服务端切句 ≤25 字/段拼接 + 参考三形态互斥 + 409 合成互斥）+ 网关 `/api/irodori/*` 透传 + runtime/arbiter/preload/resources 四处记账；验证脚本 **31/31**（含网关透传真跑）；**C 段真机合成已于 10.13 19:00 跑通**（39/40，唯一失败是 RTF 阈值口径 —— 服务端口径本就高于阶段 28 的 bench 口径，已按实测改为 0.35）
-- 最新完成：**阶段 30-3 = Irodori 长尾护栏**（10.13 19:10 BY Qoder）—— **段间外推降步**（每段后外推整条耗时，超 `0.9×IRODORI_TIMEOUT` 就把剩余段降到 20 步 + 换 seed；依据阶段 28 实测 40 步 89s → 20 步 2.16s）+ **墙钟看门狗**（专用工作线程 + 504 `IRODORI_TIMEOUT`，带 `retry_suggestion`）；**加载不计入采样预算**（否则小预算首次请求必假超时）；超时后合成权留到孤儿线程段间检查点退出（期间 409 文案区分「仍在收尾」）；catalog 暴露 `guard` 段；前端 `lib/irodori.ts` + `types/irodori.ts`。验证脚本 **69/69**（56 项假 runtime 单测 + **13 项真机**：真机降步 200/`retried=true`、超预算 504/`downgraded=true`、收尾期 409）
-- 最新完成：**阶段 30-4 = 音色库多片段长参考**（10.13 20:10 BY Qoder）—— `VoiceRecord` 只加不改地新增可选 `ref_clips`（多片段长参考）/ `engine_tags`（适用引擎标注）/ `speaker_embeds`（30-6 训练产物位）；**两侧都不吞字段**（Node 的 `readIndex/_persist` 与 Python 的 `Voice.to_dict/_persist` 都只在有值时写键）；网关新增片段增删改 + 试听 4 个端点；**Irodori 侧补上回落链** —— `ref_voice` 现在「有长参考就用长参考，没有才回落 3~10s 主音频」，并在响应里回显 `ref_source`/`ref_clip_count`；前端音色库行展开新增「日语长参考」区（多片上传/逐片试听/逐片转写/引擎标签）。验证 **74 项**（Node 31 + Python 24 + Irodori 19，含真机走长参考合成）
-- 最新完成：**阶段 30-8 = 阶段 30 收尾（资源仲裁接完 + 预加载账本确认 + 修预加载 warmup 必失败的 timeout bug）**（10.17 15:25 BY ZCode）—— 核对确认服务端 arbiter/preload 早在 30-2 已接 Irodori，缺口全在前端：`lib/arbiter.ts` 类型补 `irodori-tts`/`irodori-training` 与 `service:'irodori'`、两个 Irodori 页面开跑前接 `focusBeforeRun`（warmup await / synth void / 整备 3600 / 训练 6h）、ResourceBudget 去掉「还没接仲裁器」分支、`lib/preload.ts` 补类型；**真 bug**：`preload.ts` 三处 warmup 的 `AbortSignal.timeout(0)` 注释写「不设超时」实际是 0ms 后中止（Node 实测 3s 请求 99ms 被打断）→ 启动预加载的 warmup 全部必失败，已改为不传 signal；typecheck/eslint/build 全过 + 网关运行时冒烟（focus 两个新引擎 200、伪造引擎 400、preload catalog 列 irodori 4700）；真机走查仍留用户（本轮显存 free 478MB）
-- 最新完成：**阶段 30-7 = 前端完整化（日语合成页 + 音色固化训练页 + 设置页开关 + 资源账本）**（10.17 02:03 BY Qoder）—— 两个页面都能用了：合成页（emoji 风格 + caption + 参考三选一含固化音色 + 护栏重试走服务端建议步数）、训练页（三步向导 + 自动体检 + 自动/手动 batch + 四阶段任务面板与 ETA + 取消 + 训完跳合成页）；侧栏新分组「Irodori · 日语特化」与第四路探活；设置页 Irodori 服务开关；资源账本补 `irodori-tts` / `irodori-training` 两档；新增 `docs/IRODORI-INTEGRATION.md`。typecheck / eslint / build 全过，网关联调冒烟通过（health / service / datasets / speakers / plan / auto_batch）。**浏览器整链路走查与耳朵验收待显存空闲时由用户补**
-- 最新完成：**阶段 30-6 = 训练 S3（Speaker Inversion 编排）**（10.16 04:19 BY Qoder）—— 自动 batch 探测 + 子进程训练编排（上游 `train.py` 只有 `__main__` 入口）+ 进度/取消/ETA + 产物核对（safetensors 读回 `speaker_embedding`）+ 登记进音色库；**真机闭环已跑通**：整备 6 条 → 训 100 步（loss 0.91→0.70，约 0.5s/步）→ `speaker_id` 合成出音 4.32s/48kHz；离线验证 68/68；修掉三个真机才暴露的问题（sys.path 漏入口 / latent 相对路径口径 / torch allocator 不还显存），新增坑 69~72
-- 最新完成：**阶段 30-5 = 训练 S1+S2（数据整备 + latent 编码 + manifest 非空硬断言 + JobStore）**（10.14 03:38 BY Qoder）—— `traindata.py`（三来源收集：音色库长参考 / 上传目录 / 显式列表，**来源互斥**；`DACVAECodec.encode_file` 直编 latent 写 `manifest.jsonl`）+ **守卫一落地**（`written` 不等于待编码条数一律 422 `TRAIN_MANIFEST_EMPTY`，且**不留**半份 manifest）+ `jobs.py`（形态对齐 trainer，取消用 Event、重启后 running 转 cancelled）+ `routers/train.py`（`plan`/`upload`/`prepare`/`datasets`/`jobs` 全套；S3 明确 501）+ catalog 训练段常量。验证脚本 **63/63**（含真机：20 条 → `written=20`；破坏解码全失败 / 部分失败均 422；取消留痕清理）
-- 下一阶段：**阶段 30 已全部收口（30-8 完成，10.17）**，剩**用户侧验证**：① 浏览器整链路走查（未启动 → 启动 → 合成 → 训练 → 固化 → 复用，需显存空闲 ≥4.7GB）；② 耳朵验收（音色像不像本人，产物在 `irodori/.data/speakers/`）；③ 启动预加载首次真验证（timeout bug 修复后选 Irodori 预加载走一遍）。之后的新功能候选：变声 / 翻唱合成下拉换源（低）、`ddsp-svc` 旧根收口（低）、DDSP-SVC 训练入口（需单独立项）
-- 可提前进行的任务：阶段 32/29补2/33 的三项真机验证（需用户起服务点一遍，agent 无法代劳）；**30-2 的 C 段真机合成补测**（腾显存后 `python .tmp/verify_irodori_infer.py`）；训练档权重下载（`npm run irodori:weights -- --training`，30-6 开工前必须完成）
-- 未完成的任务：阶段 30 的**浏览器整链路真机走查**（显存本轮 free 478MB 没做成）与**耳朵验收**（待用户）；训练档权重（bf16 2.9GB）**已下载完成**
-- 需用户拍板才动：阶段 30（计划）= Irodori-TTS 接入，卡在 4 个决策问题上（默认步数 / 训练步数 / 是否调 ASR / LoRA 开关）
-- 上一批已完成：阶段 27补7（侧栏与设置页状态打架）、阶段 27补6（显存误报 + 进程关不掉）、阶段 27补4（DDSP-SVC 音色加载入口）、阶段 28（Irodori-TTS 评估）
-- **GPT-SoVITS 训练链路核查（10.09，用户问询）**：三段全有 ——
-  ① 训练集格式化 ✅（11 阶段流水线：语料导入→UVR5→降噪→切分→ASR 转写→**生成训练清单**→BERT→HuBERT→说话人向量→语义 Token）；
-  ② 微调训练 ✅（s2 SoVITS + s1 GPT，`/v1/train/plan`、`/v1/train`、`/v1/train/upload`、`/v1/annotations`）；
-  ③ 推理用自训模型 ✅（`/v1/weights` 扫 `GPT_weights_v2ProPlus/` 等官方训练输出目录，`/v1/weights/load` 热切换）。
-  注意：训练产物落在 **GPT-SoVITS 安装目录下的官方权重目录**（非 `models/`），否则推理侧选不到 —— 与 P0 的「RVC 统一根」是两套约定，别混用。训练入口在「声音克隆」页
-- **阶段 29 = RVC 训练对齐官方 RVC WebUI 已开工**：后端对齐（T1 前置条件 / T2 参数 / T4 进度 / T5 mute）**已落地并验证 35/35**，详见下方「阶段 29」条目；剩余前端入口（T3）与真机冒烟见「阶段 29补1」。用户 10.09 明确要求「模型训练要与官方一致，需要修改前端增加入口之类的也必须做」
-- **再下一阶段（已立项，待用户答 4 个拍板问题）：阶段 30 = Irodori-TTS 接入（克隆 + 音色固化训练）**，方案见 `docs/IRODORI-INTEGRATION-PLAN.md`，详见下方「阶段 30（计划）」条目。用户 10.09 裁决「做克隆和训练」
-- 可提前进行的任务：R2T2 离线转写接入（HANDOFF 坑 12）；阶段 22 半成品的档位选择器；旧 `flowGuide.ts` 清理；主力拍板后回填 preload 账本与门槛值
-- 未完成的任务：阶段 11 的 WSL2 流式方案（已搁置）；fp16 音质 A/B（需用户听）；RVC / DDSP-SVC 的进程隔离（方案 C，目前无必要）；Irodori 的听感验收（样本在 `_bench/out/irodori/`）；**DDSP-SVC 训练入口**（阶段 27补4 只解决了「加载」，「训练」仍缺；上游是两段式契约，需单独立项）；**P2 的浏览器人工走查**（三条真实记录：变声 / 翻唱 / 训练，要能播、能复制本机路径，见阶段 32）；**变声 / 翻唱页换源后的真机加载验证**（见阶段 33）；**GPT-SoVITS 两段式选择器 + 合成下拉接注册表**（阶段 34）
-- 已否决的路线：**GPT-SoVITS 整体迁移到 Genie-TTS**（阶段 27 实测+源码核查）；**dots.tts 试点**（用户 10.08 明确"弃用，不考虑了"，看板旧条目已撤）
+- 最新完成：**阶段 37（K 系列）= AI 声音知识图谱与规范导出包**（10.19 03:15 BY ZCode）—— 对齐 `aiPaintingKownledge` 体系：7 篇 Markdown 核心规范手册（`knowledge-export/`）+ Linear 极简暗色交互门户（三大一等视图：篇目 / 术语速查 / 工具资源，全 token 化）+ 全局搜索 + hash 路由 + `knowledge-inbox` 收集缓存与 5 步整合工作流；`node knowledge-export/build.js` 10 份手册校验生成全通。
+- 最新完成：**阶段 36 = GPT-SoVITS v5 本地化（v5dev / v5turbo 第五运行时）**（10.18 15:10 BY ZCode，10.19 补齐源码与 launcher）—— 独立 venv(py3.12+cu128) + upstream 核心代码与权重就位 + 双变体试金石通 + 网关透传代理与 supervisor + 前端 `Gsv5Page` 全链路接入与体检通过（`node scripts/gsv5.mjs --check` 退出码 0）。
+- 最新完成：**阶段 35补1 = 工程技能配置 + 工作池 triage + ready-for-agent 清空**（10.17 22:20 BY ZCode）—— 规范标签体系落地，GitHub Issues 工作池 11 张票建立，#6 (TermTip 补三页) / #7 (SynthesisPage useResultStack 统一) / #8 (ddsp-svc 旧根收口真迁移) 全部交付并关票。
+- 当前正在开发任务 / 工作池跟踪（GitHub Issues）：
+  - `ready-for-agent` 0 张（已清空）；
+  - `ready-for-human` 5 张（#1~#5 真机走查：#1 产出记录三源合并、#2 RVC 训练前端入口、#3 GPT-SoVITS 两段式选择器、#4 变声/翻唱加载、#5 Irodori 整链路与耳朵验收）；
+  - `needs-triage` 3 张（#9 变声/翻唱合成下拉换源、#10 R2T2 离线转写接入、#11 网易合成页档位选择器）；
+- 硬件窗口状态：当前空闲显存 **~6.1 GB**（6124 MB free），具备真机运行、GPU 冒烟与推理验证条件。
+- 下一阶段任务：
+  1. 阶段 36 跟进：在设置页补全 GPT-SoVITS v5 服务开关卡，与 netease/indextts/irodori/sovits 开关卡齐平；
+  2. 针对 #9 / #10 / #11 评估推进或立项；
+  3. 用户侧真机走查（#1~#5，显存充足窗口可跑）。
+- 可提前进行的任务：利用当前 6.1GB 空闲显存执行 Irodori 训练/合成真机冒烟测试与 gsv5 GPU RTF 实测。
+- 未完成的任务：用户侧真机人工走查（#1~#5，含耳朵验收）。
+- 已否决路线：GPT-SoVITS 整体迁移到 Genie-TTS（阶段 27 否决）；dots.tts 试点（阶段 28 否决）。
 
 ## 编号说明（2026-10-06 合规整理时补记）
 - 历史上出现过**两组同号阶段**：「阶段 23」= 浏览器走查 与 文档修正、「阶段 24」= 全站拖拽导入 与 启动预加载。
@@ -3288,3 +3276,38 @@ warmup 复用与暖态 RTF 下降（5.17→3.16）确认；typecheck / eslint / 
 （本次手工 hf-mirror，入 weights.manifest 待做）。
 
 - 本次文档更新时间：10.18 15:10 [BY ZCode]（阶段 36 完成：v5 双变体试金石通 + 独立运行时/网关/前端全链路接入）
+
+## 阶段 37（K 系列）—— AI 声音知识图谱与规范导出包（知识体系建立、Linear 视觉重构与三视图）[计划时间：10.18 23:40 BY ZCode][完成时间：10.19 03:15 BY ZCode]
+
+- 分支：feature/vc-svc
+- 背景：对齐 `aiPaintingKownledge` 知识库标准体系，为本地语音工作台建立完整的 AI 声音知识图谱与 Markdown 规范导出包，覆盖主流 TTS 模型、ASR、RVC 声音克隆、AI 翻唱、音频数据工程与排障手册。
+
+### 已完成明细（K0 ~ K5）
+
+| 提交 | 阶段 | 内容 |
+| --- | --- | --- |
+| `36bd613` | **K0** 体系骨架 | 建立 `knowledge-atlas/`（Web 交互门户）与 `knowledge-export/`（Markdown 手册与 `build.js` 导出构建脚本）；AGENTS.md 写入知识规范 |
+| `01ff779` | **K1** 对照补全 | 修复 `build.js` strip 正则（非标签尖括号误删硬伤）；重写 GSV 版本表（v2ProPlus 主力 / v3-v4 / v5dev-v5turbo 双变体实测）；新增 Confucius4 双引擎 / IndexTTS-Irodori 实测画像 / DDSP-SVC 工程约定；排障手册补 Windows 工程坑 + 五运行时落地实录；术语 10→22，工具 8→12；建立 `knowledge-inbox/` 收集缓存与 5 步整合工作流 |
+| `d364bd8` / `4cf165e` | **K2** Fish Audio 整合 | 将 Fish Audio / Drama 3 调研包整合进知识图谱（35B MoE / 16 角色 / 48GB 档 / 开源边界与许可三档）；工具清单补 fish-speech；inbox 归档分析报告；修复 RESOURCE_MAP 误插尾锚坑 |
+| `1002598` | **K3** 交互与排版优化 | 知识图谱网页端 Read 模式优化：markdown 标记安全渲染（修复标签吞字符与星号裸显）、hash 路由状态保留、全文搜索高亮计数、移动端适配（≤900px 侧栏转顶滚）、排版宽度收敛（max-width 960）、表格横向滚动与斑马纹 |
+| `cdc85de` | **K4** Linear 视觉世界 | 网页端切换 Linear 极简暗色规范（canvas #010102、碳面板、发丝边框、薰衣草蓝单强调 #5e6ad2、Inter 负字距标题、全 token 化设计） |
+| `8d87409` / `7c7b896` | **K5** 三大一等视图重构 | 全页重构三大一等视图：篇目(7 篇) + 术语速查(22 词条分类卡片网格) + 工具资源(13 推荐外链卡)；全局搜索扩为三源；hash 路由覆盖三视图；css 增补 term-card / res-card 全 token 化样式 |
+| 本轮 | **收尾与对齐** | 补齐 gsv5 缺失服务源码与 `scripts/gsv5.mjs` launcher；修复 `routes/gsv5.ts` 代理文案与 `gsv5Summary` 导出；`/api/health` 汇总接入 gsv5 探活；核对 `node knowledge-export/build.js` 生成 10 份手册全通过 |
+
+### 测试结果
+
+| 项 | 结果 |
+| --- | --- |
+| `node knowledge-export/build.js` | 10 份 Markdown 规范手册重新生成与字符校验全通过 |
+| `node scripts/gsv5.mjs --check` | 退出码 0，4 份权重全部就绪，torch cuda=True |
+| `npm run typecheck` | app + server 双工程编译 0 报错 |
+| `npm run build` | 1908 modules transformed，生产构建打包成功 |
+
+### 下一阶段入口
+
+1. 设置页为 GPT-SoVITS v5 补全服务开关卡；
+2. 依据当前空闲显存（~6.1GB）推进真机走查或 GPU 实测；
+3. needs-triage 三张票（#9, #10, #11）立项推进。
+
+- 本次文档更新时间：10.19 12:56 [BY Antigravity]（阶段 37 完成：AI 声音知识图谱与规范导出包 K0~K5 体系建立、Linear 重构与三视图；gsv5 运行时服务源码恢复与健康检查补全）
+

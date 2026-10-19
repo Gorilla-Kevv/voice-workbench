@@ -46,10 +46,10 @@ function unavailable(res: Response, detail: string): void {
   res.status(503).json({
     ok: false,
     error: {
-      code: 'IRODORI_UNAVAILABLE',
-      message: `Irodori-TTS 本地服务不可用：${detail}`,
+      code: 'GSV5_UNAVAILABLE',
+      message: `GPT-SoVITS v5 本地服务不可用：${detail}`,
       retryable: true,
-      hint: 'Irodori 是按需启动的日语模块。在设置页打开开关，或运行 npm run dev:irodori（环境搭建见 docs/IRODORI-INTEGRATION-PLAN.md 与 irodori/README.md）。',
+      hint: 'GPT-SoVITS v5 是新一代推理底模服务。在设置页打开开关，或运行 npm run dev:gsv5。',
       details: {
         baseUrl: config.gsv5.baseUrl,
       },
@@ -72,9 +72,7 @@ function forward(req: Request, res: Response): void {
 
   // 挂载点已被 Express 剥离，req.url 就是 Python 侧的路径（含查询串）
   const path = req.url && req.url !== '' ? req.url : '/';
-  // 刻意宽于服务端的 IRODORI_TIMEOUT（180s）：长尾命中时让**服务端那个更有信息量的
-  // 504**（含「降步重试」提示）先到前端，而不是网关一句「上游无响应」
-  const timeoutMs = config.irodori.proxyTimeoutMs;
+  const timeoutMs = config.gsv5.proxyTimeoutMs;
 
   const proxyReq = http.request(
     {
@@ -96,7 +94,7 @@ function forward(req: Request, res: Response): void {
 
   proxyReq.on('error', (error: Error) => {
     markUnreachable(error.message);
-    logger.warn('Irodori 代理失败', { path, message: error.message });
+    logger.warn('GSV5 代理失败', { path, message: error.message });
     if (res.headersSent) {
       res.end();
       return;
@@ -144,7 +142,7 @@ function probeReachable(): Promise<boolean> {
 }
 
 /** 供 `/api/health` 汇总展示；带 5 秒缓存，避免 health 轮询打爆探测 */
-export async function irodoriSummary(): Promise<Record<string, unknown>> {
+export async function gsv5Summary(): Promise<Record<string, unknown>> {
   const fresh = Date.now() - cached.checkedAt < 5_000;
   if (!fresh) {
     const reachable = await probeReachable();

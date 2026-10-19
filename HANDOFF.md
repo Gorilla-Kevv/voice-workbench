@@ -48,8 +48,10 @@
 3. 训练流水线对齐官方 WebUI（12 阶段），含 UVR5 人声分离、切分、ASR、格式化、GPT/SoVITS 训练
 4. 全站术语提示系统（100 条术语 + 右侧官方流程指引）
 5. 新增板块：ASR 语音转文本、语音变声(RVC)、歌声转换(DDSP-SVC)（由并行工作产出）
-6. 网易模块（Confucius4-TTS / R2T2）：第二个 Python 运行时 `netease/` + 前端「网易模块」两个页面，
-   与现有链路完全共存（对比与方案见 `docs/NETEASE-INTEGRATION.md`）
+6. 网易模块（Confucius4-TTS / R2T2）：第二个 Python 运行时 `netease/` + 前端「网易模块」两个页面，与现有链路完全共存
+7. Irodori-TTS：第四个 Python 运行时 `irodori/`，日语特化克隆与 Speaker Inversion 固化训练，长尾护栏与多片段长参考
+8. GPT-SoVITS v5：第五个 Python 运行时 `gsv5/`，上游 main 核心源码与双变体（v5turbo / v5dev）零样本推理底模接入
+9. AI 声音知识图谱与规范导出包：`knowledge-atlas/` Linear 风格交互门户与 `knowledge-export/` 规范手册包，知识收集整合工作流 `knowledge-inbox/`
 
 ### 非目标
 
@@ -81,6 +83,10 @@
 | `netease/` | **第二个 Python 运行时**（py≥3.10）：`server.py`、`app/tts_engine.py`（Confucius4-TTS 直连）、`app/r2t2.py` + `app/r2t2_worker.py`（R2T2 子进程 worker，vLLM 需 main 环境）、`app/engine.py`（引擎互斥）。上游 API 漂移只改 `tts_engine.py` / `r2t2_worker.py` 两个薄文件 |
 | `indextts/` | **第三个 Python 运行时**（uv 环境在 `upstream/.venv`，py3.11 + torch 2.8 cu128）：`server.py`、`app/{config,hardware,errors,indextts_engine,api}.py`。上游 `upstream/` 是 `git clone --depth 1` 的官方仓库（不改一行），权重在 `upstream/checkpoints/`（5.11 GB，ModelScope 下载）。端点：`/health`、`/v1/catalog`、`/v1/pipeline|warmup|unload`、`/v1/synth`（multipart：text/lang/file 或 ref_path/duration_factor/emo_vector/emo_file/emo_alpha）。上游 API 漂移只改 `indextts_engine.py` 一个薄文件 |
 | `irodori/` | **第四个 Python 运行时**（venv 在 `irodori/.venv`，py3.12 + torch 2.10 cu128）：`server.py`、`app/{config,hardware,errors,inventory,windecode,api,engine,catalog,synth}.py`。`engine.py` 懒加载（上游 `get_cached_runtime` 单实例缓存）+ 显存准入（已加载跳过）+ 合成互斥；`catalog.py` 的 emoji 表**从上游源码 ast 解析**（不 import torch/gradio）；`synth.py` 收口日语校验 / 服务端切句 ≤25 字/段 / 参考三形态互斥。上游 `upstream/{Irodori-TTS,dacvae}/` 只读（tarball 来源锁定）；权重 `models/`、清单 `weights.manifest.json` 进版本库。端点：`/health`、`/v1/catalog|warmup|unload|synth|speakers`。上游 API 漂移只改 `engine.py`（RuntimeKey/SamplingRequest 映射）一个薄文件 |
+| `gsv5/` | **第五个 Python 运行时**（阶段 36）：venv 在 `gsv5/.venv`（py3.12 + torch 2.7.1 cu128），FastAPI 端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；纯推理底模（v5turbo 4 步 / v5dev 32 步）；`scripts/gsv5.mjs` launcher |
+| `knowledge-atlas/` | **AI 声音知识图谱 Web 交互门户**（阶段 37）：Linear 风格极简暗色规范（全 token 化）、三大一等视图（篇目 / 术语速查 / 工具资源）、全局搜索、hash 路由；核心数据源 `js/data.js` |
+| `knowledge-export/` | **Markdown 规范手册包**（阶段 37）：`build.js` 编译脚本从 `data.js` 导出 10 份规范手册，对齐 `aiPaintingKownledge` 体系 |
+| `knowledge-inbox/` | **知识收集缓存与整合流程**（阶段 37）：手动收集物放此目录（gitignore），五步整合流程（分析文件→产出报告→验证可行性→横向对比→整合进 data.js→重新编译） |
 | `voicelib/` | **音色库共享存储**（仓库根，不进版本库）：`voices.json` + `voices/<id>.<ext>`。网关（`server/src/services/voiceLibrary.ts`）与 trainer（`app/sovits/voices.py`）读写同一份，位置由 `VOICES_LIB_DIR` 统一覆盖。曾住 `trainer/.data/`，阶段 26补7 迁出（旧索引改名 `.migrated-to-voicelib` 保留） |
 
 ### 入口文件
@@ -1106,6 +1112,8 @@
 > 本次文档更新时间：10.17 15:41 [BY ZCode]（阶段 35：全站板块/页面一致性与规范审查——16 页 × 9 维度静态巡检；修 Irodori 训练页上传裸 input 未走 useFileDrop（坑 25 违规，30-7 遗漏）+ 8 处用户可见过时文案（「历史记录」→「产出记录」×6、设置页「两套模型」页头描述、「历史记录保留条数」→「云端记录保留条数」）；建议级 2 项在案（TermTip 补 Indextts/Irodori 页、SynthesisPage 旧 ResultPanel 底座统一）；纯前端改动，typecheck/eslint/build 全过）
 
 > 本次文档更新时间：10.17 22:20 [BY ZCode]（阶段 35补1：/setup-matt-pocock-skills 落地 + 工作池 triage 11 票（#1~#11，HANDOFF 下一步表已收敛至 GitHub Issues）+ ready-for-agent 三票清空——#6 TermTip 补三页 13 词条、#7 SynthesisPage 结果链路统一 useResultStack（切页返回不丢）、#8 ddsp-svc 旧根收口真迁移完成（上传落盘同步改新根）；真机训练闭环挂后台显存监控（≥4700MB 自动跑，结果 .tmp/autosmoke-result2.txt））
+
+> 本次文档更新时间：10.19 12:58 [BY Antigravity]（阶段 37：AI 声音知识图谱与规范导出包 K0~K5 体系建立、Linear 极简暗色重构与三大一等视图；gsv5 运行时服务源码恢复与 scripts/gsv5.mjs launcher 补全；/api/health 接入 gsv5 汇总；当前显存空闲 ~6.1GB）
 
 78. **显存不足时 GPU 推理会「溢出共享内存」假死（阶段 36 实测）**
     Windows + WDDM 下，显存接近占满时 torch 会把溢出的部分搬到**共享内存（系统内存 + PCIe 搬运）**，
