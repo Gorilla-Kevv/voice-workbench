@@ -3,35 +3,59 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="AI 声音知识图谱：TTS、ASR、RVC 声音克隆、AI 翻唱与音频工程的实战知识库，含 voice-workbench 五运行时落地实录。" />
+  <meta name="description" content="AI 声音知识总簿：TTS、ASR、RVC 声音克隆、AI 翻唱与音频工程的实战知识库，含 voice-workbench 五运行时落地实录。" />
   <title>AI 声音知识图谱 · 语音大模型与克隆全景</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Noto+Sans+SC:wght@400;500;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
 </head>
 <body>
-  <div class="app-layout">
-    <aside class="sidebar">
-      <div class="brand">
-        <h2>AI 声音<span>知识图谱</span></h2>
-        <span class="badge">voice-workbench</span>
+  <a class="skip-link" href="#contentView">跳到正文</a>
+
+  <header class="banner">
+    <div class="banner-inner">
+      <div class="banner-text">
+        <div class="vol-line">VOICE-WORKBENCH · 总簿 · 第一卷 · MMXXVI</div>
+        <h1 class="site-title">AI 声音知识图谱</h1>
+        <p class="site-sub">语音大模型与克隆全景 · 事实短、硬、可查 · 条号连续不断线</p>
       </div>
+      <div class="seal" aria-hidden="true">声音<br />总簿</div>
+    </div>
+  </header>
+  <div class="blackband" aria-hidden="true"></div>
+
+  <div class="sheet">
+    <aside class="rail">
       <div class="search-wrap">
-        <input type="search" id="searchBox" placeholder="搜索术语 / 条目 / 资源…（按 / 聚焦）" autocomplete="off" />
-        <div id="searchMeta" class="search-meta" hidden></div>
+        <input type="search" id="searchBox" placeholder="检索总簿…（按 / 聚焦）" autocomplete="off"
+               aria-label="全站检索：篇目、术语、资源" />
+        <div id="searchMeta" class="search-meta" hidden aria-live="polite"></div>
       </div>
-      <nav class="nav-menu" id="navMenu" aria-label="知识篇目"></nav>
-      <footer class="sidebar-foot">由 <code>knowledge-export/build.js</code> 生成 · 数据源 <code>knowledge-atlas/js/data.js</code></footer>
+      <nav class="toc" id="navMenu" aria-label="卷次总目">
+        <div class="toc-cap">卷 次 总 目</div>
+      </nav>
+      <footer class="rail-foot">由 <code>knowledge-export/build.js</code> 生成<br />数据源 <code>js/data.js</code></footer>
     </aside>
+
     <main class="content-view" id="contentView">
-      <header class="content-header" id="contentHeader">
-        <h1 id="secTitle">AI 声音知识体系</h1>
-        <p id="secSummary">系统梳理 TTS、ASR、RVC 声音克隆、AI 翻唱与音频工程。</p>
+      <header class="view-head" id="contentHeader">
+        <div class="kicker" id="secKicker"></div>
+        <h2 class="view-title" id="secTitle"></h2>
+        <p class="view-summary" id="secSummary"></p>
       </header>
-      <div class="blocks-container" id="blocksContainer"></div>
+      <div class="blocks" id="blocksContainer"></div>
     </main>
   </div>
+
+  <div class="earmark" id="earmark" aria-hidden="true">读到此页</div>
+
+  <footer class="site-foot">
+    <span>AI 声音知识图谱 · 总簿</span>
+    <span class="mono">knowledge-atlas / js/data.js 同源</span>
+    <span id="footVol">卷一</span>
+  </footer>
+
   <script src="js/data.js"></script>
   <script>
     const data = window.VOICE_KNOWLEDGE_DATA;
@@ -39,10 +63,20 @@
     const container = document.getElementById("blocksContainer");
     const secTitle = document.getElementById("secTitle");
     const secSummary = document.getElementById("secSummary");
+    const secKicker = document.getElementById("secKicker");
     const searchBox = document.getElementById("searchBox");
     const searchMeta = document.getElementById("searchMeta");
+    const earmark = document.getElementById("earmark");
+    const footVol = document.getElementById("footVol");
 
     const STATUS_TEXT = { active: "现役主流", classic: "经典架构", legacy: "偏旧参考" };
+    const VOLS = ["卷一", "卷二", "卷三", "卷四", "卷五", "卷六", "卷七"];
+
+    /* data.js 字段归一：GLOSSARY 同时存在 cat/def 与 category/explanation 两种形状，
+       category 在 10 条里为空字符串，可靠真源是 cat / def。 */
+    const gCat = (g) => g.cat || g.category || "杂项";
+    const gDef = (g) => g.def || g.explanation || "";
+    const rCat = (r) => r.cat || r.category || "杂项";
 
     /* 段落里的标记安全渲染：先整体转义 HTML（<laughter> 这类内容不能被浏览器当标签吞掉），
        再把数据源自己的 <b> 标记与 `code` 标记转回真实标签。顺序不能反。 */
@@ -53,165 +87,204 @@
         .replace(/`([^`]+)`/g, "<code>$1</code>");
     }
 
+    const pad3 = (n) => String(n).padStart(3, "0");
     const VIEWS = [
-      ...data.SECTIONS.map((s) => ({ id: s.id, label: `${s.icon} ${s.title}`, kind: "section", ref: s })),
-      { id: "glossary", label: "📖 术语速查", kind: "glossary" },
-      { id: "resources", label: "🔗 工具与资源", kind: "resources" },
+      ...data.SECTIONS.map((s, i) => ({ id: s.id, label: s.title, vol: VOLS[i], kind: "section", ref: s })),
+      { id: "glossary", label: "辞海 · 术语速查", vol: "辞海", kind: "glossary" },
+      { id: "resources", label: "资源簿 · 工具与资源", vol: "资源簿", kind: "resources" },
     ];
 
-    function card(heading, bodyHtml) {
-      return `<section class="knowledge-card"><h3>${renderInline(heading)}</h3>${bodyHtml}</section>`;
+    /* 导航（卷次总目）：真链接 hash 路由，搜索命中计数落在条目上 */
+    function buildNav() {
+      VIEWS.forEach((view) => {
+        const a = document.createElement("a");
+        a.className = "toc-link";
+        a.href = `#/${view.id}`;
+        a.dataset.id = view.id;
+        const vol = document.createElement("span");
+        vol.className = "toc-vol";
+        vol.textContent = view.vol;
+        const t = document.createElement("span");
+        t.className = "toc-t";
+        t.textContent = view.label;
+        const cnt = document.createElement("span");
+        cnt.className = "toc-cnt";
+        cnt.hidden = true;
+        a.append(vol, t, cnt);
+        nav.appendChild(a);
+      });
+    }
+
+    function tagHtml(meta) {
+      if (!meta) return "";
+      const status = STATUS_TEXT[meta.status] || meta.status || "";
+      const note = meta.note ? `<span class="tag-note">${renderInline(meta.note)}</span>` : "";
+      return status ? `<span class="tag">${status}</span>${note}` : note;
+    }
+
+    function tableHtml(table) {
+      return `<div class="table-scroll"><table class="data-table"><thead><tr>` +
+        table.head.map((h) => `<th>${renderInline(h)}</th>`).join("") +
+        `</tr></thead><tbody>` +
+        table.rows.map((r) => `<tr>${r.map((c) => `<td>${renderInline(c)}</td>`).join("")}</tr>`).join("") +
+        `</tbody></table></div>`;
+    }
+
+    function renderSection(sec, index) {
+      secKicker.innerHTML = `${VOLS[index]} · ${sec.en.toUpperCase()}`;
+      secTitle.textContent = sec.title;
+      secSummary.textContent = sec.summary;
+      let html = "";
+      sec.sections.forEach((b, bi) => {
+        html += `<section class="entry"><h3 class="entry-h">` +
+          `<span class="entryno">§${pad3(bi + 1)}</span><span class="entry-t">${renderInline(b.heading)}</span>` +
+          `</h3>${tagHtml(b.meta)}`;
+        (b.paragraphs || []).forEach((p) => { html += `<p>${renderInline(p)}</p>`; });
+        if (b.table) {
+          html += `<div class="tbl-cap">表 ${sec.sections.slice(0, bi + 1).filter((x) => x.table).length} · ${renderInline(b.table.title)}</div>` + tableHtml(b.table);
+        }
+        if (b.callout) {
+          html += `<div class="callout"><span class="callout-mark" aria-hidden="true"></span>` +
+            `<b class="callout-t">〔${renderInline(b.callout.title)}〕</b>` +
+            `<span class="callout-x">${renderInline(b.callout.text)}</span></div>`;
+        }
+        html += `</section>`;
+      });
+      container.innerHTML = html;
     }
 
     function renderGlossary() {
-      secTitle.textContent = "📖 术语速查";
-      secSummary.textContent = `声音领域核心术语 ${data.GLOSSARY.length} 条（与项目内 glossary.ts 同源维护）。`;
-      const cats = {};
-      data.GLOSSARY.forEach((g) => { (cats[g.category] = cats[g.category] || []).push(g); });
+      secKicker.innerHTML = `辞海 · TERMINOLOGY`;
+      secTitle.textContent = "辞海 · 术语速查";
+      secSummary.textContent = `声音领域核心术语 ${data.GLOSSARY.length} 条（与项目内 glossary.ts 同源维护）。按类分部，部下条目两栏密排。`;
+      const cats = new Map();
+      data.GLOSSARY.forEach((g) => {
+        const c = gCat(g);
+        if (!cats.has(c)) cats.set(c, []);
+        cats.get(c).push(g);
+      });
+      let pi = 0;
+      let gi = 0;
       let html = "";
-      Object.keys(cats).forEach((cat) => {
-        const body = `<div class="glossary-grid">` + cats[cat].map((g) =>
-          `<div class="term-card"><div class="term-name">${renderInline(g.term)}</div>` +
-          `<div class="term-cat">${renderInline(g.category)}</div>` +
-          `<p>${renderInline(g.explanation)}</p></div>`).join("") + `</div>`;
-        html += card(`${cat} · ${cats[cat].length} 条`, body);
+      cats.forEach((terms, cat) => {
+        html += `<section class="entry-group"><h3 class="group-h">` +
+          `<span class="group-no">部${"一二三四五六七八九十"[gi] || gi + 1} · ${renderInline(cat)}</span>` +
+          `<span class="group-cnt">${terms.length} 条</span></h3>`;
+        gi += 1;
+        terms.forEach((g) => {
+          pi += 1;
+          html += `<div class="term"><div class="term-name"><span class="entryno">¶${String(pi).padStart(2, "0")}</span>${renderInline(g.term)}</div>` +
+            `<p>${renderInline(gDef(g))}</p></div>`;
+        });
+        html += `</section>`;
       });
       container.innerHTML = html;
     }
 
     function renderResources() {
-      secTitle.textContent = "🔗 工具与资源";
-      secSummary.textContent = `官方开源仓库 ${data.RESOURCES.length} 项。`;
-      const cats = {};
-      data.RESOURCES.forEach((r) => { (cats[r.category] = cats[r.category] || []).push(r); });
+      secKicker.innerHTML = `资源簿 · RESOURCES`;
+      secTitle.textContent = "资源簿 · 工具与资源";
+      secSummary.textContent = `官方开源仓库 ${data.RESOURCES.length} 项。以簿式行目收录，外链一律新窗口打开。`;
+      const cats = new Map();
+      data.RESOURCES.forEach((r) => {
+        const c = rCat(r);
+        if (!cats.has(c)) cats.set(c, []);
+        cats.get(c).push(r);
+      });
       let html = "";
-      Object.keys(cats).forEach((cat) => {
-        const body = `<div class="res-grid">` + cats[cat].map((r) =>
-          `<a class="res-card" href="${r.url}" target="_blank" rel="noopener noreferrer">` +
-          `<div class="res-top"><span class="res-name">${renderInline(r.name)}</span><span class="res-arrow">↗</span></div>` +
-          `<div class="res-cat">${renderInline(r.category)}</div>` +
-          `<p>${renderInline(r.desc)}</p>` +
-          `<code class="res-url">${r.url.replace("https://", "")}</code></a>`).join("") + `</div>`;
-        html += card(`${cat} · ${cats[cat].length} 项`, body);
+      let ri = 0;
+      cats.forEach((items, cat) => {
+        html += `<section class="entry-group"><h3 class="group-h">` +
+          `<span class="group-no">${renderInline(cat)}</span>` +
+          `<span class="group-cnt">${items.length} 项</span></h3>`;
+        items.forEach((r) => {
+          ri += 1;
+          html += `<a class="res-row" href="${r.url}" target="_blank" rel="noopener noreferrer">` +
+            `<span class="res-no">R-${String(ri).padStart(2, "0")}</span>` +
+            `<span class="res-name">${renderInline(r.name)}</span>` +
+            `<span class="res-desc">${renderInline(r.desc)}</span>` +
+            `<span class="res-url mono">${r.url.replace("https://", "")}</span>` +
+            `<svg class="res-arrow" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 9.5 9.5 2.5M4 2.5h5.5V8" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>` +
+            `</a>`;
+        });
+        html += `</section>`;
       });
       container.innerHTML = html;
     }
 
-    function renderSection(sec) {
-      secTitle.textContent = `${sec.icon} ${sec.title} · ${sec.en}`;
-      secSummary.textContent = sec.summary;
-      container.innerHTML = "";
-
-      sec.sections.forEach((b) => {
-        const card = document.createElement("section");
-        card.className = "knowledge-card";
-        let html = `<h3>${renderInline(b.heading)}</h3>`;
-        if (b.meta) {
-          const status = STATUS_TEXT[b.meta.status] || b.meta.status || "";
-          html += `<div class="meta-tag">${status}${b.meta.note ? "｜" + renderInline(b.meta.note) : ""}</div>`;
-        }
-        (b.paragraphs || []).forEach((p) => { html += `<p>${renderInline(p)}</p>`; });
-        if (b.table) {
-          html += `<div class="table-title">${renderInline(b.table.title)}</div>` +
-            `<div class="table-scroll"><table class="data-table"><thead><tr>` +
-            b.table.head.map((h) => `<th>${renderInline(h)}</th>`).join("") +
-            `</tr></thead><tbody>` +
-            b.table.rows.map((r) => `<tr>` + r.map((c) => `<td>${renderInline(c)}</td>`).join("") + `</tr>`).join("") +
-            `</tbody></table></div>`;
-        }
-        if (b.callout) {
-          html += `<div class="callout-box"><b>【${renderInline(b.callout.title)}】</b>${renderInline(b.callout.text)}</div>`;
-        }
-        card.innerHTML = html;
-        container.appendChild(card);
-      });
-      window.scrollTo({ top: 0 });
-    }
-
-    /* 导航 + hash 路由：刷新/分享保状态（#/basics 等） */
-    function buildNav() {
-      nav.innerHTML = "";
-      VIEWS.forEach((view) => {
-        const btn = document.createElement("button");
-        btn.className = "nav-btn";
-        btn.type = "button";
-        btn.dataset.id = view.id;
-        btn.textContent = view.label;
-        btn.onclick = () => { location.hash = `#/${sec.id}`; };
-        nav.appendChild(btn);
-      });
-    }
-
     function setActive(id) {
-      document.querySelectorAll(".nav-btn").forEach((b) => {
-        b.classList.toggle("active", b.dataset.id === id);
-        if (b.dataset.id === id) b.scrollIntoView({ block: "nearest" });
+      document.querySelectorAll(".toc-link").forEach((a) => {
+        const on = a.dataset.id === id;
+        a.classList.toggle("active", on);
+        if (on) a.setAttribute("aria-current", "page");
+        else a.removeAttribute("aria-current");
       });
     }
 
     function route() {
       const id = (location.hash.replace(/^#\//, "") || VIEWS[0].id);
-      const view = VIEWS.find((v) => v.id === id) || VIEWS[0];
+      const idx = VIEWS.findIndex((v) => v.id === id);
+      const i = idx === -1 ? 0 : idx;
+      const view = VIEWS[i];
       setActive(view.id);
-      if (view.kind === "section") renderSection(view.ref);
+      if (view.kind === "section") renderSection(view.ref, i);
       else if (view.kind === "glossary") renderGlossary();
       else renderResources();
+      earmark.textContent = `读到此页 · ${view.vol}`;
+      footVol.textContent = view.vol;
+      document.title = `${view.label} · AI 声音知识图谱`;
       window.scrollTo({ top: 0 });
+      const main = document.getElementById("contentView");
+      main.classList.remove("settle");
+      void main.offsetWidth;
+      main.classList.add("settle");
     }
     window.addEventListener("hashchange", route);
 
-    /* 全文搜索：命中篇目在导航上高亮计数，输入清空即还原 */
-    function searchText(query) {
-      const q = query.trim().toLowerCase();
-      const hits = {};
-      if (!q) { searchMeta.hidden = true; return hits; }
-      let total = 0;
-      data.SECTIONS.forEach((sec) => {
-        let count = 0;
-        const inTitle = (sec.title + sec.en + sec.summary).toLowerCase().includes(q);
-        sec.sections.forEach((b) => {
-          const hay = [b.heading, b.meta && (b.meta.status + b.meta.note), ...(b.paragraphs || []),
-            b.table ? [b.table.title, ...b.table.head, ...b.table.rows.flat()] : [],
-            b.callout ? b.callout.title + b.callout.text : ""].flat().join(" ").toLowerCase();
-          if (inTitle || hay.includes(q)) count += 1;
-        });
-        if (inTitle || count > 0) { hits[sec.id] = count; total += inTitle ? count + 1 : count; }
-      });
-      searchMeta.hidden = false;
-      searchMeta.textContent = total > 0 ? `命中 ${total} 处，高亮篇目` : "无命中";
-      return hits;
+    /* 全文搜索：三源计数（篇目 / 辞海 / 资源簿），命中数落在导航条目上 */
+    function blockHay(b) {
+      return [b.heading, b.meta && (b.meta.status + b.meta.note), ...(b.paragraphs || []),
+        b.table ? [b.table.title, ...b.table.head, ...b.table.rows.flat()] : [],
+        b.callout ? b.callout.title + b.callout.text : ""].flat().join(" ").toLowerCase();
     }
-
     searchBox.addEventListener("input", () => {
       const q = searchBox.value.trim().toLowerCase();
-      const hits = {};
+      const perView = {};
       let total = 0;
       VIEWS.forEach((v) => {
-        let count = 0;
+        let c = 0;
         if (v.kind === "section") {
           const sc = v.ref;
-          const inTitle = (sc.title + sc.en + sc.summary).toLowerCase().includes(q);
-          if (q) sc.sections.forEach((b) => {
-            const hay = [b.heading, b.meta && (b.meta.status + b.meta.note), ...(b.paragraphs || []),
-              b.table ? [b.table.title, ...b.table.head, ...b.table.rows.flat()] : [],
-              b.callout ? b.callout.title + b.callout.text : ""].flat().join(" ").toLowerCase();
-            if (hay.includes(q)) count += 1;
-          });
-          if (inTitle) count += 1;
+          if (q && (sc.title + sc.en + sc.summary).toLowerCase().includes(q)) c += 1;
+          if (q) c += sc.sections.filter((b) => blockHay(b).includes(q)).length;
         } else if (v.kind === "glossary") {
-          count = q ? data.GLOSSARY.filter((g) => (g.term + g.category + g.explanation).toLowerCase().includes(q)).length : 0;
+          c = q ? data.GLOSSARY.filter((g) => (g.term + gCat(g) + gDef(g)).toLowerCase().includes(q)).length : 0;
         } else {
-          count = q ? data.RESOURCES.filter((r) => (r.name + r.category + r.desc + r.url).toLowerCase().includes(q)).length : 0;
+          c = q ? data.RESOURCES.filter((r) => (r.name + rCat(r) + r.desc + r.url).toLowerCase().includes(q)).length : 0;
         }
-        if (count > 0) { hits[v.id] = count; total += count; }
+        perView[v.id] = c;
+        total += c;
       });
       searchMeta.hidden = !q;
-      searchMeta.textContent = !q ? "" : total > 0 ? `命中 ${total} 处（篇目 / 术语 / 资源）` : "无命中";
-      document.querySelectorAll(".nav-btn").forEach((b) => {
-        const hit = hits[b.dataset.id];
-        b.classList.toggle("hit", !!hit);
-        b.title = hit ? `命中 ${hit} 个条目` : "";
+      searchMeta.textContent = !q ? "" : total > 0
+        ? `命中 ${total} 处（篇目 ${VIEWS.filter(v => v.kind === "section").reduce((s, v) => s + perView[v.id], 0)} / 辞海 ${perView.glossary} / 资源簿 ${perView.resources}）`
+        : "无命中";
+      document.querySelectorAll(".toc-link").forEach((a) => {
+        const hit = q ? perView[a.dataset.id] : 0;
+        a.classList.toggle("hit", hit > 0);
+        const cnt = a.querySelector(".toc-cnt");
+        cnt.textContent = String(hit);
+        cnt.hidden = !(hit > 0);
       });
+    });
+
+    /* 按 / 聚焦检索 */
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "/") return;
+      const t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      e.preventDefault();
+      searchBox.focus();
     });
 
     buildNav();
