@@ -38,13 +38,8 @@
       <footer class="rail-foot">由 <code>knowledge-export/build.js</code> 生成<br />数据源 <code>js/data.js</code></footer>
     </aside>
 
-    <main class="content-view" id="contentView">
-      <header class="view-head" id="contentHeader">
-        <div class="kicker" id="secKicker"></div>
-        <h2 class="view-title" id="secTitle"></h2>
-        <p class="view-summary" id="secSummary"></p>
-      </header>
-      <div class="blocks" id="blocksContainer"></div>
+    <main class="content-view settle" id="contentView">
+      <div id="sectionsContainer"></div>
     </main>
   </div>
 
@@ -60,10 +55,7 @@
   <script>
     const data = window.VOICE_KNOWLEDGE_DATA;
     const nav = document.getElementById("navMenu");
-    const container = document.getElementById("blocksContainer");
-    const secTitle = document.getElementById("secTitle");
-    const secSummary = document.getElementById("secSummary");
-    const secKicker = document.getElementById("secKicker");
+    const container = document.getElementById("sectionsContainer");
     const searchBox = document.getElementById("searchBox");
     const searchMeta = document.getElementById("searchMeta");
     const earmark = document.getElementById("earmark");
@@ -94,7 +86,7 @@
       { id: "resources", label: "资源簿 · 工具与资源", vol: "资源簿", kind: "resources" },
     ];
 
-    /* 导航（卷次总目）：真链接 hash 路由，搜索命中计数落在条目上 */
+    /* ---------- 导航（卷次总目） ---------- */
     function buildNav() {
       VIEWS.forEach((view) => {
         const a = document.createElement("a");
@@ -115,6 +107,7 @@
       });
     }
 
+    /* ---------- 视图渲染：全部章节一次性纵向排开，滚动连续 ---------- */
     function tagHtml(meta) {
       if (!meta) return "";
       const status = STATUS_TEXT[meta.status] || meta.status || "";
@@ -122,18 +115,15 @@
       return status ? `<span class="tag">${status}</span>${note}` : note;
     }
 
-    function tableHtml(table) {
-      return `<div class="table-scroll"><table class="data-table"><thead><tr>` +
-        table.head.map((h) => `<th>${renderInline(h)}</th>`).join("") +
-        `</tr></thead><tbody>` +
-        table.rows.map((r) => `<tr>${r.map((c) => `<td>${renderInline(c)}</td>`).join("")}</tr>`).join("") +
-        `</tbody></table></div>`;
+    function viewWrap(view, kicker, innerHtml) {
+      return `<section class="view" id="view-${view.id}" data-view-id="${view.id}">` +
+        `<header class="view-head"><div class="kicker">${kicker}</div>` +
+        `<h2 class="view-title">${renderInline(view.label)}</h2>` +
+        `<p class="view-summary">${view.summary || ""}</p></header>` +
+        `<div class="blocks">${innerHtml}</div></section>`;
     }
 
-    function renderSection(sec, index) {
-      secKicker.innerHTML = `${VOLS[index]} · ${sec.en.toUpperCase()}`;
-      secTitle.textContent = sec.title;
-      secSummary.textContent = sec.summary;
+    function sectionInner(sec) {
       let html = "";
       sec.sections.forEach((b, bi) => {
         html += `<section class="entry"><h3 class="entry-h">` +
@@ -141,7 +131,13 @@
           `</h3>${tagHtml(b.meta)}`;
         (b.paragraphs || []).forEach((p) => { html += `<p>${renderInline(p)}</p>`; });
         if (b.table) {
-          html += `<div class="tbl-cap">表 ${sec.sections.slice(0, bi + 1).filter((x) => x.table).length} · ${renderInline(b.table.title)}</div>` + tableHtml(b.table);
+          const tableNo = sec.sections.slice(0, bi + 1).filter((x) => x.table).length;
+          html += `<div class="tbl-cap">表 ${tableNo} · ${renderInline(b.table.title)}</div>` +
+            `<div class="table-scroll"><table class="data-table"><thead><tr>` +
+            b.table.head.map((h) => `<th>${renderInline(h)}</th>`).join("") +
+            `</tr></thead><tbody>` +
+            b.table.rows.map((r) => `<tr>${r.map((c) => `<td>${renderInline(c)}</td>`).join("")}</tr>`).join("") +
+            `</tbody></table></div>`;
         }
         if (b.callout) {
           html += `<div class="callout"><span class="callout-mark" aria-hidden="true"></span>` +
@@ -150,22 +146,17 @@
         }
         html += `</section>`;
       });
-      container.innerHTML = html;
+      return html;
     }
 
-    function renderGlossary() {
-      secKicker.innerHTML = `辞海 · TERMINOLOGY`;
-      secTitle.textContent = "辞海 · 术语速查";
-      secSummary.textContent = `声音领域核心术语 ${data.GLOSSARY.length} 条（与项目内 glossary.ts 同源维护）。按类分部，部下条目两栏密排。`;
+    function glossaryInner() {
       const cats = new Map();
       data.GLOSSARY.forEach((g) => {
         const c = gCat(g);
         if (!cats.has(c)) cats.set(c, []);
         cats.get(c).push(g);
       });
-      let pi = 0;
-      let gi = 0;
-      let html = "";
+      let pi = 0, gi = 0, html = "";
       cats.forEach((terms, cat) => {
         html += `<section class="entry-group"><h3 class="group-h">` +
           `<span class="group-no">部${"一二三四五六七八九十"[gi] || gi + 1} · ${renderInline(cat)}</span>` +
@@ -178,21 +169,17 @@
         });
         html += `</section>`;
       });
-      container.innerHTML = html;
+      return html;
     }
 
-    function renderResources() {
-      secKicker.innerHTML = `资源簿 · RESOURCES`;
-      secTitle.textContent = "资源簿 · 工具与资源";
-      secSummary.textContent = `官方开源仓库 ${data.RESOURCES.length} 项。以簿式行目收录，外链一律新窗口打开。`;
+    function resourcesInner() {
       const cats = new Map();
       data.RESOURCES.forEach((r) => {
         const c = rCat(r);
         if (!cats.has(c)) cats.set(c, []);
         cats.get(c).push(r);
       });
-      let html = "";
-      let ri = 0;
+      let ri = 0, html = "";
       cats.forEach((items, cat) => {
         html += `<section class="entry-group"><h3 class="group-h">` +
           `<span class="group-no">${renderInline(cat)}</span>` +
@@ -209,39 +196,85 @@
         });
         html += `</section>`;
       });
-      container.innerHTML = html;
+      return html;
     }
 
-    function setActive(id) {
+    const renderers = {
+      section: (v, i) => viewWrap(v, `${VOLS[i]} · ${v.ref.en.toUpperCase()}`, sectionInner(v.ref)),
+      glossary: (v) => viewWrap(v, "辞海 · TERMINOLOGY", glossaryInner()),
+      resources: (v) => viewWrap(v, "资源簿 · RESOURCES", resourcesInner()),
+    };
+
+    /* 视图摘要：篇目用 data.js 的 summary，辞海/资源簿在此定一句 */
+    const SUMMARIES = {
+      glossary: `声音领域核心术语 ${data.GLOSSARY.length} 条（与项目内 glossary.ts 同源维护）。按类分部，部下条目两栏密排。`,
+      resources: `官方开源仓库 ${data.RESOURCES.length} 项。以簿式行目收录，外链一律新窗口打开。`,
+    };
+    VIEWS.forEach((v) => { if (!v.summary) v.summary = SUMMARIES[v.id]; });
+
+    const SEP = `<div class="view-sep" aria-hidden="true"></div>`;
+    container.innerHTML = VIEWS.map((v, i) => renderers[v.kind](v, i)).join(SEP);
+
+    /* ---------- 卷次状态：滚动跟随（scrollspy）+ 点击跳章 ---------- */
+    const viewEls = [...container.querySelectorAll(".view")];
+    let currentId = null;
+
+    function setCurrent(id) {
+      if (id === currentId || !id) return;
+      currentId = id;
+      const view = VIEWS.find((v) => v.id === id);
       document.querySelectorAll(".toc-link").forEach((a) => {
         const on = a.dataset.id === id;
         a.classList.toggle("active", on);
         if (on) a.setAttribute("aria-current", "page");
         else a.removeAttribute("aria-current");
       });
-    }
-
-    function route() {
-      const id = (location.hash.replace(/^#\//, "") || VIEWS[0].id);
-      const idx = VIEWS.findIndex((v) => v.id === id);
-      const i = idx === -1 ? 0 : idx;
-      const view = VIEWS[i];
-      setActive(view.id);
-      if (view.kind === "section") renderSection(view.ref, i);
-      else if (view.kind === "glossary") renderGlossary();
-      else renderResources();
       earmark.textContent = `读到此页 · ${view.vol}`;
       footVol.textContent = view.vol;
       document.title = `${view.label} · AI 声音知识图谱`;
-      window.scrollTo({ top: 0 });
-      const main = document.getElementById("contentView");
-      main.classList.remove("settle");
-      void main.offsetWidth;
-      main.classList.add("settle");
+      history.replaceState(null, "", `#/${id}`);
     }
-    window.addEventListener("hashchange", route);
 
-    /* 全文搜索：三源计数（篇目 / 辞海 / 资源簿），命中数落在导航条目上 */
+    /* 滚动跟随：直接执行（9 次 getBoundingClientRect 开销可忽略）；
+       不用 rAF 节流——页面在后台面板时 rAF 会冻结，scrollspy 会死 */
+    function onScroll() {
+      const line = window.scrollY + window.innerHeight * 0.4;
+      let cur = viewEls[0];
+      for (const el of viewEls) {
+        if (el.getBoundingClientRect().top + window.scrollY <= line) cur = el;
+      }
+      if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2) {
+        cur = viewEls[viewEls.length - 1];
+      }
+      setCurrent(cur.dataset.viewId);
+    }
+    window.addEventListener("scroll", onScroll, { passive: true });
+
+    function scrollToView(id, behavior) {
+      const el = document.getElementById(`view-${id}`);
+      if (!el) return;
+      /* 后台面板/隐藏标签页里平滑滚动（rAF 驱动）会冻结——不可见时改 instant 保证落位 */
+      const b = behavior === "smooth" && document.visibilityState !== "visible" ? "instant" : behavior;
+      el.scrollIntoView({ behavior: b, block: "start" });
+    }
+
+    /* 点击左侧标题 → 平滑滚到该章 */
+    nav.addEventListener("click", (e) => {
+      const a = e.target.closest(".toc-link");
+      if (!a) return;
+      e.preventDefault();
+      scrollToView(a.dataset.id, "smooth");
+      setCurrent(a.dataset.id);
+    });
+
+    /* hash 直达（分享链接 / 前进后退）：#/basics 等 */
+    function idFromHash() {
+      const h = location.hash.replace(/^#\//, "");
+      return VIEWS.some((v) => v.id === h) ? h : VIEWS[0].id;
+    }
+    window.addEventListener("hashchange", () => scrollToView(idFromHash(), "smooth"));
+
+    /* ---------- 全文搜索：三源逐卷计数（篇目 / 辞海 / 资源簿） ---------- */
     function blockHay(b) {
       return [b.heading, b.meta && (b.meta.status + b.meta.note), ...(b.paragraphs || []),
         b.table ? [b.table.title, ...b.table.head, ...b.table.rows.flat()] : [],
@@ -267,7 +300,7 @@
       });
       searchMeta.hidden = !q;
       searchMeta.textContent = !q ? "" : total > 0
-        ? `命中 ${total} 处（篇目 ${VIEWS.filter(v => v.kind === "section").reduce((s, v) => s + perView[v.id], 0)} / 辞海 ${perView.glossary} / 资源簿 ${perView.resources}）`
+        ? `命中 ${total} 处（篇目 ${VIEWS.filter((v) => v.kind === "section").reduce((s, v) => s + perView[v.id], 0)} / 辞海 ${perView.glossary} / 资源簿 ${perView.resources}）`
         : "无命中";
       document.querySelectorAll(".toc-link").forEach((a) => {
         const hit = q ? perView[a.dataset.id] : 0;
@@ -287,8 +320,14 @@
       searchBox.focus();
     });
 
+    /* ---------- 初始化 ---------- */
+    /* 浏览器的滚动位置恢复会盖过 hash 定位——定位权收归页面逻辑（hash 直达 / 顶部） */
+    if ("scrollRestoration" in history) history.scrollRestoration = "manual";
     buildNav();
-    route();
+    const initial = idFromHash();
+    setCurrent(initial);
+    if (initial !== VIEWS[0].id) scrollToView(initial, "instant");
+    onScroll();
   </script>
 </body>
 </html>

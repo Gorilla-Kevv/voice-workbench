@@ -35,7 +35,7 @@
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
-html { scrollbar-color: var(--paper-3) var(--paper-2); }
+html { scrollbar-color: var(--paper-3) var(--paper-2); scroll-behavior: smooth; }
 
 body {
   background: var(--paper);
@@ -164,9 +164,13 @@ a { color: var(--blue); text-underline-offset: 3px; }
 }
 .rail-foot code { font-size: 11px; color: var(--ink-2); }
 
-/* ---------- 正文 ---------- */
+/* ---------- 正文：连续卷章 ---------- */
 
 .content-view { padding: var(--s-8) var(--s-12) var(--s-16); min-width: 0; }
+
+/* 章与章之间：全黑隔页带（记忆之塔捐的呼吸纪律），滚动节奏的分章标点 */
+.view { scroll-margin-top: 16px; }
+.view-sep { height: 12px; background: var(--ink); margin: var(--s-16) 0; }
 
 .settle { animation: settle 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
 @keyframes settle {
@@ -359,6 +363,7 @@ a { color: var(--blue); text-underline-offset: 3px; }
   .rail-foot { display: none; }
 
   .content-view { padding: var(--s-6) var(--s-6) var(--s-12); }
+  .view-sep { margin: var(--s-8) 0; }
   .earmark { display: none; }
   .site-foot { padding: var(--s-3) var(--s-6); flex-wrap: wrap; }
 }
