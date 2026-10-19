@@ -36,6 +36,7 @@ import {
   notifyServiceEnabledChanged,
   runtimeServiceApi,
   type LocalServiceState,
+  type RuntimeServiceId,
   type RuntimeServiceState,
 } from '@/lib/localService';
 import { preloadApi, type PreloadCatalog, type PreloadPreference } from '@/lib/preload';
@@ -253,8 +254,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
     netease: RuntimeServiceState | null;
     indextts: RuntimeServiceState | null;
     irodori: RuntimeServiceState | null;
-  }>({ netease: null, indextts: null, irodori: null });
-  const [runtimeToggling, setRuntimeToggling] = useState<'netease' | 'indextts' | 'irodori' | null>(null);
+    gsv5: RuntimeServiceState | null;
+  }>({ netease: null, indextts: null, irodori: null, gsv5: null });
+  const [runtimeToggling, setRuntimeToggling] = useState<RuntimeServiceId | null>(null);
   /** GPT-SoVITS 高级配置（推理权重 / 默认值 / 批量）在行内是否展开 */
   const [sovitsAdvanced, setSovitsAdvanced] = useState(false);
 
@@ -270,6 +272,10 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
     runtimeServiceApi
       .state('irodori')
       .then((next) => setRuntimeStates((prev) => ({ ...prev, irodori: next })))
+      .catch(() => undefined);
+    runtimeServiceApi
+      .state('gsv5')
+      .then((next) => setRuntimeStates((prev) => ({ ...prev, gsv5: next })))
       .catch(() => undefined);
   }, []);
 
@@ -304,7 +310,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
   /** 给被锚点命中的区块加一圈临时高亮 */
   const flashRing = (id: string) => (flashId === id ? 'ring-2 ring-violet-500/70 transition-shadow' : '');
 
-  const toggleRuntimeService = async (id: 'netease' | 'indextts' | 'irodori', enabled: boolean) => {
+  const toggleRuntimeService = async (id: RuntimeServiceId, enabled: boolean) => {
     setRuntimeToggling(id);
     try {
       const result = await runtimeServiceApi.toggle(id, enabled);
@@ -606,6 +612,56 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
                 checked={runtimeStates.irodori?.enabled ?? false}
                 disabled={runtimeToggling === 'irodori' || runtimeStates.irodori == null}
                 onCheckedChange={(checked) => void toggleRuntimeService('irodori', checked === true)}
+              />
+            </div>
+          </div>
+
+          {/* GPT-SoVITS v5（新一代自回归底模，:9885） */}
+          <div id="settings-service-gsv5" className={cn('flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3', flashRing('settings-service-gsv5'))}>
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-medium">
+                GPT-SoVITS v5
+                <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9885</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                新一代纯自回归（AR-only）零样本克隆底模（v5turbo 4步 / v5dev 32步）。
+                默认<strong>关闭</strong>按需启动；环境体检：
+                <code className="mx-1 rounded bg-muted px-1">node scripts/gsv5.mjs --check</code>
+                （或 <code className="mx-1 rounded bg-muted px-1">npm run gsv5:check</code>）。
+              </p>
+              {runtimeStates.gsv5 && !runtimeStates.gsv5.enabled && runtimeStates.gsv5.reachable ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  检测到未托管的进程仍在 :9885 上运行（多为终端手动启动）。打开右侧开关可由网关接管；
+                  关闭开关则会把它收掉并归还显存。
+                </p>
+              ) : null}
+              {runtimeStates.gsv5 && !runtimeStates.gsv5.reachable && runtimeStates.gsv5.lastError ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">{runtimeStates.gsv5.lastError}</p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-3 pt-1">
+              <Badge
+                variant={runtimeStates.gsv5?.enabled && runtimeStates.gsv5?.reachable ? 'default' : 'secondary'}
+                className={cn(
+                  'h-6 text-[11px]',
+                  runtimeStates.gsv5?.enabled &&
+                    runtimeStates.gsv5?.reachable &&
+                    'bg-emerald-600 hover:bg-emerald-600',
+                )}
+              >
+                {runtimeStates.gsv5?.starting
+                  ? '启动中…'
+                  : runtimeStates.gsv5?.enabled && runtimeStates.gsv5?.reachable
+                    ? '运行中'
+                    : runtimeStates.gsv5?.enabled
+                      ? '未就绪'
+                      : '未启动'}
+              </Badge>
+              <Switch
+                aria-label="启用 GPT-SoVITS v5 服务"
+                checked={runtimeStates.gsv5?.enabled ?? false}
+                disabled={runtimeToggling === 'gsv5' || runtimeStates.gsv5 == null}
+                onCheckedChange={(checked) => void toggleRuntimeService('gsv5', checked === true)}
               />
             </div>
           </div>

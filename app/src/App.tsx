@@ -16,6 +16,7 @@ import { getProvider } from '@/lib/providers/registry';
 import { neteaseApi } from '@/lib/netease';
 import { indexttsApi } from '@/lib/indextts';
 import { irodoriApi } from '@/lib/irodori';
+import { gsv5Api } from '@/lib/gsv5';
 import { sovitsApi } from '@/lib/sovits';
 import { localServiceApi, runtimeServiceApi } from '@/lib/localService';
 import { AsrPage } from '@/pages/AsrPage';
@@ -212,6 +213,8 @@ function App() {
     indexttsTts: 'checking',
     // Irodori 是第四个独立服务（按需启动，:9884），探活同样单独一轮
     irodoriTts: 'checking',
+    // GPT-SoVITS v5 是第五个独立服务（按需启动，:9885），探活单独一轮
+    gsv5Tts: 'checking',
   });
 
   const history = useHistory(settings.historyLimit);
@@ -273,6 +276,7 @@ function App() {
       let nextModules: ModuleStates = {
         rvc: 'offline', svc: 'offline', asr: 'offline',
         neteaseTts: 'offline', neteaseAsr: 'offline', indexttsTts: 'offline', irodoriTts: 'offline',
+        gsv5Tts: 'offline',
       };
       try {
         // 1. 先问 supervisor：用户到底要不要这个服务（这里三块卡 rvc/svc/asr 共享）
@@ -298,11 +302,12 @@ function App() {
               rvc: caps?.voice_conversion ? 'ready' : 'incomplete',
               svc: caps?.singing_conversion ? 'ready' : 'incomplete',
               asr: caps?.speech_recognition ? 'ready' : 'incomplete',
-              // 保留网易 / IndexTTS / Irodori 各自探活循环的结果，不要被这轮覆盖
+              // 保留网易 / IndexTTS / Irodori / GSV5 各自探活循环的结果，不要被这轮覆盖
               neteaseTts: 'checking',
               neteaseAsr: 'checking',
               indexttsTts: 'checking',
               irodoriTts: 'checking',
+              gsv5Tts: 'checking',
             };
           }
         }
@@ -310,13 +315,14 @@ function App() {
         // 连不上就是「还没起来」，与「起来了但没就绪」在这里无需区分
       }
       if (cancelled) return;
-      // rvc/svc/asr 用本轮结果整体替换；网易、IndexTTS、Irodori 归它们自己的探活循环管，这里原样保留
+      // rvc/svc/asr 用本轮结果整体替换；网易、IndexTTS、Irodori、GSV5 归它们自己的探活循环管，这里原样保留
       setModuleStates((prev) => ({
         ...nextModules,
         neteaseTts: prev.neteaseTts,
         neteaseAsr: prev.neteaseAsr,
         indexttsTts: prev.indexttsTts,
         irodoriTts: prev.irodoriTts,
+        gsv5Tts: prev.gsv5Tts,
       }));
 
       if (healthy) {
@@ -485,7 +491,46 @@ function App() {
     };
   }, [serviceChangedTick]);
 
-  // 设置页 toggle 任何本地服务（GPT-SoVITS / 网易 / IndexTTS / Irodori）→ 广播 service-enabled-changed。
+  // GPT-SoVITS v5 的探活：第五个独立运行时（按需启动，:9885），策略与其它独立服务相同。
+  // 只有 supervisor 同意（enabled=true）且健康探针通过（cuda + 权重就绪）才报 ready。
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const startedAt = Date.now();
+
+    const probe = async () => {
+      let nextState: ModuleState = 'offline';
+      try {
+        const supervisor = await runtimeServiceApi.state('gsv5');
+        if (cancelled) return;
+        if (supervisor.enabled) {
+          const gsv5Health = await gsv5Api.health();
+          if (cancelled) return;
+          const weightsReady = Object.values(gsv5Health.weights).every(Boolean);
+          nextState = gsv5Health.ok && weightsReady ? 'ready' : 'incomplete';
+        }
+      } catch {
+        // supervisor 也拿不到：保持 offline
+      }
+      if (cancelled) return;
+      setModuleStates((prev) => ({ ...prev, gsv5Tts: nextState }));
+
+      if (nextState === 'ready') {
+        timer = window.setTimeout(probe, SOVITS_READY_POLL_MS);
+        return;
+      }
+      const wait = Date.now() - startedAt < SOVITS_FAST_WINDOW_MS ? SOVITS_FAST_RETRY_MS : SOVITS_SLOW_RETRY_MS;
+      timer = window.setTimeout(probe, wait);
+    };
+
+    void probe();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [serviceChangedTick]);
+
+  // 设置页 toggle 任何本地服务（GPT-SoVITS / 网易 / IndexTTS / Irodori / GSV5）→ 广播 service-enabled-changed。
   // 上面两个探活 effect 都通过 serviceChangedTick 订阅，看到值变了立刻重启、不必等定时器窗。
   useEffect(() => {
     if (typeof window === 'undefined') return;

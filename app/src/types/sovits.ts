@@ -209,6 +209,10 @@ export interface ModuleStates {
    * 侧栏要回答的是「Irodori 服务在不在」，而不是「某个页面能不能用」。
    */
   irodoriTts: ModuleState;
+  /**
+   * GPT-SoVITS v5：第五个运行时（gsv5/，:9885）；「未启动」是常态（按需启动）。
+   */
+  gsv5Tts: ModuleState;
 }
 
 /**

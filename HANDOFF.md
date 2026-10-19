@@ -31,6 +31,7 @@
 | 网易 | `netease/.venv/Scripts/python.exe`（**必须用它**，整合包 python 缺 `confuciustts`） |
 | IndexTTS | `indextts/.venv/`（`scripts/indextts.mjs` 会自己找） |
 | **Irodori** | `irodori/.venv/Scripts/python.exe`；权重在 `irodori/models/`、上游代码在 `irodori/upstream/`（都在 gitignore 里）；清单 `irodori/weights.manifest.json` **进版本库** |
+| **GPT-SoVITS v5** | `gsv5/.venv/Scripts/python.exe`（py3.12+cu128）；入口 `scripts/gsv5.mjs`（:9885）；体检 `npm run gsv5:check` |
 | uv（建 venv 用） | `C:\Users\kevin\.local\bin\uv`；⚠️ **缓存默认在 `D:\AI_Cache\uv`，沙箱里写不进去** → 先 `export UV_CACHE_DIR=<工作区内>` |
 
 ### 分支
@@ -50,7 +51,7 @@
 5. 新增板块：ASR 语音转文本、语音变声(RVC)、歌声转换(DDSP-SVC)（由并行工作产出）
 6. 网易模块（Confucius4-TTS / R2T2）：第二个 Python 运行时 `netease/` + 前端「网易模块」两个页面，与现有链路完全共存
 7. Irodori-TTS：第四个 Python 运行时 `irodori/`，日语特化克隆与 Speaker Inversion 固化训练，长尾护栏与多片段长参考
-8. GPT-SoVITS v5：第五个 Python 运行时 `gsv5/`，上游 main 核心源码与双变体（v5turbo / v5dev）零样本推理底模接入
+8. GPT-SoVITS v5：第五个 Python 运行时 `gsv5/`，上游 main 核心源码与双变体（v5turbo / v5dev）零样本推理底模接入，SettingsPage 服务卡与侧栏状态卡全链路贯通
 9. AI 声音知识图谱与规范导出包：`knowledge-atlas/` Linear 风格交互门户与 `knowledge-export/` 规范手册包，知识收集整合工作流 `knowledge-inbox/`
 
 ### 非目标
@@ -1114,6 +1115,8 @@
 > 本次文档更新时间：10.17 22:20 [BY ZCode]（阶段 35补1：/setup-matt-pocock-skills 落地 + 工作池 triage 11 票（#1~#11，HANDOFF 下一步表已收敛至 GitHub Issues）+ ready-for-agent 三票清空——#6 TermTip 补三页 13 词条、#7 SynthesisPage 结果链路统一 useResultStack（切页返回不丢）、#8 ddsp-svc 旧根收口真迁移完成（上传落盘同步改新根）；真机训练闭环挂后台显存监控（≥4700MB 自动跑，结果 .tmp/autosmoke-result2.txt））
 
 > 本次文档更新时间：10.19 12:58 [BY Antigravity]（阶段 37：AI 声音知识图谱与规范导出包 K0~K5 体系建立、Linear 极简暗色重构与三大一等视图；gsv5 运行时服务源码恢复与 scripts/gsv5.mjs launcher 补全；/api/health 接入 gsv5 汇总；当前显存空闲 ~6.1GB）
+
+> 本次文档更新时间：10.19 13:28 [BY Antigravity]（阶段 38：GPT-SoVITS v5 设置页服务控制卡与全站状态卡贯通，SettingsPage / AppShell / App.tsx 探活与 package.json 脚本全链路闭环，typecheck/build 全绿）
 
 78. **显存不足时 GPU 推理会「溢出共享内存」假死（阶段 36 实测）**
     Windows + WDDM 下，显存接近占满时 torch 会把溢出的部分搬到**共享内存（系统内存 + PCIe 搬运）**，

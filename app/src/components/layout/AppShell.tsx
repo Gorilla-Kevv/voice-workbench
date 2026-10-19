@@ -150,6 +150,18 @@ const MODULE_STATUS_TEXT: Record<
       offline: { title: 'Irodori · 未启动', hint: '按需模块：设置页打开，或 npm run dev:irodori（:9884）' },
     },
   },
+  gsv5Tts: {
+    label: 'GSV5',
+    states: {
+      checking: { title: 'GSV5 · 正在连接', hint: 'gsv5 服务探测中，稍候自动恢复' },
+      ready: { title: 'GSV5 · 已就绪', hint: 'GPT-SoVITS v5 底模就绪（v5turbo/dev · 极速推理）' },
+      incomplete: {
+        title: 'GSV5 · 待补齐',
+        hint: 'CUDA 不可用或权重缺失：跑 node scripts/gsv5.mjs --check 体检',
+      },
+      offline: { title: 'GSV5 · 未启动', hint: '按需模块：设置页打开，或 npm run dev:gsv5（:9885）' },
+    },
+  },
 };
 
 /** 导航按「用哪个模型」分组，避免用户在两条链路之间迷路 */
@@ -294,6 +306,7 @@ const SETTINGS_SECTION_OF: Record<string, string> = {
   neteaseAsr: 'service-netease',
   indexttsTts: 'service-indextts',
   irodoriTts: 'service-irodori',
+  gsv5Tts: 'service-gsv5',
   sovits: 'service-sovits',
   rvc: 'service-sovits',
   svc: 'service-sovits',
@@ -315,6 +328,7 @@ export function AppShell({
   moduleStates = {
     rvc: 'checking', svc: 'checking', asr: 'checking',
     neteaseTts: 'checking', neteaseAsr: 'checking', indexttsTts: 'checking', irodoriTts: 'checking',
+    gsv5Tts: 'checking',
   },
   onOpenSettingsSection,
 }: AppShellProps) {
@@ -329,7 +343,7 @@ export function AppShell({
       return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;
     }),
     { id: 'sovits', state: sovitsState, title: sovits.title, hint: sovits.hint, icon: 'server' },
-    ...(['rvc', 'svc', 'asr', 'indexttsTts', 'irodoriTts'] as const).map((key) => {
+    ...(['rvc', 'svc', 'asr', 'indexttsTts', 'irodoriTts', 'gsv5Tts'] as const).map((key) => {
       const module = MODULE_STATUS_TEXT[key];
       const state = moduleStates[key];
       return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;

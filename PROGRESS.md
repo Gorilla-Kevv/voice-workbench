@@ -3,6 +3,7 @@
 > 按 `token-efficient-agent-workflow` 规范维护。每阶段独立、可验证、可交接。
 
 ## 进度看板
+- 最新完成：**阶段 38 = GPT-SoVITS v5 设置页服务控制与全站状态卡贯通**（10.19 13:26 BY Antigravity）—— 设置页补齐 `settings-service-gsv5` 本地服务卡（:9885，状态指示灯/未托管进程检测/最后错误提示/平滑启停 Switch）；侧栏状态卡与锚点路由接入 `gsv5Tts`；App.tsx 增加独立探活循环并与 supervisor 联动；`package.json` 补齐 `gsv5:check` 脚本；双工程 typecheck 与 production build 全绿。
 - 最新完成：**阶段 37（K 系列）= AI 声音知识图谱与规范导出包**（10.19 03:15 BY ZCode）—— 对齐 `aiPaintingKownledge` 体系：7 篇 Markdown 核心规范手册（`knowledge-export/`）+ Linear 极简暗色交互门户（三大一等视图：篇目 / 术语速查 / 工具资源，全 token 化）+ 全局搜索 + hash 路由 + `knowledge-inbox` 收集缓存与 5 步整合工作流；`node knowledge-export/build.js` 10 份手册校验生成全通。
 - 最新完成：**阶段 36 = GPT-SoVITS v5 本地化（v5dev / v5turbo 第五运行时）**（10.18 15:10 BY ZCode，10.19 补齐源码与 launcher）—— 独立 venv(py3.12+cu128) + upstream 核心代码与权重就位 + 双变体试金石通 + 网关透传代理与 supervisor + 前端 `Gsv5Page` 全链路接入与体检通过（`node scripts/gsv5.mjs --check` 退出码 0）。
 - 最新完成：**阶段 35补1 = 工程技能配置 + 工作池 triage + ready-for-agent 清空**（10.17 22:20 BY ZCode）—— 规范标签体系落地，GitHub Issues 工作池 11 张票建立，#6 (TermTip 补三页) / #7 (SynthesisPage useResultStack 统一) / #8 (ddsp-svc 旧根收口真迁移) 全部交付并关票。
@@ -12,7 +13,7 @@
   - `needs-triage` 3 张（#9 变声/翻唱合成下拉换源、#10 R2T2 离线转写接入、#11 网易合成页档位选择器）；
 - 硬件窗口状态：当前空闲显存 **~6.1 GB**（6124 MB free），具备真机运行、GPU 冒烟与推理验证条件。
 - 下一阶段任务：
-  1. 阶段 36 跟进：在设置页补全 GPT-SoVITS v5 服务开关卡，与 netease/indextts/irodori/sovits 开关卡齐平；
+  1. 依据当前空闲显存（~6.1GB）推进真机走查或 GPU 实测（Gsv5 / Irodori）；
   2. 针对 #9 / #10 / #11 评估推进或立项；
   3. 用户侧真机走查（#1~#5，显存充足窗口可跑）。
 - 可提前进行的任务：利用当前 6.1GB 空闲显存执行 Irodori 训练/合成真机冒烟测试与 gsv5 GPU RTF 实测。
@@ -3310,4 +3311,36 @@ warmup 复用与暖态 RTF 下降（5.17→3.16）确认；typecheck / eslint / 
 3. needs-triage 三张票（#9, #10, #11）立项推进。
 
 - 本次文档更新时间：10.19 12:56 [BY Antigravity]（阶段 37 完成：AI 声音知识图谱与规范导出包 K0~K5 体系建立、Linear 重构与三视图；gsv5 运行时服务源码恢复与健康检查补全）
+
+## 阶段 38 — GPT-SoVITS v5 设置页服务控制与全站状态卡贯通 [计划时间：10.19 13:10 BY Antigravity][完成时间：10.19 13:26 BY Antigravity]
+
+- 分支：feature/vc-svc
+- 背景：阶段 36 落地了 GPT-SoVITS v5（:9885）作为第五独立 Python 运行时并交付了合成页与后端代理/supervisor，但在全站层级遗留了：设置页无开关卡（用户无法在 UI 直观启停）、侧栏无状态卡与锚点绑定（无法快速查看 GSV5 运行与健康态）、App.tsx 缺独立探活循环。本阶段对齐 netease / indextts / irodori 规范，完成全链路补齐。
+
+### 已完成明细
+
+| 模块 | 改动内容 |
+| --- | --- |
+| `app/src/pages/SettingsPage.tsx` | ① `runtimeStates` 与 `refreshRuntimeStates` 扩充 `gsv5`；② `toggleRuntimeService` 参数对齐 `RuntimeServiceId`；③ 渲染 `GPT-SoVITS v5 (:9885)` 服务卡（`id="settings-service-gsv5"`，flashRing 锚点高亮、未托管进程检测、最后错误提示、运行状态徽标、启用 Switch） |
+| `app/src/components/layout/AppShell.tsx` | ① `MODULE_STATUS_TEXT` 补全 `gsv5Tts` 四态文案与提示；② `SETTINGS_SECTION_OF` 接入 `gsv5Tts: 'service-gsv5'` 锚点；③ `statusCards` 与默认 `moduleStates` 接入 `gsv5Tts` |
+| `app/src/types/sovits.ts` | `ModuleStates` 接口增加 `gsv5Tts: ModuleState` 字段 |
+| `app/src/App.tsx` | ① `moduleStates` 初始态增加 `gsv5Tts: 'checking'`；② `sovitsApi.health()` probe 流程补全 `gsv5Tts` 字段占位与原样保留；③ 新增独立的 `gsv5` 探活 `useEffect`（监听 `serviceChangedTick`，经 `runtimeServiceApi.state('gsv5')` 与 `gsv5Api.health()` 双重验证后流转状态） |
+| `package.json` | 增补 `"gsv5:check": "node scripts/gsv5.mjs --check"` 快捷体检脚本 |
+
+### 测试结果
+
+| 测试项 | 结果 |
+| --- | --- |
+| `node scripts/gsv5.mjs --check` | 退出码 0，Python 3.12.10，torch 2.7.1+cu128 cuda=True，4 份权重全部 True，体检通过 |
+| `npm run typecheck` | app & server 双工程 TypeScript 编译 0 报错 |
+| `npm run build` | 1908 模块打包成功，Vite 构建与 Server 构建全通过 |
+
+### 下一阶段入口
+
+1. 依据当前空闲显存（~6.1GB）推进真机走查或 GPU 实测（Gsv5 / Irodori）；
+2. 针对 #9 / #10 / #11 评估推进或立项；
+3. 用户侧真机走查（#1~#5，显存充足窗口可跑）。
+
+- 本次文档更新时间：10.19 13:26 [BY Antigravity]（阶段 38 完成：GPT-SoVITS v5 设置页服务控制卡与全站状态卡贯通，build 全绿）
+
 
