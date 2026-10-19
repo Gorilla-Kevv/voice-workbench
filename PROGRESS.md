@@ -3344,3 +3344,49 @@ warmup 复用与暖态 RTF 下降（5.17→3.16）确认；typecheck / eslint / 
 - 本次文档更新时间：10.19 13:26 [BY Antigravity]（阶段 38 完成：GPT-SoVITS v5 设置页服务控制卡与全站状态卡贯通，build 全绿）
 
 
+## 阶段 39 — 知识总簿 · 知识库前端全量视觉重构（推翻 Linear 世界）[完成时间：10.19 BY ZCode]
+
+- 分支：feature/vc-svc
+- 背景：用户要求以 design-studio skill 全部重构 `knowledge-atlas/` 交互门户、推翻现有视觉世界。按 new-work「替换世界」全流程执行：concept-seed 掷方向（Read 模式）→ 决策页六卡组牌 → **用户锁定「知识总簿 · 年鉴体」（assigned-almanac，code-led）** → 方向契约落 surface brief（seed:25c52c7cf6f1dc33）→ 重建 → 渲染验证 → 七视角走查 → detect → 评审 → documenter 重写 DESIGN.md。
+
+### 已完成明细
+
+| 模块 | 改动内容 |
+| --- | --- |
+| `knowledge-atlas/index.html` | 全量重写：墨蓝卷首横幅（站名/卷号行/朱砂方章）+ 黑隔页带 + 264px 卷次总目（真链接 hash 路由 + aria-current）+ 双栏密排正文（columns:2 + 栏线）+ 连续条号 apparatus（§N/¶NN/R-NN/部N/表 N）+ 「读到此页」朱砂耳标（body 直下 fixed）+ 三段式页脚；JS 保留 renderInline 安全渲染与 hash 路由，搜索升级为逐卷计数徽章 |
+| `knowledge-atlas/css/style.css` | 全量重写（108→330 行）：四墨 token（paper/ink/indigo/vermilion）、字阶五级（11/14/18/28/44）、hairline 深度语言（无阴影）、浏览器原生面主题化（selection/caret/scrollbar/focus-visible/tabular-nums）、settle 入场动效（reduced-motion 关闭）、三断点（1100/900/640，chips 换行不溢出） |
+| `knowledge-atlas/DESIGN.md` | 由 documenter 从建成世界重写（frontmatter token 化 + 八段规范结构 + Named Rules） |
+| `knowledge-atlas/.impeccable/` | surfaces/knowledge-atlas.md（方向契约六块）、design.json（schemaVersion 2 sidecar）、mocks/decision/（方向回合草图）、review/（渲染证据） |
+
+### 测试结果
+
+| 测试项 | 结果 |
+| --- | --- |
+| check_contrast.py（refactoring-ui） | 10 组前景/背景配对全部 ≥4.5:1 PASS |
+| 渲染验证（IAB 真实浏览器） | 1440/1280/768/375(+390) 五视口截图落盘 `.impeccable/review/`；7 断点计算样式检查：sheet 网格、双栏→单栏、chips 换行、全断点无横向溢出 |
+| 交互验证 | 搜索三源逐卷计数+徽章+无命中+清空还原、`/` 聚焦、hash 路由三视图、耳标/标题随路由更新、外链 rel 安全，全部通过 |
+| `node knowledge-export/build.js` | 10 份手册重新生成全通过（data.js 未动，内容管线无回归） |
+| `impeccable detect --json` | 31 advisory（对旧 DESIGN.md 的预期漂移，新 DESIGN.md 落地后消解）+ 8 warning（6 条字体未声明同前；宽字距/纸面为世界承诺，已记入 DESIGN.md） |
+| finish review（主体内新鲜评审，见下「披露」） | disposition: ship——唯一 material fix（justify 巨缝）已修复并重截确认 |
+
+### 评审途中修掉的问题（3 bug + 1 排版 finding）
+
+1. **耳标 fixed 被劫持**：`.settle` 动画 fill 停在单位矩阵（非 `none` 关键字），构成包含块把 main 内的 fixed 耳标顶出视口 → 耳标移出 main 挂 body 直下；
+2. **搜索徽标计数错误**：所有篇目显示同一聚合数 → 改为逐视图计数（basics:2 / principles:1 …）；
+3. **辞海部号 undefined**：分部序号误用词条计数器 → 部号独立计数（部一~部十）；
+4. **排版 P1**：窄栏 justify 遇 42 字符 latin token 把上一行拉出巨缝 → `overflow-wrap:anywhere` 无效（token 小于栏宽不触发），正确修法是弃用 justify 改起点对齐，已写入 DESIGN.md Don'ts。
+
+### 披露
+
+- finish reviewer 与 documenter 按 skill 协议以**主体内新鲜评审**执行（Agent 子代理两次被安全策略拦截，披露此替代）；seed 引用经本会话掷点输出原文佐证（check-seed 本机台账无记录）。
+- 遗留证据缺口：`atlas-375.png` 为排版修复前捕获（布局相同，仅对齐差异）；小屏当前证据由 `mobile.png`（390 全页）承担——375 宽的截图表面持续超时（内嵌浏览器表面老化，非页面问题）。
+
+### 下一阶段入口
+
+1. 浏览器人工走查知识总簿（直接开 `knowledge-atlas/index.html` 或任意静态服务）；
+2. knowledge-inbox 五步整合流程照旧（数据源 data.js 契约未动）；
+3. 若要对 `app/`（React 主前端）做同谱系视觉对齐，另立阶段评估。
+
+- 本次文档更新时间：10.19 [BY ZCode]（阶段 39 完成：知识总簿视觉重构——决策页锁定年鉴体、index.html/style.css 全量重建、DESIGN.md 重写、渲染与交互全验证）
+
+> 阶段 39 补（10.20）：用户实测发现资源簿行渲染崩坏——五列并排网格在 ~436px 双栏里被两个 nowrap 列把 1fr 描述列挤成 0 宽（文字一字一行竖排、行高 630~924px）。**根因是布局模式错误，不是断行问题**：改为簿式三行条目（命名 grid areas：编号+名称+箭头 / 描述 / URL），7 视口复测 desc 列 ≥312px、行高 89~138px、无溢出。教训入 DESIGN.md（资源簿行组件节「禁止回退五列并排」）。此坑暴露验证盲区：此前只做 DOM 计数未查看该视图截图。

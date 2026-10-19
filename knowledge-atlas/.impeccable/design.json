@@ -1,0 +1,128 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-19T00:00:00+08:00",
+  "title": "Design System: AI 声音知识图谱 · 知识总簿",
+  "extensions": {
+    "colorMeta": {
+      "paper": { "role": "neutral", "displayName": "纸 Paper", "canonical": "#f2efe6", "tonalRamp": ["#1c1a15", "#3a362c", "#5c574a", "#8a8474", "#b5ad97", "#d8d2bf", "#f2efe6", "#faf8f1"] },
+      "paper-raised": { "role": "neutral", "displayName": "抬升纸", "canonical": "#ece8da", "tonalRamp": ["#1c1a15", "#3a362c", "#5c574a", "#8a8474", "#b5ad97", "#d8d2bf", "#ece8da", "#f6f4ec"] },
+      "paper-sunken": { "role": "neutral", "displayName": "沉纸", "canonical": "#e2ddcb", "tonalRamp": ["#1c1a15", "#3a362c", "#5c574a", "#8a8474", "#b5ad97", "#e2ddcb", "#ece8da", "#f6f4ec"] },
+      "ink": { "role": "neutral", "displayName": "墨 Ink", "canonical": "#191713", "tonalRamp": ["#191713", "#2e2a22", "#4a4536", "#6e6858", "#8f8875", "#b5ad97", "#d8d2bf", "#f2efe6"] },
+      "ink-secondary": { "role": "neutral", "displayName": "次墨", "canonical": "#4a4536", "tonalRamp": ["#191713", "#2e2a22", "#4a4536", "#6e6858", "#8f8875", "#b5ad97", "#d8d2bf", "#f2efe6"] },
+      "ink-tertiary": { "role": "neutral", "displayName": "三墨", "canonical": "#6e6858", "tonalRamp": ["#191713", "#2e2a22", "#4a4536", "#6e6858", "#8f8875", "#b5ad97", "#d8d2bf", "#f2efe6"] },
+      "indigo": { "role": "primary", "displayName": "墨蓝 Indigo", "canonical": "#2f4470", "tonalRamp": ["#131c30", "#1c2a48", "#24365a", "#2f4470", "#4a5f8e", "#7588ad", "#a8b5cd", "#dfe4ef"] },
+      "indigo-deep": { "role": "primary", "displayName": "深墨蓝", "canonical": "#24365a", "tonalRamp": ["#131c30", "#1c2a48", "#24365a", "#2f4470", "#4a5f8e", "#7588ad", "#a8b5cd", "#dfe4ef"] },
+      "vermilion": { "role": "secondary", "displayName": "朱砂 Vermilion", "canonical": "#a63c2a", "tonalRamp": ["#3d130c", "#6b2115", "#8c2f1f", "#a63c2a", "#c05a41", "#d4836e", "#e5b09f", "#f6e4de"] },
+      "vermilion-paper": { "role": "secondary", "displayName": "朱上纸", "canonical": "#f6f0e4", "tonalRamp": ["#3d130c", "#6b2115", "#8c2f1f", "#a63c2a", "#c05a41", "#d4836e", "#e5b09f", "#f6f0e4"] },
+      "hairline": { "role": "neutral", "displayName": "栏线", "canonical": "rgba(25, 23, 19, 0.25)" },
+      "hairline-soft": { "role": "neutral", "displayName": "弱栏线", "canonical": "rgba(25, 23, 19, 0.14)" }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "Display 衬线", "purpose": "仅卷首横幅站名；900 重 + 0.06em，铅印书名的声音。" },
+      "headline": { "displayName": "Headline 衬线", "purpose": "各视图标题。" },
+      "title": { "displayName": "Title 衬线", "purpose": "条目/分部标题，与条号同基线。" },
+      "body": { "displayName": "Body 黑体", "purpose": "全部正文；14px/1.78，起点对齐。" },
+      "label": { "displayName": "Label 等宽", "purpose": "apparatus 标签：卷号行、眉批、计数；唯一允许字距的地方。" },
+      "data": { "displayName": "Data 等宽", "purpose": "条号、代号、URL、表格首列；tabular-nums。" }
+    },
+    "shadows": [],
+    "motion": [
+      { "name": "settle", "value": "280ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "路由切换时正文一次性沉降入场（opacity 0→1 + translateY 8px→0）；prefers-reduced-motion 下关闭。" }
+    ],
+    "breakpoints": [
+      { "name": "narrow", "value": "1100px" },
+      { "name": "mobile", "value": "900px" },
+      { "name": "compact", "value": "640px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "卷首横幅",
+      "kind": "custom",
+      "refersTo": "banner-masthead",
+      "description": "墨蓝整版卷首：卷号行 + 衬线站名 + 副题 + 朱砂方章，下缘 3px 墨线。",
+      "html": "<header class=\"ds-banner\"><div><div class=\"ds-vol\">VOICE-WORKBENCH · 总簿 · 第一卷</div><h1 class=\"ds-site\">AI 声音知识图谱</h1><p class=\"ds-sub\">语音大模型与克隆全景 · 事实短、硬、可查</p></div><div class=\"ds-seal\">声音<br>总簿</div></header>",
+      "css": ".ds-banner { background: #2f4470; color: #f2efe6; border-bottom: 3px solid #191713; padding: 32px 48px 24px; display: flex; justify-content: space-between; align-items: flex-end; gap: 24px; font-family: 'Noto Sans SC', sans-serif; } .ds-vol { font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: 0.32em; text-transform: uppercase; opacity: .85; } .ds-site { font-family: 'Noto Serif SC', serif; font-weight: 900; font-size: 44px; line-height: 1.15; letter-spacing: .06em; margin: 8px 0; } .ds-sub { font-size: 14px; opacity: .92; } .ds-seal { flex: none; width: 88px; height: 88px; border: 3px solid #a63c2a; border-radius: 6px; color: #f6f0e4; background: rgba(166,60,42,.18); display: flex; align-items: center; justify-content: center; text-align: center; font-family: 'Noto Serif SC', serif; font-size: 18px; font-weight: 700; line-height: 1.4; letter-spacing: .1em; transform: rotate(4deg); }"
+    },
+    {
+      "name": "卷次条目",
+      "kind": "nav",
+      "refersTo": "toc-link",
+      "description": "卷次总目条目：卷次代号（蓝）+ 标题，active 抬升、命中挂朱砂计数。",
+      "html": "<nav class=\"ds-toc\"><a class=\"ds-toc-link ds-on\" href=\"#\"><span class=\"ds-toc-vol\">卷一</span><span>入门基础</span><span class=\"ds-toc-cnt\">2</span></a><a class=\"ds-toc-link\" href=\"#\"><span class=\"ds-toc-vol\">卷二</span><span>技术原理</span></a></nav>",
+      "css": ".ds-toc { display: flex; flex-direction: column; font-family: 'Noto Sans SC', sans-serif; } .ds-toc-link { display: grid; grid-template-columns: auto 1fr auto; align-items: baseline; gap: 8px; padding: 8px 4px; border-bottom: 1px solid rgba(25,23,19,.14); color: #191713; text-decoration: none; font-size: 14px; } .ds-toc-link:hover { background: #e2ddcb; } .ds-toc-vol { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #2f4470; } .ds-toc-link.ds-on { background: rgba(47,68,112,.08); border-bottom: 1px solid #191713; font-weight: 700; } .ds-toc-link.ds-on .ds-toc-vol { color: #a63c2a; } .ds-toc-cnt { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; color: #f6f0e4; background: #a63c2a; padding: 0 5px; border-radius: 2px; }"
+    },
+    {
+      "name": "检索框",
+      "kind": "input",
+      "refersTo": "input-search",
+      "description": "纸底检索输入：朱砂光标、墨蓝焦点环、mono 计数行。",
+      "html": "<div class=\"ds-search\"><input class=\"ds-search-input\" placeholder=\"检索总簿…（按 / 聚焦）\"><div class=\"ds-search-meta\">命中 7 处（篇目 6 / 辞海 0 / 资源簿 1）</div></div>",
+      "css": ".ds-search { display: flex; flex-direction: column; gap: 8px; font-family: 'Noto Sans SC', sans-serif; } .ds-search-input { width: 100%; padding: 8px 12px; font: inherit; font-size: 14px; color: #191713; background: #f2efe6; border: 1px solid rgba(25,23,19,.25); border-radius: 2px; caret-color: #a63c2a; } .ds-search-input::placeholder { color: #6e6858; } .ds-search-input:focus { border-color: #191713; outline: 2px solid #2f4470; outline-offset: 1px; } .ds-search-meta { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: #2f4470; }"
+    },
+    {
+      "name": "状态标签",
+      "kind": "chip",
+      "refersTo": "entry-tag",
+      "description": "条目状态：1px 墨框 2px 圆角，恒带文字，颜色不单独表意。",
+      "html": "<span class=\"ds-tag\">经典架构</span> <span class=\"ds-tag\">现役主流</span> <span class=\"ds-tag\">偏旧参考</span>",
+      "css": ".ds-tag { display: inline-block; font-family: 'Noto Sans SC', sans-serif; font-size: 11px; font-weight: 500; border: 1px solid #191713; border-radius: 2px; padding: 0 8px; line-height: 1.7; color: #191713; background: #f2efe6; }"
+    },
+    {
+      "name": "数据表",
+      "kind": "custom",
+      "refersTo": "table-data",
+      "description": "簿式数据表：2px 墨线上下界的表头、1px 栏线行、偶行墨蓝 tint、mono 首列。",
+      "html": "<table class=\"ds-table\"><thead><tr><th>采样率</th><th>应用场景</th><th>代表模型</th></tr></thead><tbody><tr><td>16,000 Hz</td><td>语音识别</td><td>Whisper / FunASR</td></tr><tr><td>48,000 Hz</td><td>高保真翻唱</td><td>RVC v2</td></tr></tbody></table>",
+      "css": ".ds-table { border-collapse: collapse; width: 100%; font-family: 'Noto Sans SC', sans-serif; font-size: 14px; line-height: 1.55; font-variant-numeric: tabular-nums; } .ds-table th { text-align: left; padding: 4px 8px; border-top: 2px solid #191713; border-bottom: 1px solid #191713; font-size: 11px; letter-spacing: .05em; font-weight: 700; } .ds-table td { padding: 8px; border-bottom: 1px solid rgba(25,23,19,.25); vertical-align: top; } .ds-table tbody tr:nth-child(even) td { background: rgba(47,68,112,.08); } .ds-table td:first-child { font-family: 'JetBrains Mono', monospace; font-size: 12px; }"
+    },
+    {
+      "name": "公式块",
+      "kind": "custom",
+      "refersTo": "callout",
+      "description": "〔标题〕套印公式块：墨框 + 抬升纸底 + 朱砂方点 + 衬线朱砂标题。",
+      "html": "<div class=\"ds-callout\"><span class=\"ds-callout-mark\"></span><b class=\"ds-callout-t\">〔声音合成核心公式〕</b><span class=\"ds-callout-x\">文本 → G2P 音素 → ［声学模型］→ 梅尔频谱 → ［声码器］→ 波形</span></div>",
+      "css": ".ds-callout { border: 1px solid #191713; background: #ece8da; padding: 12px 16px; display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; font-family: 'Noto Sans SC', sans-serif; } .ds-callout-mark { width: 8px; height: 8px; background: #a63c2a; align-self: center; flex: none; } .ds-callout-t { font-family: 'Noto Serif SC', serif; font-weight: 700; font-size: 14px; color: #a63c2a; } .ds-callout-x { font-size: 14px; line-height: 1.7; flex: 1 1 16em; }"
+    },
+    {
+      "name": "读到此页耳标",
+      "kind": "custom",
+      "refersTo": "earmark-bookmark",
+      "description": "fixed 右缘朱砂书签：撕票口裁切、随路由更新卷次；必须挂在 body 直下。",
+      "html": "<div class=\"ds-earmark\">读到此页 · 卷一</div>",
+      "css": ".ds-earmark { position: fixed; right: 0; bottom: 72px; z-index: 6; background: #a63c2a; color: #f6f0e4; font-family: 'Noto Sans SC', sans-serif; font-size: 11px; letter-spacing: .22em; padding: 8px 12px 8px 16px; clip-path: polygon(12px 0, 100% 0, 100% 100%, 12px 100%, 0 50%); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "一册值得传家的声音总簿",
+    "overview": "这个世界把整座声音知识库排成一册高密度印刷总簿：暖纸地上只有墨黑与朱砂两色印刷，墨蓝只出现在卷首横幅——让它吃掉真实版面。每条事实短、硬、可查，连续条号、栏线、卷次编号是唯一的装饰系统；深度不用阴影，只用 hairline 栏线与纸面的两级抬升。阅读列保持文档本分，世界住在框架里。",
+    "keyCharacteristics": [
+      "暖纸地 + 墨黑的双色印刷纪律；朱砂是印章/耳标/计数的专属墨，永不铺底",
+      "墨蓝只给卷首横幅、链接与结构 tint——出现在哪，哪里就是框架或可点",
+      "无阴影：深度 = hairline + 2px 实线规则 + 纸面两级抬升",
+      "连续条号 apparatus 贯穿三视图（§N / ¶NN / R-NN / 部N / 表N）",
+      "衬线只做标题卷次，正文黑体，等宽只做条号代号与数据",
+      "状态标签永远带文字，颜色永不单独表意"
+    ],
+    "rules": [
+      { "name": "双色印刷 Rule", "body": "版面只有墨与朱砂两种印刷色；第三色只能以墨蓝的结构角色进入，且永不与朱砂同版争抢。", "section": "colors" },
+      { "name": "横幅吃版 Rule", "body": "墨蓝横幅占据真实版面，是全站最大的色块——主色的存在感靠面积，不靠描边。", "section": "colors" },
+      { "name": "字阶五级 Rule", "body": "字号只有 11/14/18/28/44 五级（步距 ≥25%），新层级先并级再加级。", "section": "typography" },
+      { "name": "正文无字距 Rule", "body": "letter-spacing 只属于等宽 apparatus 标签；正文与标题的中文不加拉字距。", "section": "typography" }
+    ],
+    "dos": [
+      "Do 让每条内容挂连续条号（§/¶/R-/部/表），条号是可被引用的骨架",
+      "Do 用栏线与纸面抬升表达层级",
+      "Do 保持状态标签的文字可读性",
+      "Do 表格首列数据用 mono tabular-nums"
+    ],
+    "donts": [
+      "Don't 给正文或标题加 letter-spacing（apparatus 标签除外）",
+      "Don't 在窄栏（<40em）使用 text-align: justify",
+      "Don't 引入第三种印刷色，或让朱砂铺版面底色",
+      "Don't 用阴影",
+      "Don't 用 emoji/unicode 字符充当图标",
+      "Don't 把 fixed 定位元素放进带 transform/animation 的祖先容器内"
+    ]
+  }
+}

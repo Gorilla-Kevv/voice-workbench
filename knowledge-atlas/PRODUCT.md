@@ -18,4 +18,4 @@ voice-workbench 的知识层：静态单页站（GitHub Pages），把 `js/data.
 不做登录、后端、评论、内容编辑——数据只经仓库流程变更。
 
 ## 视觉世界
-**Linear**（templates/linear.app）：canvas #010102、碳面板、发丝边框、薰衣草蓝 #5e6ad2 单强调、Inter 负字距。高密度克制，无装饰性用色。
+**知识总簿 · 年鉴体**（2026-10-19 决策页锁定，替换初版 Linear 暗色）：纸面 #f2efe6 双色印刷（墨黑 #191713 + 朱砂 #a63c2a apparatus），墨蓝 #2f4470 卷首横幅吃真实版面，卷次总目 + 双栏密排 + 连续条号（§/¶/R-/部/表）+ hairline 栏线，无阴影。规范见 `DESIGN.md`。

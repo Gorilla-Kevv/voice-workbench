@@ -1,548 +1,218 @@
 ---
-version: alpha
-name: Linear-design-analysis
-description: "A near-black product-focused marketing canvas built around #010102 (the deepest dark surface of any tool in this collection), light gray text (#f7f8f8), and the signature Linear lavender-blue (#5e6ad2) used as the single chromatic accent. The system reads as software-craft documentation: dense, technical, and quietly luxurious. Display type is set in the Linear custom sans (SF Pro Display fallback) at 500–700 with measured negative tracking. Cards live as charcoal panels (#0f1011) with hairline borders. The accent lavender appears on the brand mark, focus rings, and a few intentional CTAs — never decoratively. Page rhythm leans on product UI screenshots framed in dark panels rather than atmospheric color."
-
+name: AI 声音知识图谱 · 知识总簿
+description: 纸面年鉴体知识总簿——暖纸地、墨黑 + 朱砂双色印刷、墨蓝卷首横幅、栏线即深度；为 voice-workbench 的声音领域知识提供可速查的卷宗式阅读。
 colors:
-  primary: "#5e6ad2"
-  on-primary: "#ffffff"
-  primary-hover: "#828fff"
-  primary-focus: "#5e69d1"
-  ink: "#f7f8f8"
-  ink-muted: "#d0d6e0"
-  ink-subtle: "#8a8f98"
-  ink-tertiary: "#62666d"
-  canvas: "#010102"
-  surface-1: "#0f1011"
-  surface-2: "#141516"
-  surface-3: "#18191a"
-  surface-4: "#191a1b"
-  hairline: "#23252a"
-  hairline-strong: "#34343a"
-  hairline-tertiary: "#3e3e44"
-  inverse-canvas: "#ffffff"
-  inverse-surface-1: "#f5f6f6"
-  inverse-surface-2: "#f6f7f7"
-  inverse-ink: "#000000"
-  brand-secure: "#7a7fad"
-  semantic-success: "#27a644"
-  semantic-overlay: "#000000"
-
+  paper: "#f2efe6"
+  paper-raised: "#ece8da"
+  paper-sunken: "#e2ddcb"
+  ink: "#191713"
+  ink-secondary: "#4a4536"
+  ink-tertiary: "#6e6858"
+  indigo: "#2f4470"
+  indigo-deep: "#24365a"
+  indigo-tint: "rgba(47, 68, 112, 0.08)"
+  vermilion: "#a63c2a"
+  vermilion-paper: "#f6f0e4"
+  hairline: "rgba(25, 23, 19, 0.25)"
+  hairline-soft: "rgba(25, 23, 19, 0.14)"
 typography:
-  display-xl:
-    fontFamily: Linear Display
-    fontSize: 80px
-    fontWeight: 600
-    lineHeight: 1.05
-    letterSpacing: -3.0px
-  display-lg:
-    fontFamily: Linear Display
-    fontSize: 56px
-    fontWeight: 600
-    lineHeight: 1.10
-    letterSpacing: -1.8px
-  display-md:
-    fontFamily: Linear Display
-    fontSize: 40px
-    fontWeight: 600
+  display:
+    fontFamily: "Noto Serif SC, Songti SC, serif"
+    fontSize: "44px"
+    fontWeight: 900
     lineHeight: 1.15
-    letterSpacing: -1.0px
+    letterSpacing: "0.06em"
   headline:
-    fontFamily: Linear Display
-    fontSize: 28px
-    fontWeight: 600
-    lineHeight: 1.20
-    letterSpacing: -0.6px
-  card-title:
-    fontFamily: Linear Display
-    fontSize: 22px
-    fontWeight: 500
-    lineHeight: 1.25
-    letterSpacing: -0.4px
-  subhead:
-    fontFamily: Linear Display
-    fontSize: 20px
-    fontWeight: 400
-    lineHeight: 1.40
-    letterSpacing: -0.2px
-  body-lg:
-    fontFamily: Linear Text
-    fontSize: 18px
-    fontWeight: 400
-    lineHeight: 1.50
-    letterSpacing: -0.1px
+    fontFamily: "Noto Serif SC, Songti SC, serif"
+    fontSize: "28px"
+    fontWeight: 900
+    lineHeight: 1.3
+    letterSpacing: "0.02em"
+  title:
+    fontFamily: "Noto Serif SC, Songti SC, serif"
+    fontSize: "18px"
+    fontWeight: 700
+    lineHeight: 1.45
   body:
-    fontFamily: Linear Text
-    fontSize: 16px
+    fontFamily: "Noto Sans SC, Microsoft YaHei, sans-serif"
+    fontSize: "14px"
     fontWeight: 400
-    lineHeight: 1.50
-    letterSpacing: -0.05px
-  body-sm:
-    fontFamily: Linear Text
-    fontSize: 14px
+    lineHeight: 1.78
+  label:
+    fontFamily: "JetBrains Mono, ui-monospace, Consolas, monospace"
+    fontSize: "11px"
+    fontWeight: 700
+    letterSpacing: "0.28em"
+  data:
+    fontFamily: "JetBrains Mono, ui-monospace, Consolas, monospace"
+    fontSize: "12px"
     fontWeight: 400
-    lineHeight: 1.50
-    letterSpacing: 0
-  caption:
-    fontFamily: Linear Text
-    fontSize: 12px
-    fontWeight: 400
-    lineHeight: 1.40
-    letterSpacing: 0
-  button:
-    fontFamily: Linear Text
-    fontSize: 14px
-    fontWeight: 500
-    lineHeight: 1.20
-    letterSpacing: 0
-  eyebrow:
-    fontFamily: Linear Text
-    fontSize: 13px
-    fontWeight: 500
-    lineHeight: 1.30
-    letterSpacing: 0.4px
-  mono:
-    fontFamily: Linear Mono
-    fontSize: 13px
-    fontWeight: 400
-    lineHeight: 1.50
-    letterSpacing: 0
-
+    fontFeature: "tabular-nums"
 rounded:
-  xs: 4px
-  sm: 6px
-  md: 8px
-  lg: 12px
-  xl: 16px
-  xxl: 24px
-  pill: 9999px
-  full: 9999px
-
+  xs: "2px"
+  sm: "6px"
 spacing:
-  xxs: 4px
-  xs: 8px
-  sm: 12px
-  md: 16px
-  lg: 24px
-  xl: 32px
-  xxl: 48px
-  section: 96px
-
+  xs: "4px"
+  sm: "8px"
+  md: "12px"
+  lg: "16px"
+  xl: "24px"
+  xxl: "32px"
+  section: "48px"
 components:
-  button-primary:
-    backgroundColor: "{colors.primary}"
-    textColor: "{colors.on-primary}"
-    typography: "{typography.button}"
-    rounded: "{rounded.md}"
-    padding: 8px 14px
-  button-primary-pressed:
-    backgroundColor: "{colors.primary-focus}"
-    textColor: "{colors.on-primary}"
-    typography: "{typography.button}"
-    rounded: "{rounded.md}"
-  button-primary-hover:
-    backgroundColor: "{colors.primary-hover}"
-    textColor: "{colors.on-primary}"
-    typography: "{typography.button}"
-    rounded: "{rounded.md}"
-  button-secondary:
-    backgroundColor: "{colors.surface-1}"
-    textColor: "{colors.ink}"
-    typography: "{typography.button}"
-    rounded: "{rounded.md}"
-    padding: 8px 14px
-  button-tertiary:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink}"
-    typography: "{typography.button}"
-    rounded: "{rounded.md}"
-    padding: 8px 14px
-  button-inverse:
-    backgroundColor: "{colors.inverse-canvas}"
-    textColor: "{colors.inverse-ink}"
-    typography: "{typography.button}"
-    rounded: "{rounded.md}"
-    padding: 8px 14px
-  pricing-card:
-    backgroundColor: "{colors.surface-1}"
+  banner-masthead:
+    backgroundColor: "{colors.indigo}"
+    textColor: "{colors.paper}"
+    typography: "{typography.display}"
+    height: "auto"
+  toc-link:
+    backgroundColor: "transparent"
     textColor: "{colors.ink}"
     typography: "{typography.body}"
-    rounded: "{rounded.lg}"
-    padding: 24px
-  pricing-card-featured:
-    backgroundColor: "{colors.surface-2}"
+    padding: "8px 4px"
+  toc-link-active:
+    backgroundColor: "{colors.indigo-tint}"
     textColor: "{colors.ink}"
     typography: "{typography.body}"
-    rounded: "{rounded.lg}"
-    padding: 24px
-  feature-card:
-    backgroundColor: "{colors.surface-1}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body}"
-    rounded: "{rounded.lg}"
-    padding: 24px
-  product-screenshot-card:
-    backgroundColor: "{colors.surface-1}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body}"
-    rounded: "{rounded.xl}"
-    padding: 24px
-  testimonial-card:
-    backgroundColor: "{colors.surface-1}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body-lg}"
-    rounded: "{rounded.lg}"
-    padding: 32px
-  customer-logo-tile:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink-subtle}"
-    typography: "{typography.caption}"
-    rounded: "{rounded.xs}"
-    padding: 16px
-  text-input:
-    backgroundColor: "{colors.surface-1}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body}"
-    rounded: "{rounded.md}"
-    padding: 8px 12px
-  text-input-focused:
-    backgroundColor: "{colors.surface-1}"
-    textColor: "{colors.ink}"
-    typography: "{typography.body}"
-    rounded: "{rounded.md}"
-    padding: 8px 12px
-  pricing-tab-default:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink-subtle}"
-    typography: "{typography.button}"
-    rounded: "{rounded.pill}"
-    padding: 6px 14px
-  pricing-tab-selected:
-    backgroundColor: "{colors.surface-2}"
-    textColor: "{colors.ink}"
-    typography: "{typography.button}"
-    rounded: "{rounded.pill}"
-    padding: 6px 14px
-  cta-banner:
-    backgroundColor: "{colors.surface-1}"
-    textColor: "{colors.ink}"
-    typography: "{typography.headline}"
-    rounded: "{rounded.lg}"
-    padding: 48px
-  changelog-row:
-    backgroundColor: "{colors.canvas}"
+    padding: "8px 4px"
+  input-search:
+    backgroundColor: "{colors.paper}"
     textColor: "{colors.ink}"
     typography: "{typography.body}"
     rounded: "{rounded.xs}"
-    padding: 24px 0
-  status-badge:
-    backgroundColor: "{colors.surface-2}"
-    textColor: "{colors.ink-muted}"
-    typography: "{typography.caption}"
-    rounded: "{rounded.pill}"
-    padding: 2px 8px
-  top-nav:
-    backgroundColor: "{colors.canvas}"
+    padding: "8px 12px"
+  entry-tag:
+    backgroundColor: "{colors.paper}"
     textColor: "{colors.ink}"
-    typography: "{typography.body-sm}"
+    typography: "{typography.label}"
     rounded: "{rounded.xs}"
-    height: 56px
-  footer:
-    backgroundColor: "{colors.canvas}"
-    textColor: "{colors.ink-subtle}"
-    typography: "{typography.caption}"
-    rounded: "{rounded.xs}"
-    padding: 64px 32px
+    padding: "0 8px"
+  earmark-bookmark:
+    backgroundColor: "{colors.vermilion}"
+    textColor: "{colors.vermilion-paper}"
+    typography: "{typography.label}"
+    padding: "8px 12px 8px 16px"
 ---
+
+# Design System: AI 声音知识图谱 · 知识总簿
 
 ## Overview
 
-Linear's marketing canvas is the deepest dark surface in this collection — `{colors.canvas}` is #010102, essentially pure black with a faint blue tint. On top sits a four-step surface ladder (`{colors.surface-1}` through `{colors.surface-4}`) for cards, panels, and lifted tiles, with hairline borders running from `{colors.hairline}` (#23252a) up through `{colors.hairline-strong}` and `{colors.hairline-tertiary}`. Light gray text (`{colors.ink}` #f7f8f8) carries the body and headlines.
+**Creative North Star: "一册值得传家的声音总簿"**
 
-The single chromatic accent is **Linear lavender-blue** `{colors.primary}` (#5e6ad2) — used on the brand mark, focus rings, and the primary CTA button. A lighter hover state (`{colors.primary-hover}` #828fff) and a focus-tinted variant (`{colors.primary-focus}` #5e69d1) extend the same hue. Linear avoids saturated greens, oranges, reds, etc. on the marketing canvas — the only semantic color is `{colors.semantic-success}` (#27a644) for status pills and the rare success indicator.
-
-Display type runs Linear's custom sans (with `SF Pro Display` fallback) at weight 500–700 with negative letter-spacing scaling from -3.0px at 80px down to 0 at body. The body family is Linear's text cut, and a Linear Mono is reserved for code snippets in product screenshots.
-
-The page rhythm is **dense product screenshots** — Linear's marketing leads with high-fidelity captures of the product UI (issue list, project view, dashboard) framed in `{colors.surface-1}` panels with `{rounded.xl}` 16px corners. The chrome is intentionally minimal so the app screenshots can do the heavy lifting.
+这个世界把整座声音知识库排成一册高密度印刷总簿：暖纸地上只有墨黑与朱砂两色印刷，墨蓝只出现在卷首横幅——让它吃掉真实版面，而不是做细线点缀。每条事实短、硬、可查，连续条号（§001 / ¶01 / R-01）、栏线、卷次编号是唯一的装饰系统；深度不用阴影，只用 hairline 栏线与纸面的两级抬升。阅读列保持文档本分（黑体正文、真实对比度、约 35em 的双栏密排），世界住在框架里：横幅、卷次总目、页眉页脚、表格与公式的排印方式。
 
 **Key Characteristics:**
-- **Dark-canvas marketing system** — `{colors.canvas}` (#010102) is the deepest dark in this collection.
-- **Lavender-blue brand accent** (`{colors.primary}` #5e6ad2) — used scarcely on brand mark, focus, and the primary CTA.
-- Four-step surface ladder (canvas → surface-1 → surface-2 → surface-3 → surface-4) carries hierarchy without shadow.
-- Display tracking pulls aggressively negative (-3.0px at 80px); body holds at -0.05px.
-- Cards use `{rounded.lg}` 12px corners with 1px hairline borders — never pill, rarely 16px.
-- **Product UI screenshots** dominate the page. The marketing chrome is a dark frame for the app.
-- No second chromatic color. No atmospheric gradients. No spotlight cards.
+- 暖纸地 `#f2efe6` + 墨黑 `#191713` 的双色印刷纪律；朱砂 `#a63c2a` 是印章/耳标/计数的专属墨，永不铺底。
+- 墨蓝 `#2f4470` 只给卷首横幅、链接与表格斑马纹的结构性暗示。
+- 无阴影：深度 = hairline（墨 25%/14% 两档）+ 2px 实线规则 + 纸面两级抬升。
+- 连续条号 apparatus 贯穿三视图（篇目 §N、辞海 ¶NN、资源簿 R-NN、分部 部N、表 N）。
+- 衬线（Noto Serif SC 900/700）只做标题与卷次；正文一律黑体；等宽（JetBrains Mono）只做条号、代号、URL 与数据。
+- 状态标签永远带文字（现役主流 / 经典架构 / 偏旧参考），颜色永不单独表意。
 
 ## Colors
 
-> Source pages: linear.app (home), /intake, /pricing, /contact/sales, /build.
+四墨双色印刷：纸、墨、蓝、朱砂，加三档墨灰做文字层级。全部前景/背景配对经 WCAG 校验 ≥4.5:1。
 
-### Brand & Accent
-- **Lavender-Blue** ({colors.primary}): The signature Linear accent — primary CTA, brand mark, link emphasis.
-- **Lavender Hover** ({colors.primary-hover}): Lighter lavender (#828fff) — hovered state of the primary CTA.
-- **Lavender Focus** ({colors.primary-focus}): Focus-ring tint (#5e69d1) — focused inputs, focused buttons.
-- **Brand Secure** ({colors.brand-secure}): Muted lavender-gray (#7a7fad) — used in "Linear Security" surfaces.
+### Primary
+- **墨蓝 Indigo** (#2f4470): 卷首横幅的整版底色、导航卷次代号、正文链接、表格斑马纹的 tint 来源（8% 透明度）。深一档 #24365a 做链接 hover。它是结构之墨——出现在哪，哪里就是"框架/可点"。
 
-### Surface
-- **Canvas** ({colors.canvas}): Default page background — #010102, near-pure black with a faint blue tint.
-- **Surface 1** ({colors.surface-1}): One step above canvas — feature cards, pricing cards, product screenshot panels.
-- **Surface 2** ({colors.surface-2}): Two steps above — featured pricing card, hovered cards.
-- **Surface 3** ({colors.surface-3}): Three steps above — line-tertiary backgrounds, sub-nav.
-- **Surface 4** ({colors.surface-4}): Four steps above — bg-level-3, deepest lifted surface.
-- **Hairline** ({colors.hairline}): 1px borders on cards and dividers.
-- **Hairline Strong** ({colors.hairline-strong}): Stronger 1px borders — input focus rings.
-- **Hairline Tertiary** ({colors.hairline-tertiary}): Tertiary borders for nested surfaces.
-- **Inverse Canvas** ({colors.inverse-canvas}): Pure white — surface of the inverse pill CTA on a small set of section openers.
-- **Inverse Surface 1** ({colors.inverse-surface-1}): One step above inverse canvas.
-- **Inverse Surface 2** ({colors.inverse-surface-2}): Two steps above inverse canvas.
+### Secondary
+- **朱砂 Vermilion** (#a63c2a): 印章描边、"读到此页"耳标、搜索命中计数、要目编号、套印方点。它的稀缺即语义：看见朱砂 = 看见 apparatus 或"你在这里"。文字在其上用 #f6f0e4。
 
-### Text
-- **Ink** ({colors.ink}): All headlines and emphasized body type — light gray #f7f8f8.
-- **Ink Muted** ({colors.ink-muted}): Secondary type at #d0d6e0 — meta info on hero panels.
-- **Ink Subtle** ({colors.ink-subtle}): Tertiary type at #8a8f98 — deselected pricing tabs, footer columns.
-- **Ink Tertiary** ({colors.ink-tertiary}): Quaternary at #62666d — disabled, footnotes.
+### Neutral
+- **纸 Paper** (#f2efe6): 全站地面。
+- **抬升纸 Paper Raised** (#ece8da): 卷次目录栏、callout 底、行内 code 底。
+- **沉纸 Paper Sunken** (#e2ddcb): hover 反馈、滚动条拇指。
+- **墨 Ink** (#191713): 正文与标题文字、2px 实线规则、黑隔页带。
+- **次墨 Ink Secondary** (#4a4536): 摘要与次要正文（8.3:1）。
+- **三墨 Ink Tertiary** (#6e6858): 条号、图注、页脚（4.8:1，勿再浅）。
+- **栏线 Hairline** (rgba(25,23,19,.25)) / **弱栏线** (.14): 全部 1px 分隔。
 
-### Semantic
-- **Success Green** ({colors.semantic-success}): Status pills, success indicators. The only semantic color on marketing.
-- **Overlay** ({colors.semantic-overlay}): Pure black overlay scrim for modals.
+### Named Rules
+**双色印刷 Rule.** 版面只有墨与朱砂两种"印刷色"；任何第三色只能以墨蓝的结构角色进入，且永不与朱砂同版争抢。
+**横幅吃版 Rule.** 墨蓝横幅占据真实版面（约视口 1/5 高），是全站最大的色块——主色的存在感靠面积，不靠描边。
 
 ## Typography
 
-### Font Family
+**Display Font:** Noto Serif SC（Songti SC 兜底）——900/700 两档，只做站名、卷次、条目标题。
+**Body Font:** Noto Sans SC（Microsoft YaHei 兜底）——400 一档承担全部正文。
+**Label/Mono Font:** JetBrains Mono——条号、代号、URL、表格首列数据；永不用于正文与标题。
 
-- **Linear Display** — Linear's custom display sans; fallback `SF Pro Display, -apple-system, system-ui, Segoe UI, Roboto`. Carries display-xl through subhead.
-- **Linear Text** — Linear's custom text sans (a slightly different cut tuned for body sizes); same fallback stack. Carries body sizes, button labels, captions.
-- **Linear Mono** — Linear's custom mono; fallback `ui-monospace, SF Mono, Menlo`. Used for code snippets in product screenshots and for status / ID tokens.
-
-The marketing surface treats Display and Text as one continuous voice; the family change is silent.
+**Character:** 衬线黑重、字距微张（+0.06em），是铅印书名的声音；正文黑体 14px/1.78 密排，像词典正文一样安静。
 
 ### Hierarchy
+- **Display** (900, 44px, 1.15, +0.06em): 仅卷首横幅站名。
+- **Headline** (900, 28px, 1.3): 各视图标题（入门基础 / 辞海 / 资源簿）。
+- **Title** (700, 18px, 1.45): 条目标题与分部标题，与 §N/部N 条号同基线。
+- **Body** (400, 14px, 1.78): 正文，双栏约 35em；起点对齐——窄栏两端对齐遇长 token 会拉出巨缝，本系统明确弃用 justify。
+- **Label** (500-700, 11px, +0.28em, 大写拉丁): 卷号行、眉批、 apparatus 标签。正文字距恒为 0。
 
-| Token | Size | Weight | Line Height | Letter Spacing | Use |
-|---|---|---|---|---|---|
-| `{typography.display-xl}` | 80px | 600 | 1.05 | -3.0px | Largest hero headline |
-| `{typography.display-lg}` | 56px | 600 | 1.10 | -1.8px | Section opener headlines |
-| `{typography.display-md}` | 40px | 600 | 1.15 | -1.0px | Sub-section headlines |
-| `{typography.headline}` | 28px | 600 | 1.20 | -0.6px | Pricing tier titles, CTA banner heading |
-| `{typography.card-title}` | 22px | 500 | 1.25 | -0.4px | Feature card title |
-| `{typography.subhead}` | 20px | 400 | 1.40 | -0.2px | Lead body, intro paragraphs |
-| `{typography.body-lg}` | 18px | 400 | 1.50 | -0.1px | Hero subhead, lead paragraphs |
-| `{typography.body}` | 16px | 400 | 1.50 | -0.05px | Default body |
-| `{typography.body-sm}` | 14px | 400 | 1.50 | 0 | Card body, footer columns |
-| `{typography.caption}` | 12px | 400 | 1.40 | 0 | Captions, meta, status |
-| `{typography.button}` | 14px | 500 | 1.20 | 0 | All button labels |
-| `{typography.eyebrow}` | 13px | 500 | 1.30 | 0.4px | Section eyebrow (slight positive tracking) |
-| `{typography.mono}` | 13px | 400 | 1.50 | 0 | Linear Mono for code in product screenshots |
-
-### Principles
-
-- **Aggressive negative tracking on display** (-3.0px at 80px ≈ 4% of size).
-- **Single voice from display to body.** Display-xl at 600 → body at 400 — same family, narrower weights.
-- **Eyebrow uses positive tracking** (+0.4px) — contrast against the negative-tracked display marks the eyebrow as taxonomy.
-- **Mono only in code contexts.** Linear Mono lives inside product screenshots — not on marketing chrome.
-
-### Note on Font Substitutes
-
-Linear's custom typeface isn't publicly distributed; the documented fallback `SF Pro Display, -apple-system, system-ui` is the recommended substitute on macOS. For cross-platform implementation, **Inter** at weight 500 / 600 / 700 is the closest free substitute. **Geist Sans** is also viable. For mono, **JetBrains Mono** or **Geist Mono** at weight 400 closely approximates Linear Mono.
+### Named Rules
+**字阶五级 Rule.** 字号只有 11/14/18/28/44 五级（步距 ≥25%），新层级先并级再加级。
+**正文无字距 Rule.** letter-spacing 只属于等宽 apparatus 标签；正文与标题的中文不加拉字距。
 
 ## Layout
 
-### Spacing System
-
-- **Base unit**: 4px.
-- **Tokens (front matter)**: `{spacing.xxs}` 4px · `{spacing.xs}` 8px · `{spacing.sm}` 12px · `{spacing.md}` 16px · `{spacing.lg}` 24px · `{spacing.xl}` 32px · `{spacing.xxl}` 48px · `{spacing.section}` 96px.
-- Card interior padding: `{spacing.lg}` 24px on feature/pricing cards; `{spacing.xl}` 32px on testimonial cards; `{spacing.xxl}` 48px on CTA banners.
-- Pill button padding: 8px vertical · 14px horizontal — Linear's compact button spec.
-- Form input padding: 8px vertical · 12px horizontal.
-
-### Grid & Container
-
-- Max content width sits around 1280px.
-- Card grids are 3-up at desktop, 2-up at tablet, 1-up at mobile.
-- Pricing tier grid is 3-up; comparison strip below shows checkmarks per tier.
-- Product screenshot panels span full content width — they're the protagonist.
-
-### Whitespace Philosophy
-
-The dark canvas IS the whitespace. Sections separate by lift onto surface-1 panels, not by gaps in white. Within a panel, generous `{spacing.lg}` 24px gaps between content blocks; `{spacing.section}` 96px between sections.
+总簿开本：最大 1440px，左 264px 卷次总目 + 右正文的双栏栅格；目录栏 sticky 跟随。正文区双栏密排（`columns: 2`，栏距 48px，栏间 1px 栏线），≤1100px 收单栏，≤900px 目录栏转为顶部换行 chips、正文单栏，≤640px 横幅纵排、资源簿行收为两行。间距取 4/8/12/16/24/32/48/64 刻度；组间距（24px）恒大于组内行距（12px）。三断点：1100 / 900 / 640。
 
 ## Elevation & Depth
 
-| Level | Treatment | Use |
-|---|---|---|
-| 0 (flat) | No shadow, no border | Default for body type, hero text, footer |
-| 1 (charcoal lift) | `{colors.surface-1}` background on canvas, 1px `{colors.hairline}` | Default cards, product panels |
-| 2 (surface-2 lift) | `{colors.surface-2}` background, 1px `{colors.hairline-strong}` | Featured pricing card, hovered cards |
-| 3 (surface-3 lift) | `{colors.surface-3}` background | Sub-nav, dropdown menus |
-| 4 (focus ring) | 2px `{colors.primary-focus}` outline at 50% opacity | Focused input, focused button |
-
-Linear's depth is carried by surface ladder + hairline borders. The brand resists drop shadows on dark almost entirely.
-
-### Decorative Depth
-
-- **Product UI screenshots** dominate as decorative depth.
-- **No atmospheric gradients, no spotlight cards.**
-- **Subtle white edge highlight** on the top edge of lifted panels — gives the dark surface a faint "pixel rendered" feel.
+无阴影系统。深度由三件事承担：① 纸面两级抬升（目录栏/面板用 #ece8da，地面 #f2efe6）；② hairline 栏线（25% 墨为界、14% 墨为内分隔）；③ 2px 实线规则标记级界（视图头下、表头上下、分部标题下）。唯一越出纸面的元素是朱砂耳标（fixed 定位，撕票口 clip-path），它是"夹在书页上的签"，不是浮层。
 
 ## Shapes
 
-### Border Radius Scale
-
-| Token | Value | Use |
-|---|---|---|
-| `{rounded.xs}` | 4px | Small chips, status badges |
-| `{rounded.sm}` | 6px | Inline tags |
-| `{rounded.md}` | 8px | All buttons, form inputs |
-| `{rounded.lg}` | 12px | Pricing cards, feature cards, testimonial cards |
-| `{rounded.xl}` | 16px | Product screenshot panels |
-| `{rounded.xxl}` | 24px | Oversized CTA banners (rare) |
-| `{rounded.pill}` | 9999px | Pricing tab toggles, status pills |
-| `{rounded.full}` | 9999px | Avatar circles |
-
-### Photography & Illustration Geometry
-
-- Product UI screenshots dominate; they sit in `{rounded.xl}` 16px tiles with `{spacing.lg}` 24px outer padding.
-- Customer logo tiles render at small sizes (~24px logo height) on `{colors.canvas}` with no border.
-- Avatar circles in testimonial cards use `{rounded.full}` at 32–40px sizes.
+小圆角世界：控件 2px（输入框、标签、计数徽章），印章 6px；其余全是直角。线语言只有三种：1px 弱栏线、1px 栏线、2px 实线规则。唯一的多边形裁切是耳标的撕票口（`clip-path: polygon` 左缘箭口），属于纸世界自身的材料行为。
 
 ## Components
 
-### Buttons
+### 卷首横幅 banner-masthead
+- **Shape:** 直角，下缘 3px 墨线；内边距 32/48/24。
+- **Primary:** 墨蓝整版底 + 纸色文字；左为卷号行（mono 11px +0.32em）→ 站名（衬线 900 44px）→ 副题（14px）；右为朱砂方章（88px，rotate 4deg，双行"声音/总簿"）。
+- **States:** 无交互。
 
-**`button-primary`** — Lavender CTA. The default primary CTA across all pages.
-- Background `{colors.primary}`, text `{colors.on-primary}`, type `{typography.button}`, padding 8px 14px, rounded `{rounded.md}`.
-- Pressed state lives in `button-primary-pressed` (background shifts to `{colors.primary-focus}`).
-- Hover state lives in `button-primary-hover` (background shifts to `{colors.primary-hover}` lighter lavender).
+### 卷次总目 toc
+- **Style:** 抬升纸底、右缘 1px 栏线；条目为 卷次代号（mono 蓝）+ 标题（14px）三列网格，1px 弱栏线分隔。
+- **Hover:** 沉纸底。**Active:** 墨蓝 8% tint + 底缘转实墨线 + 加粗 + 卷次代号转朱砂；`aria-current="page"`。
+- **搜索命中:** 条目右侧朱砂计数徽章（mono 11px，纸色字）。
+- **移动端:** ≤900px 转为换行 chips（1px 栏线描边、2px 圆角）。
 
-**`button-secondary`** — Charcoal button. Used for secondary CTAs ("Sign in", "Read changelog").
-- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.button}`, padding 8px 14px, rounded `{rounded.md}`. 1px `{colors.hairline}` border.
+### 检索 input-search
+- **Style:** 纸底、1px 栏线、2px 圆角；placeholder 三墨。
+- **Focus:** 墨线边框 + 2px 墨蓝 outline（offset 1px）；光标朱砂。
+- **Result:** 下方 mono 11px 计数行（"命中 N 处（篇目 X / 辞海 Y / 资源簿 Z）"或"无命中"）；`/` 键全局聚焦。
 
-**`button-tertiary`** — Plain text button.
-- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.button}`, rounded `{rounded.md}`, padding 8px 14px.
+### 条目 entry
+- **Shape:** 无盒——条目是排版单元不是卡片；标题行 = §N（mono 三墨）+ 衬线标题 + 状态标签（1px 墨框 2px 圆角，恒带文字）。
+- **Body:** 黑体 14px/1.78，起点对齐；`<b>` 加粗、行内 code 抬升纸底。
+- **表:** 表号行（mono 11px 加粗）→ 表格：表头 2px 墨线上下界、行 1px 栏线、偶行墨蓝 4% tint、首列 mono tabular-nums；外裹横向滚动容器。
+- **公式 callout:** 1px 墨框 + 抬升纸底 + 朱砂方点 + 〔标题〕衬线朱砂 + 正文；`break-inside: avoid`。
 
-**`button-inverse`** — White-on-dark inverse CTA.
-- Background `{colors.inverse-canvas}`, text `{colors.inverse-ink}`, type `{typography.button}`, rounded `{rounded.md}`, padding 8px 14px.
+### 资源簿行 res-row
+- **Shape:** 簿式三行条目（命名 grid areas）：第一行 R-NN + 名称 + 箭头 SVG，第二行描述独占整行，第三行 URL；1px 弱栏线分行，`break-inside: avoid`。
+- **禁止回退五列并排**：双栏密排下每栏只有 ~436px，`nowrap` 的名称列 + URL 列会把 `1fr` 描述列挤成 0 宽（文字一字一行竖排）——这是本项目踩过的真坑。
+- **Hover:** 墨蓝 8% tint，箭头转朱砂。URL 允许 `overflow-wrap: anywhere` 断行；外链一律 `target="_blank" rel="noopener noreferrer"`。
 
-### Pricing Tabs
+### 耳标 earmark-bookmark
+- **Style:** fixed 右缘（bottom 72px），朱砂底、纸色字、+0.22em 字距，撕票口 clip-path；文本 = "读到此页 · {当前卷}"，随路由更新；≤900px 隐藏。
+- **注意:** 必须是 `<body>` 直接子元素——放进带 transform 动画的容器会被劫持 fixed 包含块（本项目踩过）。
 
-**`pricing-tab-default`** + **`pricing-tab-selected`** — Pill-toggle on `/pricing`.
-- Default: `{colors.canvas}` background, `{colors.ink-subtle}` text, rounded `{rounded.pill}`, padding 6px 14px.
-- Selected: `{colors.surface-2}` background, `{colors.ink}` text — selected = surface lift.
-
-### Cards & Containers
-
-**`pricing-card`** — Each tier on `/pricing`.
-- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body}`, rounded `{rounded.lg}`, padding 24px. 1px `{colors.hairline}` border.
-
-**`pricing-card-featured`** — Recommended tier — surface lift to surface-2.
-- Background `{colors.surface-2}`, otherwise identical structure.
-
-**`feature-card`** — Generic feature highlight tile.
-- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body}`, rounded `{rounded.lg}`, padding 24px.
-
-**`product-screenshot-card`** — The dominant card type — frames a high-fidelity Linear app UI screenshot.
-- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body}`, rounded `{rounded.xl}`, padding 24px.
-
-**`testimonial-card`** — Customer quote with avatar + name + role.
-- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body-lg}`, rounded `{rounded.lg}`, padding 32px.
-
-**`customer-logo-tile`** — Small tile in the customer marquee.
-- Background `{colors.canvas}`, text `{colors.ink-subtle}`, type `{typography.caption}`, rounded `{rounded.xs}`, padding 16px.
-
-**`cta-banner`** — Closing CTA panel near page bottom.
-- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.headline}`, rounded `{rounded.lg}`, padding 48px.
-
-### Inputs & Forms
-
-**`text-input`** + **`text-input-focused`** — Form fields on `/contact/sales` and signup overlays.
-- Background `{colors.surface-1}`, text `{colors.ink}`, type `{typography.body}`, rounded `{rounded.md}`, padding 8px 12px.
-- Focused state retains the same surface; the focus ring is a 2px `{colors.primary-focus}` outline at 50% opacity.
-
-### Status & Build Page
-
-**`changelog-row`** — Each row in `/build` (changelog page) listing version, date, and changes.
-- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.body}`, rounded `{rounded.xs}`, padding 24px 0. 1px `{colors.hairline}` bottom rule.
-
-**`status-badge`** — Small status pill.
-- Background `{colors.surface-2}`, text `{colors.ink-muted}`, type `{typography.caption}`, rounded `{rounded.pill}`, padding 2px 8px.
-
-### Navigation
-
-**`top-nav`** — Sticky dark bar with the Linear wordmark left, primary nav links centered, and a `button-secondary` ("Sign in") + `button-primary` ("Get started") pair right.
-- Background `{colors.canvas}`, text `{colors.ink}`, type `{typography.body-sm}`, height 56px.
-
-### Footer
-
-**`footer`** — Dense link grid on `{colors.canvas}` with the Linear wordmark left.
-- Background `{colors.canvas}`, text `{colors.ink-subtle}`, type `{typography.caption}`, padding 64px 32px.
+### 页脚 site-foot
+三段式（站名 / 数据源 mono / 当前卷），1px 墨线上界，11px +0.14em 三墨。
 
 ## Do's and Don'ts
 
-### Do
+### Do:
+- **Do** 让每条内容挂连续条号（§/¶/R-/部/表），条号是本系统可被引用的骨架。
+- **Do** 用栏线与纸面抬升表达层级；新增分隔先问"这条线是 25% 还是 14% 墨"。
+- **Do** 保持状态标签的文字可读性——颜色只是辅助信号。
+- **Do** 新视图沿用"左目录 + 右密排"开本；条目永远不是卡片。
+- **Do** 表格首列数据用 mono tabular-nums。
 
-- Reserve `{colors.canvas}` (#010102) as the system's anchor surface — the faint blue tint is intentional.
-- Use `{colors.primary}` lavender ONLY for: brand mark, primary CTA, focus ring, link emphasis.
-- Use the four-step surface ladder for hierarchy. Avoid skipping levels.
-- Pair display weight 600 with body weight 400 — Linear resists 700+ display weights.
-- Apply negative letter-spacing aggressively on display.
-- Use product UI screenshots as the protagonist of every section.
-- Compose CTAs as `{rounded.md}` 8px corners.
-
-### Don't
-
-- Don't ship a light-mode marketing page.
-- Don't use lavender as a section background or card fill.
-- Don't introduce a second chromatic accent (orange, pink, green for marketing).
-- Don't add atmospheric gradients or spotlight cards.
-- Don't pill-round CTAs.
-- Don't use `#000000` true black as the canvas.
-- Don't combine multiple bright accents in product screenshot mockups.
-
-## Responsive Behavior
-
-### Breakpoints
-
-| Name | Width | Key Changes |
-|---|---|---|
-| Desktop-XL | 1440px | Default desktop layout |
-| Desktop | 1280px | Card grid 3-up maintained |
-| Tablet | 1024px | Card grid 3-up → 2-up |
-| Mobile-Lg | 768px | Pricing comparison becomes accordion; nav hamburger |
-| Mobile | 480px | Single-column; display-xl scales 80px → ~36px |
-
-### Touch Targets
-
-- CTAs hold ≥40px tap height across viewports.
-- Pricing tab pills hold ≥36px tap height; touch viewports grow to ≥44px.
-- Form inputs hold ≥44px tap target on touch.
-
-### Collapsing Strategy
-
-- **Top nav**: links collapse to hamburger below 768px.
-- **Card grids**: 3-up → 2-up at 1024px → 1-up below 768px.
-- **Pricing comparison**: per-tier accordion below 768px.
-- **Display type**: `{typography.display-xl}` 80px scales toward `{typography.display-md}` 40px on mobile.
-
-### Image Behavior
-
-- Product UI screenshots maintain aspect ratio and never crop.
-- Customer logos in the marquee may collapse from 6-up to 3-up below 768px.
-
-## Iteration Guide
-
-1. Focus on ONE component at a time and reference it by its `components:` token name.
-2. When introducing a section, decide first which surface lift it lives on.
-3. Default body to `{typography.body}` at weight 400.
-4. Run `npx @google/design.md lint DESIGN.md` after edits.
-5. Add new variants as separate component entries.
-6. Treat lavender as scarce: brand mark, primary CTA, focus, link emphasis.
-7. Lead every section with a product UI screenshot.
-
-## Known Gaps
-
-- The four-step surface ladder values are extracted directly from Linear's `--color-bg-level-3`, `--color-line-tint`, etc. CSS variables; they are Linear's canonical surface spec.
-- Form-field error and validation styling is not visible on the inspected pages.
-- Light mode is not documented because the marketing site does not ship a light theme.
-- Linear's actual product UI uses a richer color-tag palette (red, orange, yellow, green, blue, purple) for issue priorities and project labels — those colors live in the in-product surfaces shown in mockups.
-- The custom display, text, and mono families are proprietary; an open-source substitute is acceptable.
+### Don't:
+- **Don't** 给正文或标题加 letter-spacing（apparatus 标签除外）。
+- **Don't** 在窄栏（<40em）使用 `text-align: justify`——长 token 会把上一行拉出巨缝。
+- **Don't** 引入第三种印刷色，或让朱砂铺版面底色。
+- **Don't** 用阴影；深度语言只有栏线与纸面抬升。
+- **Don't** 用 emoji/unicode 字符充当图标；图标一律手绘 SVG（统一 1.4 描边）。
+- **Don't** 把 fixed 定位元素放进带 transform/animation 的祖先容器内。

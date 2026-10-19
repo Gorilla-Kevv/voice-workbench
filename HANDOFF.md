@@ -85,7 +85,7 @@
 | `indextts/` | **第三个 Python 运行时**（uv 环境在 `upstream/.venv`，py3.11 + torch 2.8 cu128）：`server.py`、`app/{config,hardware,errors,indextts_engine,api}.py`。上游 `upstream/` 是 `git clone --depth 1` 的官方仓库（不改一行），权重在 `upstream/checkpoints/`（5.11 GB，ModelScope 下载）。端点：`/health`、`/v1/catalog`、`/v1/pipeline|warmup|unload`、`/v1/synth`（multipart：text/lang/file 或 ref_path/duration_factor/emo_vector/emo_file/emo_alpha）。上游 API 漂移只改 `indextts_engine.py` 一个薄文件 |
 | `irodori/` | **第四个 Python 运行时**（venv 在 `irodori/.venv`，py3.12 + torch 2.10 cu128）：`server.py`、`app/{config,hardware,errors,inventory,windecode,api,engine,catalog,synth}.py`。`engine.py` 懒加载（上游 `get_cached_runtime` 单实例缓存）+ 显存准入（已加载跳过）+ 合成互斥；`catalog.py` 的 emoji 表**从上游源码 ast 解析**（不 import torch/gradio）；`synth.py` 收口日语校验 / 服务端切句 ≤25 字/段 / 参考三形态互斥。上游 `upstream/{Irodori-TTS,dacvae}/` 只读（tarball 来源锁定）；权重 `models/`、清单 `weights.manifest.json` 进版本库。端点：`/health`、`/v1/catalog|warmup|unload|synth|speakers`。上游 API 漂移只改 `engine.py`（RuntimeKey/SamplingRequest 映射）一个薄文件 |
 | `gsv5/` | **第五个 Python 运行时**（阶段 36）：venv 在 `gsv5/.venv`（py3.12 + torch 2.7.1 cu128），FastAPI 端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；纯推理底模（v5turbo 4 步 / v5dev 32 步）；`scripts/gsv5.mjs` launcher |
-| `knowledge-atlas/` | **AI 声音知识图谱 Web 交互门户**（阶段 37）：Linear 风格极简暗色规范（全 token 化）、三大一等视图（篇目 / 术语速查 / 工具资源）、全局搜索、hash 路由；核心数据源 `js/data.js` |
+| `knowledge-atlas/` | **AI 声音知识图谱 Web 交互门户**（阶段 37 建，**阶段 39 视觉重构为「知识总簿 · 年鉴体」**：纸面双色印刷、墨蓝卷首横幅、卷次总目 + 双栏密排 + 连续条号 apparatus、无阴影 hairline 深度；规范见其 `DESIGN.md`）；三大一等视图（篇目 / 术语速查 / 工具资源）、全局搜索（逐卷计数徽章）、hash 路由；核心数据源 `js/data.js` |
 | `knowledge-export/` | **Markdown 规范手册包**（阶段 37）：`build.js` 编译脚本从 `data.js` 导出 10 份规范手册，对齐 `aiPaintingKownledge` 体系 |
 | `knowledge-inbox/` | **知识收集缓存与整合流程**（阶段 37）：手动收集物放此目录（gitignore），五步整合流程（分析文件→产出报告→验证可行性→横向对比→整合进 data.js→重新编译） |
 | `voicelib/` | **音色库共享存储**（仓库根，不进版本库）：`voices.json` + `voices/<id>.<ext>`。网关（`server/src/services/voiceLibrary.ts`）与 trainer（`app/sovits/voices.py`）读写同一份，位置由 `VOICES_LIB_DIR` 统一覆盖。曾住 `trainer/.data/`，阶段 26补7 迁出（旧索引改名 `.migrated-to-voicelib` 保留） |
@@ -1125,3 +1125,5 @@
     **推论**：带 GPU 的服务准入门槛必须是硬门槛（本项目各服务已是），任何「裸调脚本/试金石」也必须
     先看 `nvidia-smi free`；不满门槛就等窗口或显式 `GSV5_DEVICE=cpu`。另一个信号组合：
     「GPU 100% + 显存 used≈total + 无输出」= 溢出假死，直接杀进程重查显存。
+
+> 本次文档更新时间：10.19 [BY ZCode]（阶段 39：knowledge-atlas 前端全量视觉重构——design-studio 决策页锁定「知识总簿·年鉴体」替换 Linear 世界，index.html/style.css 重写 + DESIGN.md 由建成世界重写 + 渲染/交互/对比度全验证；数据源 data.js 契约未动，knowledge-export 管线无回归。新坑备忘：**带 transform 动画的祖先（即使 fill 后计算值是单位矩阵）会劫持子元素 fixed 定位的包含块**——fixed 元素挂在 body 直下；**窄栏（<40em）两端对齐遇长 latin token 必出巨缝**，overflow-wrap:anywhere 不救（token 小于栏宽不触发），直接用起点对齐）
