@@ -61,6 +61,35 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
   /** 刷新计数器：音色库的数据源是网关统一注册表，不在 `svcApi.catalog()` 里 */
   const [tick, setTick] = useState(0);
 
+  /**
+   * 统一注册表（`/api/models?category=ddsp-svc`）在**页面级**取一次：模型库面板与
+   * 翻唱向导的「目标音色」下拉共用同一份 —— 以前只有面板取，下拉还在读引擎目录
+   * 接口（认目录名/文件茎、不认改名），两处名字会对不上（票 #9）。
+   */
+  const [registry, setRegistry] = useState<{ models: ModelEntry[]; strays: ModelStrayFile[] }>({
+    models: [],
+    strays: [],
+  });
+  const [registryError, setRegistryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    modelsApi
+      .list('ddsp-svc')
+      .then((payload) => {
+        if (cancelled) return;
+        setRegistry({ models: payload.models, strays: payload.strays ?? [] });
+        setRegistryError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRegistryError((err as RequestError).fullMessage ?? (err as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
   const refresh = useCallback(() => {
     setTick((n) => n + 1);
     svcApi
@@ -102,8 +131,15 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
         <EngineBadge catalog={catalog} />
       </div>
       {/* 音色库放在向导之前：没有音色就没法翻唱，先让用户把「料」备齐 */}
-      <SvcModelLibrary catalog={catalog} pipeline={pipeline} onChanged={refresh} refreshKey={tick} />
-      <CoverWizard catalog={catalog} onChanged={refresh} />
+      <SvcModelLibrary
+        catalog={catalog}
+        pipeline={pipeline}
+        onChanged={refresh}
+        entries={registry.models}
+        strays={registry.strays}
+        listError={registryError}
+      />
+      <CoverWizard catalog={catalog} entries={registry.models} onChanged={refresh} />
       {/* 运行产物面板与变声页共用同一个组件：用户要求「训练**和运行**之后的产物
           都要在网站全部显示，同时给出本地路径」。翻唱一次产 1~3 轨，
           所以这里按 track 逐条渲染，不会只显示混音而漏掉新人声与伴奏。 */}
@@ -148,13 +184,17 @@ function SvcModelLibrary({
   catalog,
   pipeline,
   onChanged,
-  refreshKey,
+  entries,
+  strays,
+  listError,
 }: {
   catalog: SvcCatalog | null;
   pipeline: (SvcPipelineStatus & { ok: boolean }) | null;
   onChanged: () => void;
-  /** 父级每次刷新 +1 —— 触发统一注册表重新扫盘 */
-  refreshKey: number;
+  /** 页面级取来的注册表列表（带「旧位置 / 缺配套」标注），与翻唱下拉同源 */
+  entries: ModelEntry[];
+  strays: ModelStrayFile[];
+  listError: string | null;
 }) {
   const modelRef = useRef<HTMLInputElement | null>(null);
   const configRef = useRef<HTMLInputElement | null>(null);
@@ -168,37 +208,11 @@ function SvcModelLibrary({
    * `trainer/.data/svc/models` 与 `models/checkpoints/ddsp`）——
    * 不补的话一换数据源，已有音色就会凭空消失（RVC 在 P0 踩过同一个坑）。
    */
-  const [entries, setEntries] = useState<ModelEntry[]>([]);
-  const [strays, setStrays] = useState<ModelStrayFile[]>([]);
-  const [listError, setListError] = useState<string | null>(null);
 
   /** 采样率 / 编码器 / F0 只有引擎侧读得出来，按 id 回查补上（不因换源丢信息） */
   const metaById = useMemo(() => new Map((catalog?.models ?? []).map((item) => [item.id, item])), [catalog]);
   const metaOf = (entry: ModelEntry): SvcModel | null =>
     metaById.get(entry.raw_name) ?? metaById.get(entry.name) ?? null;
-
-  useEffect(() => {
-    let cancelled = false;
-    const scan = async () => {
-      try {
-        const payload = await modelsApi.list('ddsp-svc');
-        if (cancelled) return;
-        setEntries(payload.models);
-        setStrays(payload.strays ?? []);
-        setListError(null);
-      } catch (err) {
-        if (cancelled) return;
-        setListError((err as RequestError).fullMessage ?? (err as Error).message);
-      }
-    };
-    void scan();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
-
-  /** 主权重绝对路径 —— 引擎的 load 要的是这个，不是注册表的稳定 id */
-  const primaryPathOf = (entry: ModelEntry): string => entry.files.find((file) => file.role === 'primary')?.abs ?? '';
 
   const load = async (entry: ModelEntry) => {
     const path = primaryPathOf(entry);
@@ -436,7 +450,20 @@ interface CoverState {
   delayMs: number;
 }
 
-function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onChanged: () => void }) {
+/** 主权重绝对路径 —— 引擎的 load / 合成解析（find_model）都认这个形态 */
+const primaryPathOf = (entry: ModelEntry): string =>
+  entry.files.find((file) => file.role === 'primary')?.abs ?? '';
+
+function CoverWizard({
+  catalog,
+  entries,
+  onChanged,
+}: {
+  catalog: SvcCatalog | null;
+  /** 注册表条目（与模型库面板同源，改名可见）；取不到时回退引擎目录 */
+  entries: ModelEntry[];
+  onChanged: () => void;
+}) {
   const [state, setState] = useState<CoverState>({
     file: null,
     model: '',
@@ -465,6 +492,9 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
 
   const patch = (changes: Partial<CoverState>) => setState((prev) => ({ ...prev, ...changes }));
 
+  /** 提交时 model 存的是主权重绝对路径（引擎 find_model 认路径形态）；结果卡里显示回人名 */
+  const displayModelOf = (value: string) => entries.find((entry) => primaryPathOf(entry) === value)?.name ?? value;
+
   const sourceUrl = useMemo(() => (state.file ? URL.createObjectURL(state.file) : null), [state.file]);
 
   // 拖一整段伴奏进来比点按钮快得多，所以这里也收拖拽
@@ -484,7 +514,7 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
     setError(null);
     // 开跑前先把另一端的常驻模型卸掉（翻唱含分离，最吃显存）
     void focusBeforeRun('svc');
-    pendingRef.current = { songName: state.file.name, model: state.model };
+    pendingRef.current = { songName: state.file.name, model: displayModelOf(state.model) };
     try {
       const result = await svcApi.cover({
         file: state.file,
@@ -621,12 +651,27 @@ function CoverWizard({ catalog, onChanged }: { catalog: SvcCatalog | null; onCha
               <Select value={state.model} onValueChange={(v) => patch({ model: v })}>
                 <SelectTrigger className="w-full"><SelectValue placeholder="选择一个 .pt 音色" /></SelectTrigger>
                 <SelectContent>
-                  {(catalog?.models ?? []).map((item) => (
-                    <SelectItem key={item.id} value={item.id} disabled={!item.available}>
-                      {item.name}
-                      {!item.available ? '（缺 config.yaml）' : ''}
-                    </SelectItem>
-                  ))}
+                  {/*
+                    数据源：统一注册表（`/api/models`），值 = 主权重绝对路径
+                    （引擎 `find_model` 按「id / 名称 / 路径」三态解析，路径形态最稳，
+                    改名/迁移都不破坏），名字 = sidecar 改名后的显示名。
+                    注册表还没取到（网关未起）时回退引擎目录接口，保底下拉不为空。
+                  */}
+                  {(entries.length
+                    ? entries.map((entry) => (
+                        <SelectItem key={entry.id} value={primaryPathOf(entry)} disabled={entry.incomplete}>
+                          {entry.name}
+                          {entry.incomplete ? `（缺 ${entry.missing.join('、')}）` : ''}
+                          {entry.legacy ? '（旧位置）' : ''}
+                        </SelectItem>
+                      ))
+                    : (catalog?.models ?? []).map((item) => (
+                        <SelectItem key={item.id} value={item.id} disabled={!item.available}>
+                          {item.name}
+                          {!item.available ? '（缺 config.yaml）' : ''}
+                        </SelectItem>
+                      ))
+                  )}
                 </SelectContent>
               </Select>
             </div>

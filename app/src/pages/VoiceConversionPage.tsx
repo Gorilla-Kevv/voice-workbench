@@ -67,6 +67,35 @@ export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => voi
    */
   const [tick, setTick] = useState(0);
 
+  /**
+   * 统一注册表（`/api/models?category=rvc`）在**页面级**取一次，模型库面板与
+   * 「开始变声」下拉共用同一份。以前只有面板取，下拉还在读引擎目录接口
+   * （认文件茎、不认改名），改过名的音色在下拉里会变回旧名（票 #9）。
+   */
+  const [registry, setRegistry] = useState<{ models: ModelEntry[]; strays: ModelStrayFile[] }>({
+    models: [],
+    strays: [],
+  });
+  const [registryError, setRegistryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    modelsApi
+      .list('rvc')
+      .then((payload) => {
+        if (cancelled) return;
+        setRegistry({ models: payload.models, strays: payload.strays ?? [] });
+        setRegistryError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setRegistryError((err as RequestError).fullMessage ?? (err as Error).message);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [tick]);
+
   /** 拉取目录（模型库 + 引擎状态）。不在 effect 里同步 setState：先落微任务 */
   const refresh = useCallback(() => {
     setTick((n) => n + 1);
@@ -108,8 +137,21 @@ export function VoiceConversionPage({ onGoSettings }: { onGoSettings?: () => voi
       ) : null}
       <SovitsServiceNotice onGoSettings={onGoSettings} />
       <EngineBadge catalog={catalog} onRefresh={refresh} accent={ACCENT_TEXT} />
-      <ModelLibrary catalog={catalog} onChanged={refresh} accent={ACCENT_SOLID} refreshKey={tick} />
-      <ConvertCard catalog={catalog} accentText={ACCENT_TEXT} accentSolid={ACCENT_SOLID} onChanged={refresh} />
+      <ModelLibrary
+        catalog={catalog}
+        onChanged={refresh}
+        accent={ACCENT_SOLID}
+        entries={registry.models}
+        strays={registry.strays}
+        listError={registryError}
+      />
+      <ConvertCard
+        catalog={catalog}
+        entries={registry.models}
+        accentText={ACCENT_TEXT}
+        accentSolid={ACCENT_SOLID}
+        onChanged={refresh}
+      />
       <RunResultCard
         kind="vc_infer"
         title="变声结果"
@@ -164,13 +206,17 @@ function ModelLibrary({
   catalog,
   onChanged,
   accent,
-  refreshKey,
+  entries,
+  strays,
+  listError,
 }: {
   catalog: VcCatalog | null;
   onChanged: () => void;
   accent: string;
-  /** 父级每次刷新都会 +1，用来触发这里的重新扫盘 */
-  refreshKey: number;
+  /** 页面级取来的注册表列表（带「旧位置 / 疑似重复 / 缺配套」标注），与合成下拉同源 */
+  entries: ModelEntry[];
+  strays: ModelStrayFile[];
+  listError: string | null;
 }) {
   const weightRef = useRef<HTMLInputElement | null>(null);
   const indexRef = useRef<HTMLInputElement | null>(null);
@@ -181,32 +227,9 @@ function ModelLibrary({
    * 它一次扫全所有搜索根（规范位置 + 兼容旧位置），并带「旧位置 / 疑似重复 / 缺配套 /
    * 未识别文件」四种提示 —— 这些引擎接口一个都不给。
    */
-  const [entries, setEntries] = useState<ModelEntry[]>([]);
-  const [strays, setStrays] = useState<ModelStrayFile[]>([]);
-  const [listError, setListError] = useState<string | null>(null);
 
   /** 采样率 / 版本 / F0 这些只有引擎侧读得出来，按 id 回查补上（不因为换源就丢信息） */
   const metaById = useMemo(() => new Map((catalog?.models ?? []).map((item) => [item.id, item])), [catalog]);
-
-  useEffect(() => {
-    let cancelled = false;
-    const load = async () => {
-      try {
-        const payload = await modelsApi.list('rvc');
-        if (cancelled) return;
-        setEntries(payload.models);
-        setStrays(payload.strays ?? []);
-        setListError(null);
-      } catch (err) {
-        if (cancelled) return;
-        setListError((err as RequestError).fullMessage ?? (err as Error).message);
-      }
-    };
-    void load();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshKey]);
 
   const upload = async () => {
     const weight = weightRef.current?.files?.[0];
@@ -400,11 +423,14 @@ function ModelCard({
 
 function ConvertCard({
   catalog,
+  entries,
   accentText,
   accentSolid,
   onChanged,
 }: {
   catalog: VcCatalog | null;
+  /** 注册表条目（与模型库面板同源，改名可见）；取不到时回退引擎目录 */
+  entries: ModelEntry[];
   accentText: string;
   accentSolid: string;
   onChanged: () => void;
@@ -560,12 +586,31 @@ function ConvertCard({
                   <SelectValue placeholder="选择一个 .pth 音色" />
                 </SelectTrigger>
                 <SelectContent>
-                  {(catalog?.models ?? []).map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      {item.name}
-                      {item.has_index ? '（含索引）' : ''}
-                    </SelectItem>
-                  ))}
+                  {/*
+                    数据源：统一注册表（`/api/models`），值 = 引擎认的文件茎（engineKeyOf），
+                    名字 = sidecar 改名后的显示名 —— 与模型库面板同一份，改名立即生效。
+                    注册表还没取到（网关未起）时回退引擎目录接口，保底下拉不为空。
+                  */}
+                  {(entries.length
+                    ? entries.map((entry) => {
+                        const hasIndex = entry.files.some(
+                          (file) => file.role === 'companion' && /\.index$/i.test(file.name),
+                        );
+                        return (
+                          <SelectItem key={entry.id} value={engineKeyOf(entry)}>
+                            {entry.name}
+                            {hasIndex ? '（含索引）' : ''}
+                            {entry.legacy ? '（旧位置）' : ''}
+                          </SelectItem>
+                        );
+                      })
+                    : (catalog?.models ?? []).map((item) => (
+                        <SelectItem key={item.id} value={item.id}>
+                          {item.name}
+                          {item.has_index ? '（含索引）' : ''}
+                        </SelectItem>
+                      ))
+                  )}
                 </SelectContent>
               </Select>
             </div>
