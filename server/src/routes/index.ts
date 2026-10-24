@@ -6,6 +6,7 @@ import { logger } from '../lib/logger.js';
 import { configRouter } from './config.js';
 import { resourcesRouter } from './resources.js';
 import { preloadRouter } from './preload.js';
+import { capabilitiesHandler, openRouter } from './open.js';
 import { indexttsSummary } from './indextts.js';
 import { irodoriSummary } from './irodori.js';
 import { gsv5Summary } from './gsv5.js';
@@ -82,5 +83,12 @@ apiRouter.use('/config', generalLimiter, configRouter);
 apiRouter.use('/resources', generalLimiter, resourcesRouter);
 /** 启动预加载：选一个模型提前装进显存 */
 apiRouter.use('/preload', generalLimiter, preloadRouter);
+/**
+ * 对外能力网关（阶段 43）：/api/open/* 统一调用 + /api/capabilities 能力发现。
+ * 全部端点只收 JSON，挂在 express.json 之后的 apiRouter 里没有坑 20 的
+ * multipart/流式问题；如果要给它加「音频字节上传」，必须改挂 express.json 之前。
+ */
+apiRouter.get('/capabilities', generalLimiter, capabilitiesHandler);
+apiRouter.use('/open', generalLimiter, openRouter);
 
-logger.debug('API 路由已注册', { prefixes: ['/health', '/tts', '/voices', '/config', '/sovits', '/netease'] });
+logger.debug('API 路由已注册', { prefixes: ['/health', '/tts', '/voices', '/config', '/sovits', '/netease', '/open'] });

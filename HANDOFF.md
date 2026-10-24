@@ -16,7 +16,7 @@
 | 前端 `app/` | React 19 + TypeScript + Vite 7 + Tailwind CSS 3 + shadcn/ui（Radix） |
 | 网关 `server/` | Node 18 + Express 4 + TypeScript（tsx 运行） |
 | 模型服务 `trainer/` | Python 3.9（整合包自带 `runtime/python.exe`）+ FastAPI + Uvicorn |
-| 网易模块 `netease/` | **主服务**：本机 py3.12 独立 venv + torch 2.7.0+cu126 + FastAPI；端口 9882，`npm run dev` 自动拉起 |
+| 网易模块 `netease/` | **主服务**：本机 py3.12 独立 venv + torch 2.7.0+cu126 + FastAPI；端口 9882，`npm run dev` 自动拉起。R2T2 离线转写走**第二解释器** `netease/r2t2-venv`（qwen-asr 钉死 transformers==4.57.6 与 TTS venv 互斥；阶段 41，launcher 自动探测） |
 | GPT-SoVITS | **辅助服务**（训练链 + 批量合成仍靠它）：Python 3.9 整合包 + FastAPI；端口 9881 |
 | IndexTTS `indextts/` | 第四个运行时之一：独立 venv + FastAPI；端口 9883 |
 | GPT-SoVITS v5 `gsv5/` | **第五个运行时**（阶段 36）：`gsv5/.venv`（**py3.12 + torch 2.7.1+cu128**）+ FastAPI；端口 **9885**，`npm run dev:gsv5` 拉起。上游 main 只读 clone 在 `gsv5/upstream/`；v5 权重 `gsv5/upstream/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/`（s2Gv5dev/s2Gv5turbo/vocoder）+ s1v3.ckpt hardlink 共享整合包；端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；`GSV5_DEVICE=cpu` 可显式 CPU。**纯推理底模**（上游无 v5 训练配置，训练仍走整合包 v2ProPlus） |
@@ -29,6 +29,7 @@
 | --- | --- |
 | GPT-SoVITS | `GPT-SoVITS-v2pro-20250604/runtime/python.exe`（整合包自带） |
 | 网易 | `netease/.venv/Scripts/python.exe`（**必须用它**，整合包 python 缺 `confuciustts`） |
+| **R2T2 离线** | `netease/r2t2-venv/Scripts/python.exe`（py3.12 + torch 2.7.0+cu126；qwen-asr 钉死 transformers==4.57.6 与 TTS venv 互斥，故独立 venv——阶段 41，launcher 自动探测，权重 `netease/models/Confucius4-R2T2/` 4.1GB） |
 | IndexTTS | `indextts/.venv/`（`scripts/indextts.mjs` 会自己找） |
 | **Irodori** | `irodori/.venv/Scripts/python.exe`；权重在 `irodori/models/`、上游代码在 `irodori/upstream/`（都在 gitignore 里）；清单 `irodori/weights.manifest.json` **进版本库** |
 | **GPT-SoVITS v5** | `gsv5/.venv/Scripts/python.exe`（py3.12+cu128）；入口 `scripts/gsv5.mjs`（:9885）；体检 `npm run gsv5:check` |
@@ -103,9 +104,13 @@
 - 后端统一响应：成功 `{ ok: true, ... }`；失败 `{ ok: false, error: { code, message, retryable, hint } }`
 - `hint` 是给**使用者**的下一步动作，前端必须展示而不只是展示 `message`
 - 主要端点：`/health`、`/v1/catalog`、`/v1/uvr/models`、`/v1/weights`、`/v1/voices`、`/v1/tts`、`/v1/tts/stream`、`/v1/tts/batch`、`/v1/train`、`/v1/train/plan`、`/v1/annotations/{job_id}`、`/v1/jobs`
+- **对外能力网关（阶段 43）**：`GET /api/capabilities`（13 项推理能力发现：id/kind/可用性/loaded/显存门槛指针/端点指引）与 `GET /api/open/v1/models`（OpenAI 形状）；统一调用 `POST /api/open/v1/audio/{speech,transcriptions,convert,singing-convert,separate}`——`{model: 能力id或别名, text|audio_path|voice_id, params(白名单透传), format, focus?, timeout_ms}`。**上游结构化错误原样透传**（引擎忙 409 vs 429 的差异是文档的一部分），网关只补 `OPEN_RUNTIME_UNREACHABLE`；撞显存默认不让位，`focus:true` 才仲裁。参考音频差异（谁原生认 voice_id / 谁只认路径）已被网关吸收——`confucius4-tts`/`indextts-2.5` 传 voice_id 时网关用 `voiceLibrary.getVoiceAudioPath()` 折算。契约全文 `docs/OPEN-API.md`；app 层错误体的 `hint` 自阶段 43 起进入全局契约（AppError.hint）
 - 网易服务端点（经网关 `/api/netease/*` 透传）：`/health`、`/v1/netease/catalog`、
   `/v1/netease/engines/{acquire,release}`、`/v1/confucius/{pipeline,warmup,unload,tts}`、`/v1/r2t2/*`
-  —— `/health` **永远 200**，「服务活着」与「模型可用」是两件事（后者在 `engines.*.installed` 里）
+  —— `/health` **永远 200**，「服务活着」与「模型可用」是两件事（后者在 `engines.*.installed` 里）。
+  R2T2 的 `/v1/r2t2/transcribe`：**离线模式（`stream=false`）Windows 原生可用**（transformers 后端 +
+  r2t2-venv，阶段 41；净占 ~5.5 GB，长音频 worker 内按 240s 分段，响应带 `segments`）；
+  流式（`stream=true`）仍 vLLM-only 需 WSL2；时间戳需 forced aligner，未接入（报干净错误）。
 - IndexTTS 端点（经网关 `/api/indextts/*` 透传）：`/health`（同 netease 哲学，永远 200）、
   `/v1/catalog`（语种/滑杆范围/情感维度/**准入门槛**——门槛真源在服务端，坑 19）、
   `/v1/pipeline`、`/v1/warmup`、`/v1/unload`、`/v1/synth`（multipart，返回 base64 音频）
@@ -262,7 +267,11 @@
     官方 README 写明 `_, text = asr.streaming_transcribe(seg, state, max_new_tokens=4)`
     —— **增量文本在返回值的第二个元素**，不是从 `state` 读；定稿是 `finish_streaming_transcribe(state)`
     之后读 `state.text`。`r2t2_worker.py` 已按此改（`_coerce_text()` + `_state_text()` 兜底）。
-    ⚠️ 仍未实测：**Windows 没有 vLLM 发行包**，本机这条链路要 WSL2 / Docker 才能跑。
+    **已接入（阶段 41）**：离线转写走 transformers 后端 + 独立解释器 `netease/r2t2-venv`
+    （qwen-asr 钉死 transformers==4.57.6，与 TTS venv 的 4.52.4 互斥 —— 这就是独立 venv 的原因），
+    worker 按 8 GB 口径落地：`max_inference_batch_size=1`、bf16（不支持退 fp16）、
+    **外层 240 s 分段**、加载后静音预热、时间戳明确报错。真机转写验证见 PROGRESS 阶段 41。
+    ⚠️ 流式仍 vLLM-only：Windows 没有发行包，本机这条链路要 WSL2 / Docker 才能跑。
 
 13. **Confucius4-TTS 的权重只能走 HF 缓存**
     `confuciustts/cli/inference.py` 里 T2S / S2A 是硬编码 `hf_hub_download(repo_id, filename)`、
@@ -364,12 +373,14 @@
 
 26. **IndexTTS 的显存画像与「自己拦自己」的准入 bug（阶段 26 实测）**
     - 0.8B / BF16 **实际常驻约 5.3 GB**（nvidia-smi 加载前后差值），不是官方口径能推出来的 2~3 GB
-      —— w2v-bert、BigVGAN、QwenEmotion、codec 全都算上。准入门槛 `REQUIRED_VRAM_MB=3072` 因此偏低，
-      上调与否待用户拍板（见 PROGRESS 阶段 26 未完成项）。
+      —— 准入门槛已按此校准为 **5500**（阶段 40，坑 79；原 3072 在 6 GB 极限卡上会放进假死）。
     - 准入检查必须**先看模型是否已常驻，已加载就跳过** —— 否则模型加载后空闲显存必然低于门槛，
       合成会被**自己的常驻显存**拦死（VRAM_INSUFFICIENT，正是坑 24 在网易侧修过的同款问题）。
     - warmup 首跑约 4 分钟，**大头是上游对辅助模型的 ModelScope → hf-mirror 网络探测超时**，
       权重其实全在本地（探测失败后回退读本地），真·加载仅约 10 秒。断网机器上会更久。
+      ⚠️ 阶段 40 核查：上游只在 `checkpoints/hf_cache/{w2v-bert-2.0,bigvgan,campplus_cn_common.bin}`
+      **缺目录/缺文件时**才触发 `ensure_models_available()` 网络探测——现权重齐了这条已自然消失；
+      再遇慢 warmup 先查这三个路径在不在，别急着改代码。
     - RTF 对「当时有多少程序在抢显存」极度敏感：暖态 2.2，桌面占满时 5~14。对比网易（稳态 2.0~2.5）
       时**必须在同一台机、同一种桌面状态下测**，不然结论会错。
 
@@ -867,8 +878,11 @@
 | IndexTTS 方案文档 | `docs/INDEX-TTS-INTEGRATION.md`（8 阶段计划；阶段 0/1/2 完成于 25，合成实测 + 透传 + 前端 + 资源管控完成于 26） |
 | Irodori 服务 | `npm run dev:irodori`（第四个 Python 运行时：`irodori/.venv`，py3.12 + torch 2.10 cu128；端口 **9884**）；体检 `npm run irodori:check`；权重 `npm run irodori:weights`（`-- --training` 下训练档 bf16 2.9GB，**已下载完成**）；**30-2 起推理链路可用**（网关 `/api/irodori/*` 透传 + runtime/arbiter/preload 记账）；**30-7 起设置页有开关**（`GET/POST /api/irodori/service`，supervisor 默认停用）；前端两个页面（日语合成 / 音色固化训练）**已可用**，使用说明见 `docs/IRODORI-INTEGRATION.md`；推理链路验证 `python .tmp/verify_irodori_infer.py [--gateway]`（真合成段需显存 ≥4700MB）；训练链路验证 `python .tmp/verify_irodori_train_s3.py`（离线 68/68）与 `python .tmp/smoke_irodori_s3.py`（真机闭环，需空闲显存 ≥4.7GB） |
 | 启动预加载 | `GET /api/preload/catalog`（各模型显存代价 + 当前余量）、`POST /api/preload`（执行）、`PUT /api/preload/preference`；偏好存 `server/.data/preload.json` |
-| 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`） |
-| 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]` |
+| 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`；R2T2 段按后端分口径，子进程探 r2t2-venv 真实导入性） |
+| 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]`（脚本幂等：已就位文件跳过，断点残件 .part 原子落盘——坑 83） |
+| R2T2 离线转写 | 回归 `python .tmp/verify_r2t2_offline.py --runtime`（26 项，R5 触发真 load 验导入路径）；真机冒烟 `python .tmp/smoke_r2t2_transcribe.py [audio.wav] [--device cpu]`（GPU 模式内置 6200MB 显存护栏，坑 78；`--device cpu` 走零显存排障通道 fp32——10.24 已双语实测通过，见坑 87/88）；环境建法见 `netease/README.md`「R2T2 离线转写」节 |
+| ASR 准入门槛回归 | `python .tmp/verify_asr_gate.py`（25 项，参数化表 + 引擎覆盖行为；trainer 真实口径用整合包 python 跑——阶段 42，坑 86） |
+| 能力网关回归 | `cd server && node_modules/.bin/tsx ../.tmp/verify_open_gateway.mts`（25 项，死端口+内置假上游，不吃显存——阶段 43；契约见 docs/OPEN-API.md） |
 | worker 隔离验证（5 个脚本，共 139 项） | 先起服务 `./GPT-SoVITS-v2pro-20250604/runtime/python.exe trainer/server.py --port 19881 --no-open --no-warmup`，然后：`python .tmp/worker_smoke.py`（32 项，任意 py）、`python .tmp/verify_http.py 19881`（51 项）、`python .tmp/verify_recovery.py 19881`（14 项）；另两个用整合包解释器：`.tmp/verify_isolation.py`（12 项）、`.tmp/verify_synthesis.py`（30 项）。**脚本里都清掉了 `http_proxy`**（本机系统代理会拦 127.0.0.1） |
 | 只起网关+前端 | `npm run dev:cloud` |
 | 只起本地模型服务 | `npm run dev:sovits` |
@@ -1028,6 +1042,32 @@
   启动预加载的网络 warmup 此前全部必失败，已改为不传 signal（坑 77）。
   网关运行时冒烟通过（focus 两个新引擎 200、伪造引擎 400、preload catalog 列 irodori 4700）。
   **遗留**：浏览器整链路真机走查 + 耳朵验收（本轮显存 free 478MB，需 ≥4.7GB）。
+- **对外能力网关已交付（阶段 43，10.24 BY ZCode）**：13 项推理能力（TTS×6 含云端 MiMo / ASR×4 /
+  RVC / DDSP-SVC / UVR5）收敛为 `capabilityCatalog.ts` 真源表 + `/api/open/*` 统一调用 +
+  `/api/capabilities` 能力发现；OpenAI 兼容路径 + 本仓错误契约（AppError 增加 hint 字段）；
+  上游 node:http 客户端避开 undici headersTimeout 300s 陷阱（坑 77 同族）；纯加法——14 个页面
+  的透传链路零改动，训练/批量不进同步 façade。回归 `.tmp/verify_open_gateway.mts` 25/25
+  （死端口+内置假上游）+ typecheck/build 全绿。**真机联调待显存窗口**（与 R2T2 冒烟同批）。
+  外部调用入口文档：`docs/OPEN-API.md`；AGENTS.md 外部共享约束已扩为四类（+④ 能力调用）。
+- **6GB 显存校准与网关解耦已完成（阶段 40，10.21 BY ZCode）**：IndexTTS 门槛 3072→5500、gsv5 turbo
+  3072→3584（坑 78/79）；五运行时 unload 统一「先 `gc.collect()` 再 `empty_cache()`」；netease warmup
+  跑一次最小真实合成预热算子（`warmup_real`，失败不阻塞——坑 80，首条 378s 的对症解）；网关新增
+  `services/serviceCatalog.ts` 收敛五服务身份，arbiter/preload 自动跟随（坑 81，接第六运行时从
+  四处记账减到两处）。验证 `.tmp/verify_vram_gates.py` 12/12 + 网关 tsx 冒烟 11 项。
+  **遗留**：netease `warmup_real` 与 IndexTTS 5500 门槛的真机效果，显存窗口见 PROGRESS。
+- **R2T2 离线转写已接入（阶段 41，10.21~10.23 BY ZCode，票 #10 已关）**：worker 加 transformers
+  后端分支（bf16 退 fp16、batch=1、240s 外层分段、加载后静音预热、时间戳干净报错）；独立解释器
+  `netease/r2t2-venv` + `NETEASE_R2T2_BACKEND` 默认 transformers + launcher/preflight/config 三层
+  自动探测；权重 12 文件 4.1GB 落 `netease/models/Confucius4-R2T2/`。顺带修三个真 bug（坑 82~84）。
+  验证 `.tmp/verify_r2t2_offline.py --runtime` **25/25** + preflight 全绿 + typecheck/eslint。
+  **真机转写已于 10.24 闭环（CPU 模式）**：worker 加 `--device auto/cuda/cpu`（CPU=fp32 零显存
+  排障通道，对齐 gsv5 `GSV5_DEVICE=cpu` 先例）后，`--device cpu` 双语实测通过——3.8s 日语
+  「今日の会議は午後3時に変更になりました」（2.86s，RTF≈0.75）+ 6.7s 中文完整转写（3.84s）；
+  load（fp32）冷 44s / 热 14s，预热 0.8s。**待显存窗口的只剩 GPU bf16 的 RTF 数据点**
+  （护栏不动）。顺带修掉真 load 才暴露的 sys.path 遮蔽（坑 87）与静音素材误判（坑 88）。
+  占卡大户 = 用户的 `llama-server.exe`（Qwen2.5-7B `-ngl 99` 约 5GB，端口 8081，用户拍板保持现状）。
+  **注意：「6GB 常跑极限」的前提是它不常驻——GPU 验证前先看 `nvidia-smi` free 与 compute-apps 进程表，
+  要它让位须用户点头。** 它关掉后 `python .tmp/smoke_r2t2_transcribe.py` 一次即闭环。
 
 ### 验收标准
 
@@ -1062,7 +1102,7 @@
 | 高 | **显存准入门槛按精度分档** | **已按用户拍板落地**（坑 24）：fp16 → 5120、fp32 → 6144，真源改为 `netease/app/tts_engine.py::required_vram_mb(precision)`。**需重启 9882 才生效**；另外这台机器 Windows 桌面常驻约 5 GB，5120 只是「不再按 fp32 的口径误拦」，真跑仍要用户先腾显存 |
 | 中 | **真机验证拖拽导入的文件夹分支**（阶段 24） | 合成事件造不出 `FileSystemDirectoryEntry`，目录递归这条只能由用户从资源管理器真拖一个语料文件夹进训练页来确认（其余 13 处入口均已浏览器实测：过滤、回填、上传都正常） |
 | 中 | 补网易合成页的**速度/质量档位选择器** | 阶段 22 半成品：后端三档（fast/balanced/quality）与 API 已可用，页面会固定用 balanced；补做点在 `NeteaseTtsPage` 合成内容卡里加 Select（选项来自 `catalog.tts.quality_presets`），并实测三档 RTF 与听感。**上次由用户叫停，重开需其点头** |
-| 高 | **R2T2：先接离线（Windows 原生可行），流式再议** | 见坑 12 的修正：离线转写用 `qwen-asr` transformers 后端即可，不需 vLLM/WSL；流式被源码写死成 vLLM-only。已搁置的 WSL2 方案只服务于**流式**，不再是「ASR 整体」的前提 |
+| ~~高~~ **已完成（10.23 阶段 41，票 #10 已关）** | ~~R2T2：先接离线（Windows 原生可行），流式再议~~ | 离线已接入（transformers 后端 + `netease/r2t2-venv`，细节见 PROGRESS 阶段 41 与 netease/README.md）；**剩一步真机转写**：`python .tmp/smoke_r2t2_transcribe.py`（需 6.2GB 显存窗口，当前被 llama-server ~5GB 挡着）。流式仍 WSL2/vLLM-only 未接入 |
 | 中 | fp16 音质人工确认 | 已出声（RMS 0.08~0.10），但没做过 A/B；若嫌糊，用 `NETEASE_TTS_PRECISION=fp32` 重试（需要 ≥8 GB 空闲显存） |
 | 低 | 首条合成预热（实测 378 s） | 稳态 RTF 2.0~2.5，但冷启动第一条要几分钟。可考虑 warmup 时跑一句空合成把算子预热掉 |
 | 低 | 观察新口径是否过严 | **已有结论，见上面「显存准入门槛是否按精度分档」与坑 24** —— 确实过严，正常用机状态下主服务开不起来 |
@@ -1076,10 +1116,11 @@
 
 - 先读本文件 + `PROGRESS.md`，再用搜索工具定位具体模块，**不要读全仓库**
 - 改动前先看「已知坑」第 1、5、6 条（bat 编码、Python 3.9 限制、弹窗依赖）；
-  动 `netease/` 前必看第 12~17 条（R2T2 平台阻塞、HF 缓存、hf-mirror、fp16、float32 写盘、显存口径）；
+  动 `netease/` 前必看第 12~17 条（R2T2 平台分层与离线接入见坑 12、HF 缓存、hf-mirror、fp16、
+  float32 写盘、显存口径）与第 82~85 条（worker 协议应答、下载残件、shlex 反斜杠、CUDA torch 压轴）；
   动 `indextts/` 前必看第 26 条（显存画像、准入自锁 bug、warmup 网络探测、RTF 波动）；
   动任何结果栏前必看第 18 条（统一走 `useResultStack`）；动资源预估前看第 19 条（门槛值在服务
-  端）；动任何上传/导入入口前看第 21、25 条（磁盘路径不能当 URL、拖拽统一走 `useFileDrop`）；
+  端）与第 24 / 72 / 86 条（门槛随请求参数分档：精度 / batch / ASR 尺寸×精度——同一条原则的三个实例）；动任何上传/导入入口前看第 21、25 条（磁盘路径不能当 URL、拖拽统一走 `useFileDrop`）；
   动音色库（网关或 trainer 任一侧）前必看第 27 条（共写同一份 JSON，persist 前必须刷新）
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志
@@ -1127,3 +1168,120 @@
     「GPU 100% + 显存 used≈total + 无输出」= 溢出假死，直接杀进程重查显存。
 
 > 本次文档更新时间：10.19 [BY ZCode]（阶段 39：knowledge-atlas 前端全量视觉重构——design-studio 决策页锁定「知识总簿·年鉴体」替换 Linear 世界，index.html/style.css 重写 + DESIGN.md 由建成世界重写 + 渲染/交互/对比度全验证；数据源 data.js 契约未动，knowledge-export 管线无回归。新坑备忘：**带 transform 动画的祖先（即使 fill 后计算值是单位矩阵）会劫持子元素 fixed 定位的包含块**——fixed 元素挂在 body 直下；**窄栏（<40em）两端对齐遇长 latin token 必出巨缝**，overflow-wrap:anywhere 不救（token 小于栏宽不触发），直接用起点对齐）
+
+> 本次文档更新时间：10.21 [BY ZCode]（阶段 40：6GB 极限显存校准 + 暖机真实合成 + 网关服务身份收敛。新增坑 79/80）
+
+79. **准入门槛的「估计值」必须在实测后回填，6GB 极限卡会把估低放大成假死（阶段 40 校准）**
+    用户 10.21 明确：本机**常跑显存极限只有 6 GB**。此前两处门槛一直停在「估计值」：
+    - IndexTTS `REQUIRED_VRAM_MB=3072`，而坑 26 早就实测净占 **5.27 GB**（空闲 5548 → 281 MB）——
+      3072 的门槛放进来的每一条路都会在推理期溢出共享内存，正是坑 78 的假死；
+    - gsv5 v5turbo `3072`（注释自称「待实测的保守值」），坑 78 实测 2776 MB 就假死，说明 3072 不可信。
+    **已校准**：IndexTTS → **5500**（净占 + ~230 MB 峰值余量）、gsv5 turbo → **3584**（对齐 dev 档），
+    preload 账本与前端兜底常量三处同步（真源在服务端，坑 19）。
+    **推论**：门槛不是「模型文件大小」，是「实测净占 + 峰值余量」；写 `待实测` 的常量要留
+    TODO 直到真测过——6 GB 卡上估低的代价不是报错，是 20 分钟假死。另：**unload 必须
+    先 `gc.collect()` 再 `empty_cache()`**（transformers 系模型普遍有循环引用，不清引用图
+    empty_cache 归还不了多少）——现在五个运行时全部对齐这个顺序。
+
+80. **netease 暖机只加载不预热，冷启动首条合成 378 s 是算子首跑不是加载（阶段 40）**
+    `/v1/confucius/warmup` 原来只 `ensure_loaded()`，cuDNN autotune / kernel 编译 /
+    allocator 池扩张的代价原样转嫁给用户第一条请求（实测 378 s，稳态 RTF 2.0~2.5）。
+    **已修**：warmup 之后跑一次 `warmup_real()`——3.2 s 低幅正弦当参考音（缓存在
+    `.data/warmup_ref.wav` 复用）、fast 档最小步数（`num_beams=1, n_timesteps=8`）
+    跑一句两字文本，产物即弃。**预热失败只记录不阻塞**：warmup 是优化不是准入，
+    不能把「模型已就绪」变成 500，失败原因带在响应 `warmup_real` 字段里。
+    推论：凡是「带 warmup 端点的懒加载服务」，warmup 的语义要想清楚是「只加载」
+    还是「可试跑」——8 GB 级别的卡上算子首跑的代价（分钟级）远大于加载本身。
+    （真机效果待验证：显存 ≥5 GB 时跑一次 warmup，看 `warmup_real.done` 的耗时
+    与紧随其后的第一条真实合成是否不再出现分钟级首跑。）
+
+81. **五个运行时的「服务身份」收敛为 `server/src/services/serviceCatalog.ts`（阶段 40）**
+    服务 id、baseUrl、卸载端点曾经散在三处：arbiter 的 `ALL_SERVICES`/`RELEASE_ENDPOINTS`、
+    preload 各模型自己的 `release()`、config 里各自的 `baseUrl`——Irodori 接入时
+    「运行时/仲裁器/预加载/资源预估四处记账」就是这么来的，第六个运行时还会再犯。
+    **现在**：加运行时 = `config/index.ts` 加 baseUrl + `serviceCatalog.ts` 加一行，
+    arbiter / preload 自动跟随。两个配套约定：仲裁器要区分「没起（ECONNREFUSED，
+    跳过不报错）」与「真失败」，所以它按表自己发请求；preload 的让位语义用
+    `releaseServiceModels()`（吞一切错误）——**别把吞错误的版本给仲裁器用**。
+    对外契约零变化：`FocusEngine` / `PreloadModel` / `FocusReport` 原样。
+
+82. **worker 对 `load` 只回无 id 的 `ready`，`warmup()` 会挂满 1800 s 才超时（阶段 41 修）**
+    R2T2 的 JSON 行协议里，manager 的 `_request()` 等的是**带 id 的 `result`/`error`**，
+    而 worker 的 `load` 分支只 `emit({"type":"ready"})`（无 id 广播，reader 线程只拿它置
+    `model_loaded`）——pending 请求永远等不到回应。此前从未暴露，因为 Windows 上
+    worker 根本起不来（vLLM 无发行包），`warmup()` 的挂死路径没被走到过。
+    **修法**：worker 处理 `load` 后补发 `{"type":"result","id":...,"loaded":true}`。
+    推论：**「广播事件」与「请求应答」是两条通道**，协议里每个请求都必须有带 id 的应答；
+    只在一条链路能跑通时写另一条，八成藏着这种洞（坑 77 的 `AbortSignal.timeout(0)` 同源）。
+
+83. **断点续传的半截文件不能长得像完整产物（阶段 41 修，`scripts/download_netease_weights.py`）**
+    流式下载中断（IncompleteRead）后残件留在 staging，且 `download_one` 的判重只看
+    「文件存在且 >0」——下次重试会把 434/2644 MB 的残件当缓存**直接铺进 HF 缓存**，
+    之后 transformers 读到的就是永远解码失败的权重。实测 t2s_model 断在 434 MB。
+    **修法**：`fetch()` 改落 `<name>.part`，成功后 `os.replace` 原子改名，失败即删残件；
+    同时 HF 缓存里已有的文件直接跳过（脚本可重入，不再每次重拖 2.6 GB 的 t2s_model）。
+    推论：**一切「下载→落盘→后续步骤引用」的脚本，判重必须发生在「成功落盘」之后**；
+    中断状态要么不可见（.part），要么带标记。
+
+84. **`shlex.split` 默认（posix=True）会把 Windows 路径的反斜杠当转义吞掉（阶段 41 二次踩中）**
+    `"F:\a\python.exe"` 经 `shlex.split(p)` 变成 `F:apython.exe` → `subprocess` 报
+    `WinError 2 系统找不到指定的文件`，而文件明明存在。第一次踩中是
+    `netease/app/r2t2.py::_spawn`（所以它写了 `posix=False if Path(p).is_absolute() else shlex.split(p)`），
+    阶段 41 在 `scripts/preflight_netease.py` 的 R2T2 解释器探测里**又踩了一次**。
+    **规矩**：凡是「允许整条命令行」的 Windows 路径配置（NETEASE_R2T2_PYTHON 这类），
+    切词必须沿用 `_spawn` 的同款分支；两处以上要用就抽公共函数，别各写各的。
+
+85. **给 R2T2 建 venv：CUDA torch 必须压轴装（阶段 41 实测）**
+    `pip install transformers==4.57.6 accelerate ...` 一口气装下来，pip 的解析器会把 torch
+    升到 PyPI 的 **2.14.1（CPU 版）**，把先装的 2.7.0+cu126 覆盖掉。另外今天网络不稳，
+    `pip install torch --index-url .../cu126` 两次都死在哈希校验（2.5GB 下载中途损坏）。
+    **修法（已写进 netease/README.md 步骤注释）**：普通依赖先装、qwen-asr/r2t2 用
+    `--no-deps`、**torch 最后装**；网络差时直接从 netease venv 拷
+    `torch/ torchgen/ torio/ torchaudio/` 四个目录（同解释器同平台，即拷即用，
+    注意 torchaudio 2.7 的伴生包 `torio` 别漏）。
+
+86. **ASR 准入「整板一道门槛」两头失真：small 被误拦、large-v3 被误放（阶段 42，坑 24/72 同族补票）**
+    `engine.py` 引擎注册表里 `asr` 槽是静态 2048 —— 那是按「板块默认配置 = Paraformer-large fp32」
+    定的一次性取值（注释写明「取能跑起来的量级，宁估高」）。注册表粒度天生是**引擎**（谁有资格持卡），
+    参数空间（backend×size×precision×model）在板块侧，两边一直没接上。6GB 机器上一个数必然两头失真：
+    **whisper small（实际 <1 GB）被 2048+512 预留误拦；large-v3 fp16（实际 3.5~5 GB）被 2048 误放
+    → 跑一半 OOM / 坑 78 假死（危险方向）**。
+    **修法**：`asr/catalog.py` 加 `REQUIRED_VRAM_MB` 表 + `required_vram_mb(backend,size,precision,model)`；
+    `EngineRegistry.acquire(..., required_mb=...)` 支持覆盖（不传 = 行为不变，回落静态档）；
+    `routers/asr.py` 三处申请点**先 `ctx.asr.resolve()` 拿真实组合再设门**——必须传 resolve 之后的值，
+    因为 resolve 里有「中文/粤语改用 FunASR」的换后端决定，门槛要跟着换后的算；数据集任务把解析结果
+    回填 request（参数只决定一次）。表值是**量级估算（宁估高）**，真机 nvidia-smi 画像后回填（同坑 26 做法）。
+    回归锁 `.tmp/verify_asr_gate.py` **25/25**（用整合包 py3.9 跑 = trainer 真实环境口径）。
+    推论：坑 24（按精度分档）/ 72（按 batch 分档）/ 本次（按尺寸×精度分档）是**同一条原则的三个实例**
+    ——凡「随请求参数变化」的资源需求，门槛必须参数化；注册表管槽位互斥，参数化门槛真源放板块侧，
+    调用方 acquire 时把值传进来。
+
+87. **按路径启动的 worker，脚本目录会以 sys.path[0] 遮蔽同名 site-packages 包（阶段 41补1 实测）**
+    `r2t2_worker.py` 按路径启动时 `sys.path[0] = netease/app/`，里面的 **`r2t2.py`（进程管理器）**
+    遮蔽了 site-packages 的 r2t2 推理包 —— worker 里 `from r2t2 import R2T2ASRModel` 实际 import
+    到的是自家 manager，报 `attempted relative import with no known parent package`。
+    为什么躲了两天才炸：`python -c "import r2t2"` 探活（cwd=仓库根，无遮蔽）与 ping 协议冒烟
+    （不 load）都覆盖不到，**只有真 load 才走那条 import**。CPU 冒烟第一次真 load 就撞上。
+    **修法**：worker 是自包含的（只依赖 site-packages），`main()` 开头把脚本目录从 sys.path
+    整个摘掉；回归锁 R5（`verify_r2t2_offline.py --runtime`）用坏模型路径触发真 load，
+    断言错误是「模型缺失」语义而非 ImportError。
+    推论：坑 31（embedded 忽略 PYTHONPATH）与坑 41（`-m` 无 sys.path[0]）是同一家族——
+    **「按路径启动 + 脚本目录进 sys.path[0]」的 worker，通用名（config/errors/r2t2）撞车是
+    定时炸弹；探活覆盖不到懒加载路径，回归锁必须真发一次 load**。
+
+88. **测试素材要先验能量：数字静音的 wav 会得到「空文本」，那是模型的正确输出（阶段 41补1）**
+    `.tmp/` 里两个 irodori 参考 wav 实测 rms=0.0000/peak=0.000（纯数字静音）——CPU 冒烟转写
+    0.78s 出空文本，差点误判成「转写链路坏了」。模型对静音的应答就是空串。
+    **修法**：冒烟脚本加载后先算 peak，<1e-4 打 [warn] 指明「空文本是正确输出，换真人素材」；
+    真人素材实测：3.8s 日语 → 「今日の会議は午後3時に変更になりました」（2.86s，CPU fp32
+    RTF≈0.75）；6.7s 中文 → 完整转写（3.84s）。
+    推论：**验「模型坏了没有」和「模型好不好」要分开**——静音素材只能验链路通，文本质量
+    必须用已知内容的真人语音。
+
+> 本次文档更新时间：10.23 [BY ZCode]（阶段 42：ASR 显存准入参数化——坑 86；docs/ASR.md 与 HANDOFF 命令表/建议行同步）
+
+> 本次文档更新时间：10.21~10.23 [BY ZCode]（阶段 40：6GB 极限显存校准 + warmup_real + serviceCatalog，坑 79~81；阶段 41：R2T2 离线转写接入——worker transformers 分支 + r2t2-venv 独立解释器 + 权重 4.1GB + 三个真 bug（warmup 挂死坑 82 / 下载残件坑 83 / shlex 反斜杠坑 84），回归 25/25，真机转写待显存窗口）
+
+> 本次文档更新时间：10.23 [BY ZCode]（阶段 40/41 索引同步：技术栈行、核心接口 R2T2 分层、命令表加 R2T2 体检/权重/冒烟三行、当前状态补两条阶段条目、下一步表划掉 R2T2 行、建议清单扩坑 82~85。**硬件环境新事实**：占卡大户 = 用户自跑的 `llama-server.exe`（Qwen2.5-7B `-ngl 99`，端口 8081，约 5GB），10.23 用户拍板保持现状——「6GB 常跑极限」以其不常驻为前提，已写入 PROGRESS 硬件窗口状态）
+
+> 本次文档更新时间：10.24 [BY ZCode]（阶段 42 索引：ASR 准入参数化见坑 86；阶段 43：对外能力网关 `/api/open/*` + `/api/capabilities` 交付——核心接口段、命令表、当前状态三条已记；新文档 docs/OPEN-API.md；AGENTS.md 外部共享约束扩四类；AGENT_CHANGELOG 补阶段 40~43 留痕）

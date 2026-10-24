@@ -142,8 +142,14 @@ class EngineRegistry:
 
     # ---------- 占用 ----------
 
-    def acquire(self, name: str, reason: str = "") -> EngineHandle:
-        """独占获取引擎。被占用且无法让位时抛 `AdmissionError`。"""
+    def acquire(self, name: str, reason: str = "", required_mb: Optional[int] = None) -> EngineHandle:
+        """独占获取引擎。被占用且无法让位时抛 `AdmissionError`。
+
+        `required_mb`：**按请求参数的显存需求**，来自各板块自己的门槛表（如 ASR 的
+        `catalog.required_vram_mb(backend, size, precision, model)`，阶段 42/坑 72 同款
+        参数化）。给了就用它做准入；不给（None）回落到 `ENGINES[name].required_mb`
+        静态档。注册表仍只管「哪个引擎有资格持卡」，参数化的真源留在板块侧。
+        """
         name = canonical(name)
         info = ENGINES.get(name)
         if info is None:
@@ -164,21 +170,23 @@ class EngineRegistry:
             elif self._active and self._active != name:
                 self._release_active_locked(force=True)
 
-            self._check_vram_locked(info)
+            self._check_vram_locked(info, required_mb)
 
             self._active = name
             self._reason = reason
             self._since = time.time()
             return EngineHandle(self, name, reason)
 
-    def _check_vram_locked(self, info: EngineInfo) -> None:
+    def _check_vram_locked(self, info: EngineInfo, required_mb: Optional[int] = None) -> None:
         """显存准入。未知剩余显存（返回 None）时放行，交由 torch 自己报错。"""
-        if info.required_mb <= 0:
+        if required_mb is None:
+            required_mb = info.required_mb
+        if required_mb <= 0:
             return
         free = free_vram_mb()
         if free is None:
             return
-        need = info.required_mb + self.settings.vram_reserve_mb
+        need = required_mb + self.settings.vram_reserve_mb
         if free < need:
             raise AdmissionError(
                 "VRAM_INSUFFICIENT",

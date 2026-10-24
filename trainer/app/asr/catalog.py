@@ -27,6 +27,7 @@ __all__ = [
     "DEFAULTS",
     "LANGUAGE_LABELS",
     "PRESETS",
+    "REQUIRED_VRAM_MB",
     "RESIDENT_MODELS",
     "RESIDENT_MODULES",
     "backend_meta",
@@ -35,6 +36,7 @@ __all__ = [
     "language_label",
     "normalize",
     "preset",
+    "required_vram_mb",
     "resident_channel_module",
     "resident_models",
 ]
@@ -120,6 +122,100 @@ DEFAULTS: Dict[str, str] = {
     "language": "zh",
     "precision": "float32",
 }
+
+#: ASR 引擎的显存准入：按「模型标识 × 尺寸 × 精度」参数化（坑 24/72 同族补票，阶段 42）。
+#:
+#: 引擎注册表（`app/engine.py` ENGINES）里 `asr` 的静态 2048 是按「板块默认配置 =
+#: Paraformer-large fp32」定的一次性取值。板块的请求可以带任意组合，一个数必然两头
+#: 失真：**small 级被 2048 误拦（实际 <1 GB），large-v3 被 2048 误放（实际 3.5~5 GB，
+#: 跑一半 OOM 或溢出共享内存假死——坑 78）**。现在调用方经 `resolve()` 解析出真实
+#: 组合后取本表，`acquire("asr", ..., required_mb=...)` 按参数设门；
+#: `ENGINES["asr"].required_mb` 保留为「参数未解析时的兜底 = 默认配置档」。
+#:
+#: **宁估高不估低**（估高只是提前拒绝，估低是中途炸，与坑 19 同旨）。下表是**量级估算**：
+#: 权重体积（CT2 ≈ 2 字节/参数，fp16 减半、int8 再减半）+ 约 1 倍余量给激活值与特征
+#: 提取；SenseVoice「最省显存」（上游定位，见 RESIDENT_MODELS hint）、turbo 解码器减半
+#: 是已知锚点。真机 nvidia-smi 画像后可回填校准（同坑 26 的做法）。
+#: 注：funasr 的 `precision_effective=False`（fp16 请求实际仍是 fp32 画像），
+#: 所以 funasr 档不按精度分。
+REQUIRED_VRAM_MB: Dict[str, Dict[str, int]] = {
+    # ---- FunASR 常驻 ----
+    "paraformer-zh": {"default": 2048},        # 权重「两三百 MB」×(模型+VAD+标点)，fp32 常驻 ~1.5-2 GB（bootstrap.py:136 注释量级）
+    "iic/SenseVoiceSmall": {"default": 1536},  # 多语种 small 底座 + fp32，比 paraformer 轻，余量给足
+    "speech_UniASR_yue": {"default": 2048},    # 粤语 paraformer 同量级
+    # ---- faster-whisper（CT2）----
+    # tiny/base/small 一档：small 权重 ~0.5 GB（fp16），这正是「旧 2048 一刀切误拦」的主角，
+    # 修桩的本意就是让它按真实量级放行。
+    "whisper-small": {"float32": 2560, "int8": 1024, "default": 1536},
+    "whisper-medium": {"float32": 4096, "int8": 2048, "default": 2560},   # 769M：fp16 ~1.5 GB + 激活；fp32 翻倍
+    "whisper-large": {"float32": 8192, "int8": 3584, "default": 4608},      # 1.5B：fp16 ~3 GB + 激活；fp32 在 8 GB 卡上等于拒绝
+    "whisper-large-v3-turbo": {"float32": 6144, "int8": 2560, "default": 3072},  # turbo 编码器 large + 解码器减半
+}
+
+#: 尺寸/标识 → 权重档（官方脚本把 large 归一 large-v3，常驻通道同款归一，
+#: 见 pipeline._default_model_id）
+_SIZE_TIERS: Dict[str, str] = {
+    "tiny": "whisper-small",
+    "base": "whisper-small",
+    "small": "whisper-small",
+    "medium": "whisper-medium",
+    "medium.en": "whisper-medium",
+    "large": "whisper-large",
+    "large-v2": "whisper-large",
+    "large-v3": "whisper-large",
+    "large-v3-turbo": "whisper-large-v3-turbo",
+}
+
+#: 后端默认权重档（model 与 size 都解析不出来时的兜底）
+_BACKEND_TIER_DEFAULT: Dict[str, str] = {
+    "funasr": "paraformer-zh",
+    "fasterwhisper": "whisper-medium",
+}
+
+
+def required_vram_mb(
+    backend: str,
+    size: str = "",
+    precision: str = "",
+    model: str = "",
+) -> Optional[int]:
+    """「这组参数要多少显存」；解析不出具体模型时返回 None（引擎走静态兜底档）。
+
+    解析顺序与 `AsrPipeline.resolve()` 对齐：先看常驻模型标识（paraformer /
+    SenseVoice / whisper 尺寸名），再看尺寸，最后按后端默认档。
+    **调用方应传 resolve() 之后的值**——resolve 里还有「中文/粤语改用 FunASR」这类
+    换后端的决定，门槛必须跟着换后的参数算，否则会拦错对象。
+    """
+    model_key = (model or "").strip()
+    size_key = (size or "").strip()
+    precision_key = (precision or "").strip()
+
+    tier: Optional[str] = None
+    if model_key:
+        if model_key in REQUIRED_VRAM_MB:
+            tier = model_key
+        elif model_key == "sensevoice-small":
+            tier = "iic/SenseVoiceSmall"
+        elif "UniASR" in model_key or "yue" in model_key.lower():
+            tier = "speech_UniASR_yue"
+        elif model_key.startswith("whisper-"):
+            tier = model_key if model_key in REQUIRED_VRAM_MB else _SIZE_TIERS.get(
+                model_key.replace("whisper-", "", 1), "whisper-large"
+            )
+        elif model_key in _SIZE_TIERS:
+            tier = _SIZE_TIERS[model_key]
+    if tier is None and size_key:
+        tier = _SIZE_TIERS.get(size_key)
+    if tier is None:
+        tier = _BACKEND_TIER_DEFAULT.get((backend or "").strip())
+    if tier is None:
+        return None
+
+    entry = REQUIRED_VRAM_MB.get(tier) or {}
+    value = entry.get(precision_key) if precision_key else None
+    if value is None:
+        value = entry.get("default")
+    return int(value) if value else None
 
 #: 常驻通道需要 import 的 Python 包。
 RESIDENT_MODULES: Dict[str, str] = {
@@ -254,4 +350,14 @@ def describe(settings: Any = None) -> Dict[str, Any]:
         "presets": [dict(item) for item in PRESETS],
         "language_labels": dict(LANGUAGE_LABELS),
         "defaults": defaults(settings),
+        # 准入门槛的按参数表（阶段 42，坑 19：真源在服务端，前端只读不抄）
+        "required_vram_mb": {
+            "table": {tier: dict(values) for tier, values in REQUIRED_VRAM_MB.items()},
+            "size_tiers": dict(_SIZE_TIERS),
+            "note": (
+                "显存准入按「模型×尺寸×精度」参数化：请求经 resolve() 解析出真实组合后取本表，"
+                "传给引擎 acquire(required_mb=...)。数值是**量级估算**（宁估高不估低），真机 "
+                "nvidia-smi 画像后回填校准；参数解析不出时回落到引擎注册表的静态档 2048。"
+            ),
+        },
     }

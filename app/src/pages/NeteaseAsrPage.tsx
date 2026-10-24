@@ -526,7 +526,7 @@ export function NeteaseAsrPage({ onFallback }: { onFallback?: () => void } = {})
                 {loading ? (
                   <span className="inline-flex items-center gap-2">
                     <Loader2 className="size-4 animate-spin" />
-                    {mode === 'stream' ? '等待第一个字…（首次需启动 vLLM 引擎）' : '转写中…（首次需启动 vLLM 引擎）'}
+                    {mode === 'stream' ? '等待第一个字…（首次需启动 R2T2 引擎，仅 WSL/vLLM 部署可用）' : '转写中…（首次需加载 R2T2 模型，约 5.5 GB 显存）'}
                   </span>
                 ) : (
                   '选择音频后开始转写，文本会出现在这里'
@@ -543,7 +543,8 @@ export function NeteaseAsrPage({ onFallback }: { onFallback?: () => void } = {})
           <CardContent className="space-y-2 text-xs text-muted-foreground">
             <p>· 离线批量转写造训练数据集仍推荐现有 ASR 板块（FunASR / faster-whisper，轻量且已接入训练入口）。</p>
             <p>· 实时听写、打字幕、对延迟敏感的场景用本页 —— R2T2 的流式是 append-only 的，不会回头改字。</p>
-            <p>· 引擎基于 vLLM，显存开销较大；与网易 TTS 引擎互斥，切换时自动让位。</p>
+            <p>· 快速模式（离线）在 Windows 上原生可用（transformers 后端）；流式模式需要 vLLM（WSL 部署），本机未配 WSL 时会明确报错。</p>
+            <p>· R2T2 显存开销较大（bf16 净占约 5.5 GB）；与网易 TTS 引擎互斥，切换时自动让位。</p>
           </CardContent>
         </Card>
       </div>

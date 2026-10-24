@@ -2,11 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { config } from '../config/index.js';
 import { logger } from '../lib/logger.js';
 import { vramMb } from '../lib/vram.js';
 import { resourceArbiter } from './arbiter.js';
 import { sovitsSupervisor } from './sovits.js';
+import { baseUrlOf, releaseServiceModels } from './serviceCatalog.js';
 
 /**
  * 启动预加载：开网页时先把**一个**模型装进显存。
@@ -14,6 +14,8 @@ import { sovitsSupervisor } from './sovits.js';
  * 背景（用户 2026-10 的裁决）：IndexTTS 与网易谁当主力**由使用测试决定**，不做预设；
  * 因此先走「双轨 + 启动时选一个预加载」。磁盘不是瓶颈，**显存才是** ——
  * 8 GB 卡装不下两套常驻模型，所以预加载的第一件事是**把另一套让出去**。
+ * （2026-10-21 用户补充分：本机**常跑显存极限只有 6 GB**，各门槛按实测净占校准，
+ *  宁可加载前拦下，也不要让模型溢出共享内存假死。）
  */
 
 export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'irodori-tts' | 'gpt-sovits-v5' | 'sovits' | 'none';
@@ -22,22 +24,24 @@ export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'irodori-tts' | 'gpt
  * 每个模型的显存账本。
  *
  * `vram_mb` 的来源写清楚，方便实测后校准，不要凭感觉填：
- * - netease-tts 6144 ← `netease/app/tts_engine.py::REQUIRED_VRAM_MB`（fp16 实测常驻 + 峰值 4.9 GB）
+ * - netease-tts 6144 ← `netease/app/tts_engine.py::REQUIRED_VRAM_MB`（fp16 实测常驻 + 峰值 4.9 GB，
+ *   fp16 的准入口径是 5120，这里取 fp32 档更保守——预加载是开机动作，被拦了就该先腾显存）
  * - sovits 3072 ← trainer 引擎注册表里 `sovits` 的 required_mb
- * - indextts-tts 3072 ← `indextts/app/indextts_engine.py::REQUIRED_VRAM_MB`
- *   （阶段 26 实测：加载后 nvidia-smi 空闲从 5548 → 281 MB，**实际常驻约 5.3 GB**，
- *   3072 是加载前的准入口径，偏低 —— 与 netease 不同它没有更大的门槛值可引，
- *   门槛本身待用户在合成实测中确认是否要上调）
+ * - indextts-tts 5500 ← `indextts/app/indextts_engine.py::REQUIRED_VRAM_MB`
+ *   （阶段 26 实测加载后 nvidia-smi 空闲 5548 → 281 MB，**净占约 5.27 GB**。
+ *   旧值 3072 会把 6 GB 级别的卡放进来自由落体——加载成功但推理溢出共享内存假死）
  * - irodori-tts 4700 ← `irodori/app/config.py::REQUIRED_VRAM_MB['int4']`
  *   （阶段 28 实测净占 ~4.6 GB；`/health` 的 `required_vram_mb` 是唯一真源，
  *   这里只是预加载账本的**副本**，改门槛两处都要动）
+ * - gpt-sovits-v5 3584 ← `gsv5/app/config.py::REQUIRED_VRAM_MB['v5turbo']`
+ *   （坑 78：2776 MB 空闲实测假死，3072 的保守值不再可信，对齐 dev 档）
  */
 const MODELS: Record<Exclude<PreloadModel, 'none'>, {
   label: string;
   vram_mb: number;
   /** 预热动作：真正把模型装进显存 */
   warmup: () => Promise<void>;
-  /** 让位动作：把它的常驻模型卸掉 */
+  /** 让位动作：把它的常驻模型卸掉（端点清单唯一真源在 serviceCatalog） */
   release: () => Promise<void>;
 }> = {
   'netease-tts': {
@@ -46,80 +50,53 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
     warmup: async () => {
       // 不传 signal = 真正的「不设超时」。别写 AbortSignal.timeout(0)：
       // 那是「0ms 后中止」，实测首装请求 99ms 就被打断（TimeoutError），预加载必失败。
-      await fetch(`${config.netease.baseUrl}/v1/confucius/warmup`, {
+      // warmup 现在含一次最小真实合成的算子预热（冷启动首条 378 s 的主因），耗时可能到分钟级。
+      await fetch(`${baseUrlOf('netease')}/v1/confucius/warmup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
     },
-    release: async () => {
-      await fetch(`${config.netease.baseUrl}/v1/confucius/unload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(30_000),
-      }).catch(() => undefined);
-    },
+    release: () => releaseServiceModels('netease'),
   },
   'indextts-tts': {
     label: 'IndexTTS-2.5',
-    vram_mb: 3072,
+    vram_mb: 5500,
     warmup: async () => {
       // 同上：不传 signal（首次装要跑辅助模型网络探测，实测约 4 分钟）
-      await fetch(`${config.indextts.baseUrl}/v1/warmup`, {
+      await fetch(`${baseUrlOf('indextts')}/v1/warmup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
     },
-    release: async () => {
-      await fetch(`${config.indextts.baseUrl}/v1/unload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(30_000),
-      }).catch(() => undefined);
-    },
+    release: () => releaseServiceModels('indextts'),
   },
   'irodori-tts': {
     label: 'Irodori-TTS（日语）',
     vram_mb: 4700,
     warmup: async () => {
       // 同上：不传 signal（实测加载 ~20s）
-      await fetch(`${config.irodori.baseUrl}/v1/warmup`, {
+      await fetch(`${baseUrlOf('irodori')}/v1/warmup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
     },
-    release: async () => {
-      await fetch(`${config.irodori.baseUrl}/v1/unload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(30_000),
-      }).catch(() => undefined);
-    },
+    release: () => releaseServiceModels('irodori'),
   },
   'gpt-sovits-v5': {
     label: 'GPT-SoVITS v5（turbo）',
-    vram_mb: 3072,
+    vram_mb: 3584,
     warmup: async () => {
-      // v5turbo 门槛（3072MB）是**待实测的保守值**，首次 GPU 冒烟后回填
-      await fetch(`${config.gsv5.baseUrl}/v1/warmup`, {
+      // v5turbo 门槛（3584MB）：坑 78 实测 2776MB 假死后对齐 dev 档
+      await fetch(`${baseUrlOf('gsv5')}/v1/warmup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: '{}',
       });
     },
-    release: async () => {
-      await fetch(`${config.gsv5.baseUrl}/v1/unload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(30_000),
-      }).catch(() => undefined);
-    },
+    release: () => releaseServiceModels('gsv5'),
   },
   sovits: {
     label: 'GPT-SoVITS',
@@ -132,14 +109,7 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
       }
       await sovitsSupervisor.ensureStarted();
     },
-    release: async () => {
-      await fetch(`${config.sovits.baseUrl}/v1/engines/unload`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: '{}',
-        signal: AbortSignal.timeout(30_000),
-      }).catch(() => undefined);
-    },
+    release: () => releaseServiceModels('sovits'),
   },
 };
 

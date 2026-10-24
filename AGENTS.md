@@ -26,3 +26,11 @@ Single-context：根 `GLOSSARY.md` + `docs/adr/`（当前尚不存在，由 `/do
 - **编译与同步**：知识变更后执行 `node knowledge-export/build.js` 重新生成手册；
 - **外部调研接入**：bili-duty skill 的检索产出在 `F:\schoolCompWorks\cloneili-duty-local\data\summaries`，其中 **`ai voice` 子目录是本项目要的路径**——调用 bili-duty 的场景，结果从这里读取。
 - **收集缓存与整合流程**：手动收集物放 `knowledge-inbox/`（gitignore）；触发整合时走五步流程：分析文件 → 产出报告 → 验证可行性 → 横向对比 → 整合进 data.js → `node knowledge-export/build.js`。流程细则见 `knowledge-inbox/README.md`。
+
+## 外部共享约束（多 Agent 共享目录，2026-10-24 新增）
+
+- 本仓库经 `link_ttstool` Junction 被主中枢（Mega-Scale AI Workflow Integration Project）引用，**可能同时有多个 Agent 在此工作**；任何改动必须留痕仓根 `AGENT_CHANGELOG.md`（倒序，最新在上）。
+- **主中枢对本仓的合法操作仅限四类**：① 只读 `knowledge-export/*.md` 检索；② 经 `core/knowledge_syncer.py` 将 B 站 `ai voice` 总结按追加式规则挂载进 `knowledge-atlas/js/data.js` → `node knowledge-export/build.js` 重编译 → 递增前端版本号；③ 读取本仓 `AGENTS.md` / `HANDOFF.md` 规范；④ **经回环 HTTP 调用 `/api/open/*` 使用已部署模型能力**（推理类计算调用，不算写操作；契约见 `docs/OPEN-API.md`，显存门槛/互斥语义务必先读）。其余写操作必须按本仓阶段流程立项，不得借道中枢直接改。
+- **独立仓库边界**：本仓改动只在本仓提交；严禁把本仓文件提交进主中枢仓库，反之亦然。
+- **大资产保护**：`models/`、`GPT-SoVITS-v2pro-20250604/`、`vendor/`、`node_modules/` 严禁删除或移动（清理只进回收站并留痕）。
+- **GPU 互斥**：`trainer/` 训练与 TTS / 变声类推理占用 GPU，与 llama-server（localmodels）、ComfyUI（E:\ai绘图）共享 8GB 显存且互斥，拉起前必须确认显存归属。

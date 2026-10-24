@@ -24,7 +24,10 @@ def _env(name: str) -> str:
 
 VARIANTS = ("v5turbo", "v5dev")
 DEFAULT_VARIANT = "v5turbo"
-REQUIRED_VRAM_MB = {"v5turbo": 3072, "v5dev": 3584}
+#: turbo 旧值 3072 来自「待实测的保守值」；坑 78 实测 2776 MB 空闲时 4 步 turbo 直接
+#: 溢出共享内存假死（GPU 100% + 无输出），说明真实需求显著高于 3072 —— 对齐 dev 档 3584。
+#: 6 GB 级别的卡上宁可加载前明确拦下，也不要让用户等 20 分钟假死。
+REQUIRED_VRAM_MB = {"v5turbo": 3584, "v5dev": 3584}
 
 
 @dataclass

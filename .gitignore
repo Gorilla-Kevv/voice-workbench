@@ -39,6 +39,8 @@ voicelib/
 
 # 网易模块（netease/）：独立 venv 与本机运行产物；权重在全局 models/ 规则里
 netease/.venv/
+# R2T2 离线转写专用解释器（阶段 41）：qwen-asr 钉死 transformers==4.57.6，与 TTS venv 互斥
+netease/r2t2-venv/
 netease/.data/
 netease/models-src/
 netease/.tmp/

@@ -8,6 +8,8 @@ export interface ApiErrorBody {
     code: string;
     message: string;
     retryable: boolean;
+    /** 给使用者的下一步动作（阶段 43 起进入全局契约；此前各路由手写在 message/details 里） */
+    hint?: string;
     details?: unknown;
   };
 }
@@ -36,6 +38,7 @@ export function errorHandler(error: unknown, req: Request, res: Response, _next:
         code: error.code,
         message: error.message,
         retryable: error.retryable,
+        ...(error.hint ? { hint: error.hint } : {}),
         details: error.details,
       },
     } satisfies ApiErrorBody);

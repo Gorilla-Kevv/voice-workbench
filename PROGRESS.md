@@ -6,26 +6,43 @@
 > 压缩前的完整台账见提交 `17b6701` 的本文件）。
 
 ## 进度看板
-- 最新完成：**阶段 39 = 知识总簿 · 知识库前端全量视觉重构 + 连续卷章 + 上线 gh-pages**（10.19~10.20 BY ZCode）——
-  design-studio 决策页锁定「知识总簿·年鉴体」替换 Linear 世界；index.html/style.css 全量重写（纸面双色印刷、
-  卷次总目、双栏密排、连续条号、hairline 深度）；修 4 个问题（fixed 包含块劫持/搜索逐卷计数/部号 undefined/
-  资源簿行窄栏挤成 0 宽）；连续滚动翻章 + 点击跳章 + scrollspy 跟随；已同步 gh-pages 上线
-  （https://gorilla-kevv.github.io/voice-workbench/ ，提交 e0621ba）。
-- 同日完成：**票 #9（变声/翻唱合成下拉换源 /api/models）已实施并关票**——注册表取数提升页面级，
-  下拉与模型库面板同源（改名可见）；RVC 值=文件茎（id 集 13/13 已验证），DDSP-SVC 值=主权重绝对路径
-  （引擎 find_model 三态解析），缺 config 按 incomplete/missing 禁用；typecheck/eslint/build 全绿，
-  注册表数据形状直跑核对（rvc 13 条 / ddsp-svc required 角色）。
+- 最新完成：**阶段 43 = 对外能力网关（/api/open/* + /api/capabilities）**（10.24 BY ZCode）——
+  13 项推理能力（TTS×6 含云端 MiMo / ASR×4 / RVC / DDSP-SVC / UVR5）收敛为
+  `capabilityCatalog.ts` 真源表 + 统一调用端点（speech/transcriptions/convert/singing-convert/separate）；
+  OpenAI 兼容路径 + 本仓错误契约（AppError 增 hint 字段，errorHandler 渲染）；上游 node:http
+  客户端避开 undici headersTimeout 300s（坑 77 同族）；**纯加法**——14 页面透传链路零改动，
+  训练/批量不进同步 façade。回归 `.tmp/verify_open_gateway.mts` 25/25（死端口+内置假上游）+
+  typecheck/build 全绿。契约 `docs/OPEN-API.md`；AGENTS.md 外部共享约束扩四类；AGENT_CHANGELOG
+  已补 40~43 留痕。**真机联调待显存窗口**（与 R2T2 冒烟同批）。
+- 同日补完（**阶段 41补1 = R2T2 真机转写闭环（CPU 模式）**，10.24 BY ZCode）——GPU 窗口未开
+  （llama-server 仍占 ~5GB），worker 加 `--device auto/cuda/cpu`（CPU=fp32 零显存通道，对齐
+  gsv5 `GSV5_DEVICE=cpu`）后绕过显存完成**双语真机转写**：3.8s 日语→「今日の会議は午後3時に
+  変更になりました」（2.86s，RTF≈0.75）；6.7s 中文→完整转写（3.84s）；load 冷 44s/热 14s。
+  顺带修掉真 load 才暴露的 **sys.path 遮蔽**（脚本目录 r2t2.py 遮蔽同名包，坑 87）与
+  **静音素材误判**（坑 88：空文本是模型对静音的正确输出，冒烟加 peak 预检）；
+  回归升 **26/26**（+R5 真 load 导入路径检查）。**GPU bf16 的 RTF 数据点仍待显存窗口**。
+- 上一轮：**阶段 42 = ASR 显存准入参数化**（10.23 BY ZCode）——`asr` 槽静态 2048 一刀切的
+  两头失真（whisper small <1GB 误拦 / large-v3 3.5~5GB 误放）修掉：catalog 门槛表 +
+  acquire(required_mb) 覆盖 + 三处 resolve 后设门；回归 25/25 三口径。坑 86。
+- 再上一轮：**阶段 41 = R2T2 离线转写接入（票 #10 已关）**（10.21~10.23）——transformers 分支 +
+  `netease/r2t2-venv` + 权重 4.1GB + 三个真 bug（坑 82~84）；**真机转写未跑成**（llama-server
+  占卡 ~5GB，用户保持现状），`python .tmp/smoke_r2t2_transcribe.py` 待显存窗口。
+- 工作池跟踪（GitHub Issues）：
 - 工作池跟踪（GitHub Issues）：
   - `ready-for-agent` 0 张；
   - `ready-for-human` 5 张（#1~#5 真机走查：产出记录三源 / RVC 训练前端 / GSV 两段式 / 变声翻唱加载 / Irodori 整链路+耳朵验收）；
-  - `needs-triage` 2 张（#10 R2T2 离线转写——立项拷问已写进票，等拍板；#11 网易档位选择器——历史叫停，等点头，半小时工作量）。
-- 硬件窗口状态：~6.1 GB 空闲显存（10.19 记录，真机走查/训练前先看当日 `nvidia-smi`）。
+  - `needs-triage` 1 张（#11 网易档位选择器——历史叫停，等点头，半小时工作量）；#10 已随阶段 41 关闭。
+- 硬件窗口状态：~6.0 GB 空闲显存（10.23 记录；**常跑极限 6GB 的前提是 llama-server 不常驻**——用户的
+  Qwen2.5-7B 本地服务 `-ngl 99` 占约 5GB，端口 8081，10.23 用户选择保持现状）。真机验证前先看当日
+  `nvidia-smi` free 与 `--query-compute-apps` 进程表，要它让位须用户点头。
 - 下一阶段入口：
-  1. #10 R2T2 离线转写立项拍板（决策材料已附票内：transformers 后端 Windows 可行，成本=显存槛 5.5~6.5GB + 权重磁盘 + venv 膨胀）；
-  2. #11 网易合成页档位选择器（等用户点头，后端三档现成）；
-  3. 用户侧真机走查 #1~#5（显存窗口）；
-  4. 备选立项：P5 DDSP-SVC 训练入口（确定性高，见 VOICE-MODEL-MANAGEMENT-PLAN.md §4.5）、
-     P4 网易微调（要改上游硬编码，不确定性大，§4.4）、app/ 主前端与知识总簿的视觉谱系对齐评估（阶段 40 候选）。
+  1. **R2T2 GPU 侧数据点**（显存 ≥6.2GB 窗口 = 先请用户关 llama-server）：`python .tmp/smoke_r2t2_transcribe.py`
+     ——CPU 链路已闭环（坑 87/88），只剩 GPU bf16 的 RTF/装载耗时；之后网易转写页浏览器走一遍离线模式；
+  2. 真机验证三件事：netease `/v1/confucius/warmup` 的 `warmup_real`（≥5GB 空闲）+ IndexTTS 5500 门槛装载 + 阶段 42 门槛表真机画像回填（坑 86/26 同法）；
+  3. #11 网易合成页档位选择器（等用户点头，后端三档现成）；
+  4. 用户侧真机走查 #1~#5（显存窗口）；
+  5. 备选立项：P5 DDSP-SVC 训练入口（确定性高，见 VOICE-MODEL-MANAGEMENT-PLAN.md §4.5）、
+     P4 网易微调（要改上游硬编码，不确定性大，§4.4）、app/ 主前端与知识总簿的视觉谱系对齐评估（阶段 42 候选）。
 - 已否决路线：GPT-SoVITS 整体迁移 Genie-TTS（阶段 27）；dots.tts 试点（阶段 28）；R2T2 流式（上游写死 vLLM-only，平台不可行）。
 
 ## 编号说明（2026-10-06 合规整理时补记）
@@ -34,50 +51,46 @@
 - 另有一次未单独立目的「阶段 26补」（侧栏手动折叠 + RVC/SVC 页去整页报错，提交 b1ee653），已并入阶段 26 条目，不重复列。
 - 早期条目（阶段 1~20）的署名与完成时间多为整理时按 git 提交时间**补记**；无法证实的标「未记录」，不臆造。
 
-## 阶段 39 — 知识总簿 · 知识库前端全量视觉重构（推翻 Linear 世界）[完成时间：10.19~10.20 BY ZCode]
+## 阶段 43 — 对外能力网关 /api/open/* + /api/capabilities [完成时间：10.24 BY ZCode]
 
 - 分支：feature/vc-svc
-- 背景：用户要求以 design-studio skill 全部重构 `knowledge-atlas/` 交互门户、推翻现有视觉世界。
-  按 new-work「替换世界」全流程执行：concept-seed 掷方向（Read 模式）→ 决策页六卡组牌 →
-  **用户锁定「知识总簿 · 年鉴体」（assigned-almanac，code-led）** → 方向契约落 surface brief
-  （seed:25c52c7cf6f1dc33）→ 重建 → 渲染验证 → 七视角走查 → detect → 评审（ship）→ documenter 重写 DESIGN.md。
+- 背景：用户要求「所有部署的模型在不改变原有功能的基础上做能力分割与接口暴露，偶尔有别的任务调用」。
+  拍板三项：OpenAI 兼容路径 + 本仓错误契约；范围=推理类全部 + 云端 MiMo（训练/批量不进同步 façade）；
+  撞显存默认不让位、`focus:true` 显式仲裁。两路探索确认的关键差异（façade 层吸收）：
+  trainer/irodori/gsv5 原生认 voice_id 而 netease/indextts 只认 ref_path；trainer 反过来不收 multipart；
+  响应四家 base64 WAV、trainer audio_url；引擎忙状态码 429/403 vs 409 不一。
 
 ### 已完成明细
 
 | 模块 | 改动内容 |
 | --- | --- |
-| `knowledge-atlas/index.html` | 全量重写：墨蓝卷首横幅（站名/卷号行/朱砂方章）+ 黑隔页带 + 264px 卷次总目（真链接 hash 路由 + aria-current）+ 双栏密排正文（columns:2 + 栏线）+ 连续条号 apparatus（§N/¶NN/R-NN/部N/表 N）+ 「读到此页」朱砂耳标（body 直下 fixed）+ 三段式页脚；**连续卷章**：九视图纵向排开、滚动翻章、点击标题平滑跳章、scrollspy 跟随（高亮/耳标/页脚卷号/标题），hash 随滚动 replaceState 可分享 |
-| `knowledge-atlas/css/style.css` | 全量重写（108→340 行）：四墨 token（paper/ink/indigo/vermilion）、字阶五级（11/14/18/28/44）、hairline 深度语言（无阴影）、浏览器原生面主题化（selection/caret/scrollbar/focus-visible/tabular-nums）、settle 入场动效（reduced-motion 关闭）、三断点（1100/900/640） |
-| `knowledge-atlas/DESIGN.md` | 由 documenter 从建成世界重写（frontmatter token 化 + 八段规范结构 + Named Rules + 定位纪律） |
-| `knowledge-atlas/.impeccable/` | surfaces/knowledge-atlas.md（方向契约六块）、design.json（schemaVersion 2 sidecar）、decision-payload.json（方向回合档案） |
-| gh-pages | 两次同步上线（2fbaf41 年鉴体、e0621ba 连续卷章），Pages 构建确认 |
-
-### 评审途中修掉的问题（4 bug + 1 排版 finding）
-
-1. **耳标 fixed 被劫持**：`.settle` 动画 fill 停在单位矩阵（非 `none` 关键字）构成包含块，把 main 内的 fixed 耳标顶出视口 → 耳标移出 main 挂 body 直下；
-2. **搜索徽标计数错误**：所有篇目显示同一聚合数 → 改为逐视图计数；
-3. **辞海部号 undefined**：分部序号误用词条计数器 → 部号独立计数（部一~部十）；
-4. **资源簿行渲染崩坏**（用户实测发现）：五列并排网格在 ~436px 双栏里被两个 nowrap 列把 1fr 描述列挤成 **0 宽**（文字一字一行竖排、行高 630~924px）→ 改簿式三行条目（命名 grid areas），7 视口复测 desc ≥312px、行高 89~138px；
-5. **排版 P1**：窄栏 justify 遇 42 字符 latin token 把上一行拉出巨缝 → `overflow-wrap:anywhere` 无效（token 小于栏宽不触发），弃用 justify 改起点对齐，已写入 DESIGN.md Don'ts。
+| `server/src/services/capabilityCatalog.ts`（新） | 13 项能力唯一真源：id/label/kind/runtime/aliases/ref（voice_id_param、path_param）/upstream（path+style）/audio_input_param/fixed_params/extra_params/arbiter_engine/vram_source/hint；`findCapability()` 归一查找；`toOpenAiModel()` |
+| `server/src/services/openClients.ts`（新） | 上游客户端：**node:http 直连**（避开 undici headersTimeout≈300s，坑 77 同族；默认 900s，clamp 10s~1800s）；multipart 只拼文本字段；结构化错误**原样透传**、非结构化包 `OPEN_UPSTREAM_ERROR`、死端口抛 `RuntimeUnreachableError`；`downloadUpstream()` 回环取 trainer audio_url |
+| `server/src/routes/open.ts`（新） | `GET /open/v1/models`（OpenAI list）、`POST /open/v1/audio/{speech,transcriptions,convert,singing-convert,separate}`；voice_id→路径折算（`getVoiceAudioPath`）并带出音色自带 prompt_text/prompt_lang（gsv5 裸路径必需）；params 按 extra_params 白名单透传；`focus:true` 先 `resourceArbiter.focus()`；format=wav 裸字节 / json / audio（转换类回读产物文件）；`collectRuntimeStatus()` 汇总五运行时 available/loaded/显存门槛（数值全转发自服务端字段，坑 19）+ 5s 缓存 |
+| `server/src/routes/index.ts` | 挂载 `GET /api/capabilities` + `use('/api/open')`（JSON 契约，express.json 之后无坑 20 风险，注释写明约束） |
+| `server/src/lib/errors.ts` + `middleware/errorHandler.ts` | **AppError 增加 hint 字段**（可选，additive），全局错误体渲染 hint——坑 19 的「hint 必须展示」从各路由手写升级为全局契约 |
+| `docs/OPEN-API.md`（新） | 契约全文：端点/参数/错误语义表、参考音频差异表、显存互斥与 focus、curl+urllib 示例（坑 54 提醒）、训练/批量/voicelib 指向既有透传 |
+| `AGENTS.md` | 外部共享约束「三类」→「四类」（+④ 回环 HTTP 能力调用）；`AGENT_CHANGELOG.md` 补阶段 40~43 留痕 |
+| `.tmp/verify_open_gateway.mts`（新） | 回归锁：能力表完整性/别名无冲突/上游客户端（JSON+multipart+错误透传+死端口）/HTTP 集成（挂真 express+errorHandler）25 项 |
 
 ### 测试结果
 
 | 测试项 | 结果 |
 | --- | --- |
-| check_contrast.py（refactoring-ui） | 10 组前景/背景配对全部 ≥4.5:1 PASS |
-| 渲染验证（IAB 真实浏览器） | 1440/1280/768/375(+390) 视口截图落盘 `.impeccable/review/`；7 断点计算样式检查：sheet 网格、双栏→单栏、chips 换行、全断点无横向溢出 |
-| 交互验证 | 搜索三源逐卷计数+徽章+无命中+清空还原、`/` 聚焦、hash 路由、滚动翻章三段定位（卷三/辞海/底部资源簿）、点击跳章与 hash 直达落位、scrollRestoration=manual 后不再打架 |
-| `node knowledge-export/build.js` | 10 份手册重新生成全通过（data.js 未动，内容管线无回归） |
-| `impeccable detect --json` | 31 advisory（对旧 DESIGN.md 的预期漂移，新 DESIGN.md 落地后消解）+ 8 warning（字体未声明 6 条同前；宽字距/纸面为世界承诺，已记入 DESIGN.md） |
-| finish review | disposition: **ship**——唯一 material fix（justify 巨缝）已修复并重截确认 |
+| `.tmp/verify_open_gateway.mts` | **25/25**：C 段能力表 5 + U 段上游客户端 5 + M 段 models 形状 3 + P 段 capabilities 3 + E 段错误路径 9（未知模型 400/缺参考 400/不可达 503/voice 404 透传/params.model 400/uvr 免 model/kind 不匹配/mimo 密钥时序） |
+| `npm run typecheck` / `npm --prefix server run build` | 全绿 |
+| 现有页面链路 | 零改动（纯加法，5 份透传代理未动） |
 
 ### 披露与遗留
 
-- finish reviewer 与 documenter 按 skill 协议以**主体内新鲜评审**执行（Agent 子代理两次被安全策略拦截，披露此替代）；seed 引用经本会话掷点输出原文佐证。
-- `atlas-375.png` 为排版修复前捕获（布局相同仅对齐差异）；375 宽的截图表面持续超时（内嵌浏览器表面老化，非页面问题），小屏当前证据由 `mobile.png`（390 全页）承担。
-- 验证盲区教训：资源簿行的崩坏说明**每个视图都要看渲染图，不能只做 DOM 计数**。
+- **真机联调未做**（五运行时未启动 + 显存窗口）：起服务后跑 `.tmp/verify_open.py`（待写）或直接
+  curl 一次 speech——与 R2T2 冒烟、warmup_real、IndexTTS 装载、ASR 门槛画像共用同一个显存窗口
+  （PROGRESS 下一阶段入口）。
+- mimo 的 `design`/`clone` 模式依赖调用方给 instruction/样本；preset 清单经 capabilities 的 mimo
+  条目 hint 指引。多段合成的 `extra_segments_base64` 是权宜（wav 不可直接拼接）。
+- 5 份近重复透传代理未合并（独立重构，避免「不改原有功能」约束下引入回归）；已在本节记录为候选。
 
-## 已完成阶段速览（1 ~ 38）
+## 已完成阶段速览（1 ~ 42）
 
 | 阶段 | 内容 | 完成 | BY |
 | --- | --- | --- | --- |
@@ -141,3 +154,7 @@
 | 36 | GPT-SoVITS v5 本地化（v5dev/v5turbo 第五运行时 `gsv5/`，坑 78） | 10.18 | ZCode |
 | 37（K 系列） | AI 声音知识图谱与规范导出包（K0~K5：data.js + 手册包 + inbox 流程 + Linear 视觉 + 三视图） | 10.19 | ZCode |
 | 38 | GPT-SoVITS v5 设置页服务控制卡与全站状态卡贯通 | 10.19 | Antigravity |
+| 39 | 知识总簿「年鉴体」全量视觉重构 + 连续卷章 + gh-pages 上线；票 #9 变声/翻唱下拉换源 /api/models 关票 | 10.19~10.20 | ZCode |
+| 40 | 6GB 极限显存校准（IndexTTS 5500 / gsv5 turbo 3584）+ unload 统一先 gc + netease warmup 真实合成预热 + serviceCatalog 服务身份收敛（坑 79~81） | 10.21 | ZCode |
+| 41 | R2T2 离线转写接入：worker transformers 分支（bf16/batch=1/240s 分段/静音预热）+ `netease/r2t2-venv` 独立解释器 + 权重 4.1GB + 三个真 bug（坑 82~84，另坑 85 venv 建法）；真机转写 10.24 已闭环（CPU 模式双语实测，坑 87/88），GPU RTF 数据点待显存窗口 | 10.21~10.24 | ZCode |
+| 42 | ASR 显存准入参数化（catalog 门槛表 + acquire(required_mb) 覆盖 + resolve 后设门；small 误拦/large-v3 误放两头修掉，坑 86） | 10.23 | ZCode |

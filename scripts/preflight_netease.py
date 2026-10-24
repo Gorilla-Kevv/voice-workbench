@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import shutil
 import socket
 import subprocess
@@ -63,7 +64,7 @@ def main() -> int:
     parser.add_argument(
         "--allow-missing-asr",
         action="store_true",
-        help="把 R2T2（vLLM）相关项降为警告：Windows 无 vLLM 发行包，只跑 TTS 时用",
+        help="把 R2T2 相关项降为警告：没建离线转写环境（r2t2-venv）时只跑 TTS 用",
     )
     args = parser.parse_args()
 
@@ -153,35 +154,71 @@ def main() -> int:
             )
         )
 
-    # 5b / 6. R2T2：Windows 上没有 vLLM 发行包，允许显式降级为「只校验 TTS」
+    # 5b / 6. R2T2：后端决定体检口径
+    #   - transformers（默认，Windows 原生离线）：查 R2T2 专用解释器里 qwen_asr + r2t2 可导入；
+    #   - vllm（WSL 完整能力）：查 vllm 可导入。
+    # 解释器是独立 venv（qwen-asr 钉死 transformers==4.57.6，与 TTS venv 的 4.52.4 互斥），
+    # 所以这里用子进程探它的真实导入性，而不是拿服务自己的解释器查。
     asr_blocking = not args.allow_missing_asr
-    asr_hint = (
-        "Windows 无 vLLM 官方发行包（PyPI 上 vllm 只有 Linux wheel），R2T2 无法在本机原生运行；"
-        "可选路径：WSL2 或 Docker（官方推荐镜像 qwenllm/qwen3-asr）。只跑 TTS 请加 --allow-missing-asr。"
-        if os.name == "nt"
-        else "按 netease/README.md 装 r2t2 + vllm（Python 3.10+）。"
-    )
-    try:
-        import r2t2  # noqa: F401,PLC0415
+    backend = settings.r2t2_backend
+    # 解释器解析（env → r2t2-venv 自动探测 → python）在 Settings.resolved_r2t2_python
+    # 一处收口，preflight 与服务/launcher 看到的是同一个值
+    r2t2_python = settings.resolved_r2t2_python
 
-        checks.append(check("r2t2 包", True, "可导入"))
-    except Exception as error:
+    def probe_r2t2_interpreter(python_cmd: str, modules: tuple[str, ...]) -> tuple[bool, str]:
+        import subprocess
+
+        code = "import " + ", ".join(modules)
+        # 与 app/r2t2.py::_spawn 同款切词规则：绝对路径是 Windows 路径形态，
+        # 必须按 posix=False 切（默认的 posix=True 会把反斜杠当转义吞掉，
+        # `F:\a\python.exe` 直接变 `F:apython.exe` → WinError 2）
+        parts = shlex.split(python_cmd, posix=False) if Path(python_cmd).is_absolute() else shlex.split(python_cmd)
+        try:
+            proc = subprocess.run(  # noqa: S603
+                [*parts, "-c", code],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+        except Exception as error:
+            return False, f"无法运行解释器 {python_cmd}：{type(error).__name__}: {error}"
+        if proc.returncode == 0:
+            return True, "可导入"
+        detail = (proc.stderr or proc.stdout or "").strip().splitlines()
+        return False, detail[-1][:200] if detail else f"exit={proc.returncode}"
+
+    if backend == "vllm":
+        checks.append(
+            check("R2T2 后端", True, f"vllm（解释器 {r2t2_python}）", blocking=False)
+        )
+        vllm_ok, vllm_detail = probe_r2t2_interpreter(r2t2_python, ("vllm",))
         checks.append(
             check(
-                "r2t2 包",
-                False,
-                f"{type(error).__name__}: {error}；{asr_hint}",
+                "vllm 包（R2T2 解释器）",
+                vllm_ok,
+                f"{vllm_detail}；vLLM 只有 Linux wheel，Windows 原生装不了，WSL 部署见 netease/README.md",
+                blocking=asr_blocking,
+            )
+        )
+    else:
+        checks.append(
+            check("R2T2 后端", True, f"transformers（离线，解释器 {r2t2_python}）", blocking=False)
+        )
+        mods_ok, mods_detail = probe_r2t2_interpreter(r2t2_python, ("qwen_asr", "r2t2"))
+        checks.append(
+            check(
+                "qwen_asr + r2t2 包（R2T2 解释器）",
+                mods_ok,
+                (
+                    mods_detail
+                    if mods_ok
+                    else f"{mods_detail}；按 netease/README.md「R2T2」节建 netease/r2t2-venv（约 6 GB），"
+                    "或加 --allow-missing-asr 只跑 TTS"
+                ),
                 blocking=asr_blocking,
             )
         )
     checks.append(check("R2T2 模型", asr_install["installed"], "; ".join(asr_install["missing"]) or "就位", blocking=False))
-
-    try:
-        import vllm  # noqa: F401,PLC0415
-
-        checks.append(check("vllm 包", True, getattr(vllm, "__version__", "ok")))
-    except Exception as error:
-        checks.append(check("vllm 包", False, f"{type(error).__name__}: {error}；{asr_hint}", blocking=asr_blocking))
 
     # 7. 端口
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import gc
 import threading
 import time
 import uuid
@@ -20,8 +21,12 @@ from .errors import IndexTtsError
 class IndexTtsPipeline:
     """模型常驻 + 单线程顺序执行（与 trainer / netease 同一哲学）。"""
 
-    #: 显存准入门槛（MB）。IndexTTS-2.5 0.8B BF16 估约 2~3 GB，先按 3 GB 拦，实测后校准
-    REQUIRED_VRAM_MB = 3072
+    #: 显存准入门槛（MB）。阶段 26 实测：加载后 nvidia-smi 空闲 5548 → 281 MB，
+    #: **净占约 5.27 GB**（w2v-bert + BigVGAN + codec + GPT + s2mel 全算上，不是官方口径的 2~3 GB）。
+    #: 旧值 3072 会把 6 GB 级别的卡放进来自由落体：加载成功但推理溢出共享内存
+    #: 「假死」（GPU 100% + 无输出，HANDOFF 坑 78 同款）。取 5500 = 净占 + ~230 MB 峰值余量；
+    #: 真跑不起来的机器会在加载前被明确拦下，而不是跑到一半挂死。
+    REQUIRED_VRAM_MB = 5500
 
     def __init__(self, settings: Settings) -> None:
         self._settings = settings
@@ -50,6 +55,9 @@ class IndexTtsPipeline:
                 import torch  # noqa: PLC0415
 
                 del model
+                # transformers 系模型普遍有循环引用，不 gc 的话张量还挂在引用图上，
+                # empty_cache 只能归还「已经没人引用」的部分 —— irodori / gsv5 同款顺序
+                gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except Exception:  # noqa: BLE001

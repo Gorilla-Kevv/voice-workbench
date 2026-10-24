@@ -45,7 +45,11 @@ def warmup(request: Request) -> dict[str, Any]:
     except NeteaseError:
         ctx.lock.release("tts")
         raise
-    return {"ok": True, "preempted": preempted, "engine": status, "lock": ctx.lock.describe()}
+    # 加载之后跑一次最小真实合成把算子预热掉：冷启动后首条真实合成实测 378 s，
+    # 大头是 kernel 首跑而不是加载 —— 不预热就把代价转嫁给用户的第一条请求。
+    # 预热失败不阻塞（warmup 是优化不是准入），结果如实带在响应里。
+    warm = ctx.tts.warmup_real()
+    return {"ok": True, "preempted": preempted, "engine": status, "lock": ctx.lock.describe(), "warmup_real": warm}
 
 
 @router.post("/unload")

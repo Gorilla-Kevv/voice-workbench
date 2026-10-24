@@ -111,6 +111,8 @@ def transcribe(
             "language": language,
             "elapsed_sec": result.get("elapsed_sec"),
             "timestamps": result.get("timestamps"),
+            # transformers 后端长音频按 240s 分段转写，带出段数方便核对拼接质量
+            "segments": result.get("segments"),
             "stream": False,
             "preempted": preempted_value,
         }

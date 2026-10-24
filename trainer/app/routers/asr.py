@@ -108,7 +108,25 @@ def make_asr_train_runner(ctx):
             ctx.store.log(job, message)
 
         # 与其它板块一样走引擎注册表：ASR 也要吃显存，同卡互斥没有例外。
-        handle = ctx.engines.acquire("asr", reason="ASR 数据集：%s" % request.name)
+        # 门槛按解析出的真实参数取（阶段 42）：resolve 幂等，training.run 内部逐条
+        # 转写的再解析会得到同一组合；把解析结果回填进 request，参数只决定一次。
+        resolved = ctx.asr.resolve(
+            backend=request.backend,
+            size=request.size,
+            language=request.language,
+            precision=request.precision,
+            model=request.model,
+            channel=request.channel,
+        )
+        for field_name in ("backend", "size", "language", "precision", "model", "channel"):
+            setattr(request, field_name, resolved[field_name])
+        handle = ctx.engines.acquire(
+            "asr",
+            reason="ASR 数据集：%s" % request.name,
+            required_mb=catalog.required_vram_mb(
+                resolved["backend"], resolved["size"], resolved["precision"], resolved["model"]
+            ),
+        )
         try:
             result = await asyncio.to_thread(
                 training.run,
@@ -162,15 +180,29 @@ def register(app: FastAPI, ctx) -> None:
     def asr_load_model(payload: Any = Body(default=None)) -> Any:
         """加载（或热切换到）指定模型。常驻通道才有意义。"""
         data = payload if isinstance(payload, dict) else {}
-        handle = ctx.engines.acquire("asr", reason="加载 ASR 模型")
+        resolved = ctx.asr.resolve(
+            backend=str(data.get("backend") or ""),
+            size=str(data.get("size") or ""),
+            language=str(data.get("language") or ""),
+            precision=str(data.get("precision") or ""),
+            model=str(data.get("model") or ""),
+            channel=str(data.get("channel") or ""),
+        )
+        handle = ctx.engines.acquire(
+            "asr",
+            reason="加载 ASR 模型",
+            required_mb=catalog.required_vram_mb(
+                resolved["backend"], resolved["size"], resolved["precision"], resolved["model"]
+            ),
+        )
         try:
             status = ctx.asr.load(
-                backend=str(data.get("backend") or ""),
-                size=str(data.get("size") or ""),
-                language=str(data.get("language") or ""),
-                precision=str(data.get("precision") or ""),
-                model=str(data.get("model") or ""),
-                channel=str(data.get("channel") or ""),
+                backend=resolved["backend"],
+                size=resolved["size"],
+                language=resolved["language"],
+                precision=resolved["precision"],
+                model=resolved["model"],
+                channel=resolved["channel"],
             )
         finally:
             handle.release()
@@ -199,17 +231,27 @@ def register(app: FastAPI, ctx) -> None:
         前端也不必为一个 3 秒的音频去轮询任务。
         """
         src = _resolve_source(ctx, file, source)
-        handle = ctx.engines.acquire("asr", reason="语音转写：%s" % src.name)
+        resolved = ctx.asr.resolve(
+            backend=backend, size=size, language=language,
+            precision=precision, model=model, channel=channel,
+        )
+        handle = ctx.engines.acquire(
+            "asr",
+            reason="语音转写：%s" % src.name,
+            required_mb=catalog.required_vram_mb(
+                resolved["backend"], resolved["size"], resolved["precision"], resolved["model"]
+            ),
+        )
         try:
             result = await asyncio.to_thread(
                 ctx.asr.transcribe,
                 src=src,
-                backend=backend,
-                size=size,
-                language=language,
-                precision=precision,
-                model=model,
-                channel=channel,
+                backend=resolved["backend"],
+                size=resolved["size"],
+                language=resolved["language"],
+                precision=resolved["precision"],
+                model=resolved["model"],
+                channel=resolved["channel"],
                 use_cache=use_cache,
             )
         finally:

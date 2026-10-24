@@ -69,6 +69,21 @@ function portInUse(port) {
 
 const port = Number(process.env.NETEASE_PORT ?? 9882);
 
+/**
+ * R2T2 离线（transformers）后端的独立解释器：qwen-asr 钉死 transformers==4.57.6，
+ * 与 TTS venv 的 4.52.4 不能共用（见 netease/README.md「R2T2」节）。
+ * venv 建好就自动接上；用户显式设过 NETEASE_R2T2_PYTHON 则尊重用户。
+ */
+function resolveR2t2Env() {
+  if (process.env.NETEASE_R2T2_PYTHON?.trim()) return null;
+  const r2t2Python = IS_WINDOWS
+    ? path.join(ROOT, 'netease', 'r2t2-venv', 'Scripts', 'python.exe')
+    : path.join(ROOT, 'netease', 'r2t2-venv', 'bin', 'python');
+  if (!existsSync(r2t2Python)) return null;
+  return { NETEASE_R2T2_PYTHON: r2t2Python };
+}
+const r2t2Env = resolveR2t2Env();
+
 // 没建 venv 就别硬起：主服务也要照顾「没装权重」的机器
 if (skipIfMissing && !isWeights && !existsSync(path.join(ROOT, 'netease', '.venv'))) {
   console.log('  [netease] 未检测到 netease/.venv，跳过启动（主服务会以「待补齐」显示在侧栏）');
@@ -82,6 +97,9 @@ if (skipIfMissing && !isWeights && (await portInUse(port))) {
 }
 
 console.log(`  [netease] 解释器：${python}`);
+if (r2t2Env) {
+  console.log(`  [netease] R2T2 解释器：${r2t2Env.NETEASE_R2T2_PYTHON}（离线转写，transformers 后端）`);
+}
 if (isWeights) {
   console.log(`  [netease] 下载权重：${DOWNLOADER}（可加 --proxy http://127.0.0.1:7890 / --include-r2t2）`);
 } else {
@@ -93,6 +111,7 @@ const child = spawn(python, args, {
   cwd: ROOT,
   env: {
     ...process.env,
+    ...(r2t2Env ?? {}),
     // 中文日志在 Windows 终端里会变乱码，与 sovits.mjs 同一层保险
     PYTHONIOENCODING: 'utf-8',
     PYTHONUNBUFFERED: '1',

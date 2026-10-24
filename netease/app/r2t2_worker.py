@@ -3,9 +3,12 @@
 为什么是独立子进程：R2T2 上游基于 vLLM，vLLM 引擎要求在 `__main__` 环境启动
 （官方 README 明确警告 spawn 问题）；uvicorn/FastAPI 进程里直接 import 会撞上
 multiprocessing 的守护进程限制。worker 自成主进程，天然规避；
-还顺带解决了「R2T2 与 TTS 依赖冲突时用不同解释器」的问题（NETEASE_R2T2_PYTHON）。
+还顺带解决了「R2T2 与 TTS 依赖冲突时用不同解释器」的问题（NETEASE_R2T2_PYTHON）——
+qwen-asr 钉死 transformers==4.57.6，而 Confucius4-TTS 的 venv 是 4.52.4，
+**两个依赖树不能共用一个解释器**，所以离线（transformers）路径也走独立 venv
+（`netease/r2t2-venv`，见 netease/README.md）。
 
-协议（stdin/stdout，每行一个 JSON；vLLM 自身日志走 stderr 不进协议）：
+协议（stdin/stdout，每行一个 JSON；模型日志走 stderr 不进协议）：
 
     → {"type": "ping", "id": "x"}                      ← {"type": "pong", "id": "x"}
     → {"type": "load", "id": "x"}                      ← {"type": "ready"}（模型就绪）
@@ -18,12 +21,18 @@ multiprocessing 的守护进程限制。worker 自成主进程，天然规避；
 
 任何命令失败都回 {"type": "error", "id", "code", "message", "hint"}。
 
+两种后端（NETEASE_R2T2_BACKEND / --backend）：
+- `transformers`（**Windows 原生可用**，离线转写）：qwen-asr 的 transformers 后端。
+  8 GB 卡实测口径（HANDOFF 坑 12）：`max_inference_batch_size=1`（默认 32 会爆 KV cache）、
+  外层按 ~240 s 分段再逐段喂上游（上游自己的 MAX_ASR_INPUT_SECONDS=1200 s 太长），
+  bf16 权重净占 ~5.5 GB。**不支持时间戳**（需要额外的 forced aligner 模型）与流式。
+- `vllm`（只有 Linux/WSL 有发行包）：官方完整能力，含流式。
+
 上游漂移面（2026-09 按官方 README 校准过一次）：
 - 流式增量文本在 **返回值** 里：`_, text = asr.streaming_transcribe(chunk, state, max_new_tokens=4)`，
   不是从 `state` 读；`_state_text(state)` 现在只是兜底。
 - 定稿：`asr.finish_streaming_transcribe(state)` 之后读 `state.text`。
-- ⚠️ 仍未在真机上跑过：Windows 无 vLLM 发行包（PyPI 上只有 Linux wheel），
-  本机这条链路要靠 WSL2 / Docker 才能实测，见 netease/README.md 的已知限制。
+- 流式路径**仍未真机验证过**（本机 Windows 没有 vLLM）；离线 transformers 路径阶段 41 起接入。
 """
 
 from __future__ import annotations
@@ -33,6 +42,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 #: 语言代码 → 上游期望的英文名（README 口径：Chinese/English/...）
 LANGUAGE_NAMES = {
@@ -50,6 +60,11 @@ LANGUAGE_NAMES = {
 }
 
 TARGET_SR = 16000
+
+#: transformers 后端的**外层**分段秒数。上游 `MAX_ASR_INPUT_SECONDS=1200` 是为
+#: 大显存机器定的；8 GB 卡上一次喂 20 分钟音频的注意力矩阵必爆。
+#: 240 s 来自坑 12 的他机实测口径（与 batch=1、bf16 净占 ~5.5 GB 同一套画像）。
+TRANSFORMERS_SEGMENT_SEC = 240.0
 
 
 def emit(payload: dict) -> None:
@@ -86,16 +101,75 @@ class AsrSession:
                 max_inference_batch_size=self._args.max_batch,
                 max_new_tokens=self._args.max_new_tokens,
             )
+        elif self._args.backend == "transformers":
+            self._asr = self._load_transformers(R2T2ASRModel)
         else:
-            raise ValueError(f"暂不支持的后端：{self._args.backend}（本期仅 vllm）")
+            raise ValueError(
+                f"暂不支持的后端：{self._args.backend}（可选：transformers=离线转写，Windows 可用 / vllm=完整能力，需 Linux/WSL）"
+            )
         emit_log(f"R2T2 模型就绪，耗时 {time.monotonic() - started:.1f}s")
         emit({"type": "ready"})
+
+    def _load_transformers(self, r2t2_model_cls) -> Any:
+        """transformers 后端加载：bf16（卡不支持退 fp16）→ 上 GPU → 静音预热。
+
+        - 不用 device_map（省掉 accelerate 的分发逻辑）：先上 CPU 再 `.to()`，
+          与 qwen_asr 的 `inputs.to(self.model.device).to(self.model.dtype)` 推理路径对齐；
+        - `max_inference_batch_size=1`：8 GB 卡上默认 32 会爆 KV cache（坑 12 实测口径）；
+        - 加载完跑一条 0.5 s 静音：首条真实转写的耗时大头是 torch 分配池扩张 + kernel
+          首跑（坑 12），在 ready 之前摊掉，产物不落盘；
+        - `--device cpu` 显式走 CPU（fp32，bf16 的 CPU matmul 更慢）：零显存跑通链路
+          的排障通道，RTF 慢但能用 —— 与 gsv5 的 `GSV5_DEVICE=cpu` 同一先例。
+        """
+        import numpy as np  # noqa: PLC0415
+        import torch  # noqa: PLC0415
+
+        device = self._args.device
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        if device == "cuda" and not torch.cuda.is_available():
+            raise ValueError("device=cuda 但当前解释器没有可用的 CUDA（torch 装的是 CPU 版？）")
+
+        if device == "cuda":
+            dtype = "bfloat16"
+            if not torch.cuda.is_bf16_supported():
+                dtype = "float16"
+                emit_log("当前 GPU 不支持 bf16，退回 fp16")
+        else:
+            dtype = "float32"
+        emit_log(f"transformers 后端加载：device={device}, dtype={dtype}（CPU 模式 RTF 慢，仅用于排障/零显存）")
+        asr = r2t2_model_cls.from_pretrained(
+            self._model_id,
+            max_inference_batch_size=1,
+            max_new_tokens=self._args.max_new_tokens,
+            torch_dtype=dtype,
+        )
+        asr.model.to(device)
+        emit_log(f"transformers 后端就绪：device={device}, dtype={dtype}")
+        try:
+            warm_started = time.monotonic()
+            silence = np.zeros(int(TARGET_SR * 0.5), dtype="float32")
+            asr.transcribe(audio=[(silence, TARGET_SR)])
+            emit_log(f"算子预热完成，耗时 {time.monotonic() - warm_started:.1f}s")
+        except Exception as error:  # noqa: BLE001 - 预热失败只记录：真正的转写自会给出真实错误
+            emit_log(f"算子预热失败（不阻塞）：{type(error).__name__}: {error}")
+        return asr
 
     # ------------------------------------------------------------------ 离线转写
 
     def transcribe(self, path: str, language: str, return_timestamps: bool) -> dict:
         self.ensure_loaded()
+        if return_timestamps and self._args.backend == "transformers":
+            raise ValueError(
+                "transformers 后端暂不支持时间戳：需要额外的 forced aligner 模型（Qwen3-Forced-Aligner），"
+                "本期未接入。请去掉 return_timestamps，或改用 vllm 后端（需 Linux/WSL）。"
+            )
         wav, sr = load_wav_16k(path)
+        if self._args.backend == "transformers" and len(wav) > sr * TRANSFORMERS_SEGMENT_SEC:
+            return self._transcribe_segmented(wav, sr, language)
+        return self._transcribe_once(wav, sr, language, return_timestamps)
+
+    def _transcribe_once(self, wav, sr: int, language: str, return_timestamps: bool) -> dict:
         kwargs: dict = {"audio": [(wav, sr)], "return_time_stamps": return_timestamps}
         name = language_name(language)
         if name:
@@ -116,6 +190,34 @@ class AsrSession:
                 for item in stamps
             ]
         return result
+
+    def _transcribe_segmented(self, wav, sr: int, language: str) -> dict:
+        """超长音频按 ~240 s 外层分段，逐段过上游再拼接。
+
+        上游自己的 `MAX_ASR_INPUT_SECONDS=1200` 是大显存口径；8 GB 卡一次喂 20 分钟
+        音频必爆注意力显存（坑 12 的实测画像：240 s + batch=1 + bf16）。分段在
+        worker 侧做而不是改上游——上游仓库只读。文本按段顺序直接拼接（与上游
+        多 chunk 的 `"".join` 合并语义一致）。
+        """
+        segment_samples = int(sr * TRANSFORMERS_SEGMENT_SEC)
+        total = len(wav)
+        started = time.monotonic()
+        texts: list[str] = []
+        for offset in range(0, total, segment_samples):
+            seg = wav[offset : offset + segment_samples]
+            if len(seg) < TARGET_SR:  # 尾部不足 1 s 的碎段并入结果没有意义，忽略
+                break
+            part = self._transcribe_once(seg, sr, language, return_timestamps=False)
+            texts.append(part.get("text", ""))
+            emit_log(
+                f"分段转写 {offset // sr + len(seg) // sr}s / {total // sr}s 完成"
+                f"（累计 {len(texts)} 段）"
+            )
+        return {
+            "text": "".join(texts).strip(),
+            "elapsed_sec": round(time.monotonic() - started, 2),
+            "segments": len(texts),
+        }
 
     # ------------------------------------------------------------------ 流式转写
 
@@ -246,13 +348,30 @@ def load_wav_16k(path: str) -> tuple:
 
 
 def main() -> None:
+    # 脚本目录（netease/app/）会以 sys.path[0] 出现 —— 里面的 r2t2.py（进程管理器）、
+    # config.py、errors.py 会遮蔽 site-packages 的同名模块：`from r2t2 import R2T2ASRModel`
+    # 实际 import 到的是自家 manager，报「attempted relative import with no known parent
+    # package」。本 worker 自包含（只依赖 site-packages），直接把脚本目录整个摘掉。
+    # 实测只有真 load 才会踩到：python -c 的探活（cwd=仓库根）与 ping 协议冒烟都覆盖不到。
+    script_dir = str(Path(__file__).resolve().parent)
+    sys.path[:] = [entry for entry in sys.path if str(Path(entry).resolve()) != script_dir]
+
     parser = argparse.ArgumentParser(prog="r2t2_worker", description="Confucius4-R2T2 推理 worker")
     parser.add_argument("--model", required=True, help="模型路径或 HF repo id")
-    parser.add_argument("--backend", default="vllm")
-    parser.add_argument("--gpu-util", type=float, default=0.35)
-    parser.add_argument("--max-model-len", type=int, default=16384)
-    parser.add_argument("--max-batch", type=int, default=32)
+    parser.add_argument(
+        "--backend",
+        default="transformers",
+        help="transformers=离线转写（Windows 原生可用）；vllm=完整能力含流式（仅 Linux/WSL）",
+    )
+    parser.add_argument("--gpu-util", type=float, default=0.35, help="vLLM 专用：gpu_memory_utilization")
+    parser.add_argument("--max-model-len", type=int, default=16384, help="vLLM 专用：max_model_len")
+    parser.add_argument("--max-batch", type=int, default=32, help="vLLM 专用：max_inference_batch_size（transformers 后端固定 1，8 GB 卡口径）")
     parser.add_argument("--max-new-tokens", type=int, default=4096)
+    parser.add_argument(
+        "--device",
+        default="auto",
+        help="transformers 后端的推理设备：auto（默认，有 CUDA 用 CUDA）/ cuda / cpu（零显存排障通道，fp32，RTF 慢）",
+    )
     args = parser.parse_args()
 
     session = AsrSession(args)
@@ -273,6 +392,11 @@ def main() -> None:
                 emit({"type": "pong", "id": request_id})
             elif kind == "load":
                 session.ensure_loaded()
+                # ready 是给 reader 线程用的无 id 广播（置 model_loaded）；
+                # 这里再回一条带 id 的 result，manager 的 _request 才能解除等待 ——
+                # 否则 warmup 会挂满 REQUEST_TIMEOUT_SEC（1800 s）才超时。
+                # 旧代码只发 ready：Windows 上 worker 起不来，这个洞一直没暴露。
+                emit({"type": "result", "id": request_id, "loaded": True})
             elif kind == "transcribe":
                 result = session.transcribe(
                     path=str(request["path"]),

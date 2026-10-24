@@ -8,7 +8,7 @@
 | 引擎 | 模型 | 用途 | 关键卖点 |
 | --- | --- | --- | --- |
 | `confucius_tts` | [Confucius4-TTS](https://github.com/netease-youdao/Confucius4-TTS)（1.3B，Apache-2.0） | 零样本克隆合成 | **免参考文本**、跨语种无口音、情感迁移、14 语种 |
-| `r2t2` | [Confucius4-R2T2](https://github.com/netease-youdao/Confucius4-R2T2)（Qwen3-ASR 基座） | 流式 / 离线转写 | append-only 真流式，延迟 200~600 ms |
+| `r2t2` | [Confucius4-R2T2](https://github.com/netease-youdao/Confucius4-R2T2)（Qwen3-ASR 基座） | **离线转写（Windows 原生）** / 流式转写（WSL2） | append-only 真流式，延迟 200~600 ms |
 
 两个引擎**不同时持卡**（8 GB 显存跑不动两个），服务内部互斥，后者加载时默认抢占前者。
 
@@ -40,11 +40,48 @@ pip install -e models-src/Confucius4-TTS
 # 4) 权重下载（一条命令，自动分流；国内环境常需要 --proxy）
 npm run netease:weights                                   # TTS 侧（约 5.4 GB）
 npm run netease:weights -- --proxy http://127.0.0.1:7890  # HuggingFace 走本机代理
-npm run netease:weights -- --include-r2t2                 # 连 R2T2 一起下（Linux/WSL 才用得上）
-
-# R2T2（可选，Linux / WSL2）：pip install -e models-src/Confucius4-R2T2（自带 vLLM 依赖）
-# 依赖若与 TTS 冲突：给 R2T2 单独建 venv，再设置 NETEASE_R2T2_PYTHON 指向它。
+npm run netease:weights -- --include-r2t2                 # 连 R2T2 一起下（离线转写要用，约 4.1 GB）
 ```
+
+### R2T2 离线转写（Windows 原生，推荐路径）
+
+R2T2 的 transformers 后端跑在**独立 venv** 里（`netease/r2t2-venv`）：`qwen-asr==0.0.6`
+钉死 `transformers==4.57.6`，而 TTS 的 venv 是 4.52.4，**两个依赖树不能共用一个解释器**
+（worker 一直支持 `NETEASE_R2T2_PYTHON`，独立 venv 正是为它准备的）。`npm run dev:netease`
+会自动探测 `netease/r2t2-venv` 并接上，无需手动设环境变量。
+
+```bash
+# 1) 建 R2T2 专用 venv（复用 TTS venv 的 3.12 解释器做基座）
+netease/.venv/Scripts/python -m venv netease/r2t2-venv
+
+# 2) 普通依赖（**先装这批**：qwen-asr 的传递依赖会把 torch 解析成 PyPI 的 CPU 版，
+#    所以 CUDA 版 torch 必须最后装压轴，否则会被覆盖 —— 实测 pip 一口气装完变 2.14.1 CPU）
+netease/r2t2-venv/Scripts/python -m pip install transformers==4.57.6 accelerate==1.12.0 nagisa==0.2.11 soynlp==0.0.493 librosa soundfile
+
+# 3) qwen-asr（**不带** [vllm] extra：PyPI 的 vllm 只有 Linux wheel）
+#    wheel 已在 netease/.tmp/pkgtest/ 备份；也可从 PyPI 直接装
+netease/r2t2-venv/Scripts/python -m pip install --no-deps netease/.tmp/pkgtest/qwen_asr-0.0.6-py3-none-any.whl
+
+# 4) r2t2 包本体（--no-deps 跳过 pyproject 里的 vllm/fireredvad/sanic，离线路径用不到）
+netease/r2t2-venv/Scripts/python -m pip install --no-deps -e netease/models-src/Confucius4-R2T2
+
+# 5) CUDA 版 torch **压轴**（与 TTS 同版 2.7.0+cu126）
+netease/r2t2-venv/Scripts/python -m pip install torch==2.7.0 --index-url https://download.pytorch.org/whl/cu126
+#    若前面已被覆盖，强制装回来：pip install --force-reinstall torch==2.7.0 --index-url ...
+
+# 6) 权重 + 体检
+npm run netease:weights -- --include-r2t2
+npm run netease:check
+```
+
+8 GB 卡实测口径（HANDOFF 坑 12）：bf16 净占约 5.5 GB、`max_inference_batch_size=1`（默认 32 会爆
+KV cache）、**外层按 240 s 分段**（上游 `MAX_ASR_INPUT_SECONDS=1200` 是大显存口径）——这三条都已在
+worker 里落地。**不支持时间戳**（需要额外的 forced aligner 模型）与流式。
+
+**真机验证（2026-10-24，CPU 模式）**：worker 支持 `--device auto/cuda/cpu`——显存窗口不开时可用
+`--device cpu` 走零显存排障通道（fp32，RTF 慢但可用）：双语实测通过（日语 2.86s/RTF 0.75、中文
+3.84s，文本正确），load 冷 44s/热 14s。GPU bf16 的 RTF 数据点待显存窗口。冒烟：
+`python .tmp/smoke_r2t2_transcribe.py [audio.wav] [--device cpu]`。
 
 ### 实测数据（RTX 4060 Laptop 8 GB，2026-09）
 
@@ -115,9 +152,9 @@ netease/.venv/Scripts/python netease/server.py --port 9882
 | `NETEASE_TTS_HOME` | `netease/models-src/Confucius4-TTS` | TTS 仓库目录（含 `config/inference_config.yaml` 与分词器）。**权重本体不在这里**，见上文「权重落在哪」 |
 | `NETEASE_TTS_CONFIG` | `<tts_home>/config/inference_config.yaml` | TTS 推理配置。服务会把它复制成一份绝对路径副本（`.data/tts_inference_config.yaml`）再交给上游，避免 CWD 依赖 |
 | `NETEASE_R2T2_MODEL` | 本地目录 → HF repo id | R2T2 模型路径或 repo id |
-| `NETEASE_R2T2_PYTHON` | 服务自身解释器 | R2T2 worker 解释器（依赖冲突分 venv 时用） |
+| `NETEASE_R2T2_PYTHON` | `netease/r2t2-venv`（存在即用） → 服务自身解释器 | R2T2 worker 解释器（transformers 后端必须指向 r2t2-venv） |
 | `NETEASE_R2T2_GPU_UTIL` | `0.35` | vLLM gpu_memory_utilization |
-| `NETEASE_R2T2_BACKEND` | `vllm` | R2T2 后端（本期仅 vllm） |
+| `NETEASE_R2T2_BACKEND` | `transformers` | `transformers`=离线转写（Windows 原生）；`vllm`=完整能力含流式（仅 Linux/WSL） |
 
 ## API 速览
 
@@ -133,9 +170,11 @@ netease/.venv/Scripts/python netease/server.py --port 9882
 | GET | `/v1/r2t2/pipeline` · POST `warmup`/`unload` | ASR 引擎管理 |
 | POST | `/v1/r2t2/transcribe` | multipart：`file`(或`ref_path`),`language`,`stream`,`chunk_ms` → JSON 或 NDJSON 流 |
 
-### R2T2（ASR）在 Windows 上的落地方案：WSL2（已勘察，待拍板）
+### R2T2 流式转写（可选）：WSL2 方案（已勘察，未真机验证）
 
-**结论：Windows 原生不行，WSL2 是本机唯一可行路径。** 勘察结果（2026-10，本机实测）：
+**离线转写已不需要 WSL**（见上节）。只有**流式**必须 vLLM（上游 5 处
+`if self.backend != "vllm": raise ValueError`），而 PyPI 的 vllm 只有 Linux wheel。
+WSL2 勘察结果（2026-10，本机实测）：
 
 | 项 | 结果 |
 | --- | --- |
@@ -183,20 +222,18 @@ $env:NETEASE_R2T2_WORKER  = '/mnt/f/schoolCompWorks/clone/ttstool/netease/app/r2
 
 ## 已知限制（首版）
 
-- **R2T2（ASR）在 Windows 上要分两层看**（2026-10 修正，早期「整体跑不起来」的结论过重）：
-  - **离线转写（一次性出全文）：Windows 原生可行** —— 装 `qwen-asr==0.0.6`
-    （**不带** `[vllm]` extra，纯 Python wheel `py3-none-any`，已验证可装），
-    走 transformers 后端；`r2t2.R2T2ASRModel` 本就是 `Qwen3ASRModel` 的子类。
-    本仓库**尚未接入**这条路径（worker 目前写死 vllm 后端）
+- **R2T2（ASR）分两条路**（阶段 41 起离线已接入）：
+  - **离线转写（`stream=false`）：Windows 原生可用** —— transformers 后端 + 独立 venv
+    `netease/r2t2-venv`（建法见上文）。不支持时间戳（需要 forced aligner）；长音频在
+    worker 侧按 240 s 分段
   - **流式转写：Windows 原生不可能** —— `r2t2/r2t2_asr.py` 有 5 处
     `if self.backend != "vllm": raise ValueError(...)`（行 267/352/527/621/802）。
-    要就走 **WSL2 或官方 Docker 镜像** `qwenllm/qwen3-asr`
-  - 官方两条路确实都是 Linux（`INFER_MODE` 仅 `stream_vllm/onetime_vllm`；Docker 为推荐路径），
-    但那只针对**推理栈**，不是权重本身
+    要就走 **WSL2 或官方 Docker 镜像** `qwenllm/qwen3-asr`（方案见上节）
   - 体检时加 `--allow-missing-asr` 即可只校验 TTS 链路
 - TTS 流式合成需要上游 vLLM 后端，未接入（见方案文档 §6 阶段 7）；
 - 麦克风实时流式转写未接入（需要浏览器→网关→上游全链路 WebSocket）；
-- R2T2 worker 的流式增量取值**已按官方 README 校准**（增量文本在 `streaming_transcribe`
+- R2T2 worker 的**流式**增量取值已按官方 README 校准（增量文本在 `streaming_transcribe`
   的返回值里，定稿读 `finish_streaming_transcribe` 之后的 `state.text`），
   但因为没有 vLLM 环境，这条链路**尚未在真机上跑过**（`netease/app/r2t2_worker.py`）；
+- R2T2 **离线**链路的真机转写验证待显存窗口（bf16 净占 ~5.5 GB，准入门槛 6144 MB）；
 - 跨运行时显存仲裁（与 GPT-SoVITS 服务协调让位）未做，加载前只检查本机空闲显存。

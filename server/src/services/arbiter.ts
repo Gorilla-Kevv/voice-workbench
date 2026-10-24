@@ -1,5 +1,5 @@
-import { config } from '../config/index.js';
 import { logger } from '../lib/logger.js';
+import { RUNTIME_SERVICES, RUNTIME_SERVICE_IDS, baseUrlOf, type RuntimeServiceId } from './serviceCatalog.js';
 
 /**
  * 资源仲裁：同一时刻只让**一个模型**留在本系统里，其余全部卸载并归还显存。
@@ -41,19 +41,9 @@ export type FocusEngine =
   | 'uvr5'
   | 'asr';
 
-type ServiceName = 'sovits' | 'netease' | 'indextts' | 'irodori' | 'gsv5';
+type ServiceName = RuntimeServiceId;
 
-const ALL_SERVICES: ServiceName[] = ['sovits', 'netease', 'indextts', 'irodori', 'gsv5'];
-
-/** 每个服务的「卸载自己全部模型」入口（POST），按优先级排列 */
-const RELEASE_ENDPOINTS: Record<ServiceName, string[]> = {
-  // 引擎注册表的 unload_all：把 SoVITS / RVC / SVC / ASR 等常驻模型全卸掉
-  sovits: ['/v1/engines/unload', '/v1/pipeline/unload'],
-  netease: ['/v1/confucius/unload', '/v1/r2t2/unload'],
-  indextts: ['/v1/unload'],
-  irodori: ['/v1/unload'],
-  gsv5: ['/v1/unload'],
-};
+const ALL_SERVICES: ServiceName[] = RUNTIME_SERVICE_IDS;
 
 function serviceOf(engine: FocusEngine): ServiceName {
   if (engine === 'netease-tts' || engine === 'netease-asr') return 'netease';
@@ -63,14 +53,6 @@ function serviceOf(engine: FocusEngine): ServiceName {
   if (engine === 'irodori-tts' || engine === 'irodori-training') return 'irodori';
   if (engine === 'gpt-sovits-v5') return 'gsv5';
   return 'sovits';
-}
-
-function baseUrlOf(service: ServiceName): string {
-  if (service === 'netease') return config.netease.baseUrl;
-  if (service === 'indextts') return config.indextts.baseUrl;
-  if (service === 'irodori') return config.irodori.baseUrl;
-  if (service === 'gsv5') return config.gsv5.baseUrl;
-  return config.sovits.baseUrl;
 }
 
 /**
@@ -134,7 +116,7 @@ async function releaseService(service: ServiceName): Promise<{ released: string[
   const released: string[] = [];
   const failed: FocusReport['failed'] = [];
 
-  for (const path of RELEASE_ENDPOINTS[service]) {
+  for (const path of RUNTIME_SERVICES[service].releasePaths) {
     try {
       await callRelease(base, path);
       released.push(`${service}${path}`);

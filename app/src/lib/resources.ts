@@ -43,18 +43,22 @@ export type ResourceTask =
 const FALLBACK_VRAM_MB: Record<ResourceTask, number> = {
   // 实测：fp16 常驻 + 推理峰值约 4.9 GB（RTX 4060 Laptop 8 GB）
   'netease-tts': 4915,
-  // vLLM gpu_memory_utilization 默认 0.35 × 8 GB
-  'netease-asr': 2865,
+  // R2T2 离线（transformers 后端，阶段 41）bf16 净占约 5.5 GB（坑 12 实测口径，
+  // 与准入 REQUIRED_VRAM_MB=6144 同源）；旧值 2865 是 vLLM gpu_util=0.35 的口径，
+  // 只在 WSL 流式部署时成立
+  'netease-asr': 5500,
   // 与 indextts/app/indextts_engine.py::REQUIRED_VRAM_MB 一致；
-  // 阶段 26 实测加载后常驻约 5.3 GB（准入是加载前口径，运行中余量极小）
-  'indextts-tts': 3072,
+  // 阶段 26 实测加载后净占约 5.27 GB（空闲 5548 → 281 MB），旧兜底 3072 会把
+  // 6 GB 级别的卡放进自由落体（加载成功但推理溢出共享内存假死）
+  'indextts-tts': 5500,
   // ← irodori/app/config.py::REQUIRED_VRAM_MB['int4']（30-2 实测）
   'irodori-tts': 4700,
   // ← irodori/app/config.py::train_required_vram_mb(batch=2)（30-6 净占画像）
   // 真值随 batch 变（batch 8 = 5410），这里按页面默认的小 batch 取
   'irodori-training': 4630,
-  // ← gsv5/app/config.py::REQUIRED_VRAM_MB['v5turbo']（**待 GPU 实测校准**的保守值）
-  'gpt-sovits-v5': 3072,
+  // ← gsv5/app/config.py::REQUIRED_VRAM_MB['v5turbo']（坑 78：2776MB 空闲实测假死，
+  // 3072 保守值不再可信，对齐 dev 档 3584）
+  'gpt-sovits-v5': 3584,
   // 与 trainer ENGINES 表一致
   sovits: 3072,
   batch: 3072,
@@ -158,7 +162,7 @@ export interface Suggestion {
 /** 各任务的「降配置」建议文案 */
 const LOWER_TIPS: Record<ResourceTask, string> = {
   'netease-tts': '把长文本拆成多段分批合成，别一次塞整篇；fp16 已是低配，想更省只能换更小模型。',
-  'netease-asr': '调低 R2T2 的 gpu_memory_utilization（默认 0.35），或改走 FunASR 轻量通道。',
+  'netease-asr': '离线转写（transformers）净占约 5.5 GB，先把占显存的程序关掉再跑；长音频已按 240s 自动分段，显存峰值不会随音频长度继续涨。',
   'indextts-tts': '把长文本拆成多段分批合成；bf16 已是低配。它常驻约 5.3 GB，跑之前先把浏览器硬件加速 / 模拟器等占显存的程序关掉。',
   'irodori-tts': '长文本交给服务端自己分段（它有护栏与自动降步）；步数档降到 20~40 也能跑，只是细节略糙。',
   'irodori-training': '把 batch 改成手动 1~2（自动探测会按空闲显存挑，但桌面占太多时它就挑不出来了），或先关掉占显存的程序再训。',
@@ -249,7 +253,9 @@ function vramNeed(task: ResourceTask, snapshot: ResourceSnapshot): number {
   if (task === 'netease-tts') return snapshot.netease_tts_required_mb ?? FALLBACK_VRAM_MB[task];
   if (task === 'indextts-tts') return snapshot.indextts_required_mb ?? FALLBACK_VRAM_MB[task];
   if (task === 'irodori-tts') return snapshot.irodori_required_mb ?? FALLBACK_VRAM_MB[task];
-  if (task === 'gpt-sovits-v5') return snapshot.loaded_engines['gpt-sovits-v5'] ? FALLBACK_VRAM_MB[task] : FALLBACK_VRAM_MB[task];
+  // gpt-sovits-v5：门槛随变体（turbo/dev）而变，但已加载时 estimateTask 直接判 ok
+  // 不做减法，未加载时拿不到「用户会选哪个变体」——兜底常量就是答案（与 gsv5 config 同源）
+  if (task === 'gpt-sovits-v5') return FALLBACK_VRAM_MB[task];
   const engineName = task === 'training' ? 'train' : task;
   return snapshot.engine_required_mb[engineName] ?? FALLBACK_VRAM_MB[task];
 }

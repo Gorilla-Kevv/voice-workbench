@@ -162,7 +162,7 @@ def _resolve_ref(settings: Settings, file: Optional[UploadFile], ref_path: Optio
 
 
 def _guard_vram(engine: Optional[IndexTtsPipeline] = None) -> None:
-    """显存准入：nvidia-smi 口径，门槛 3 GB（IndexTTS-2.5 BF16 的估计值，实测后校准）。
+    """显存准入：nvidia-smi 口径，门槛取 `IndexTtsPipeline.REQUIRED_VRAM_MB`（阶段 26 实测净占 ~5.27 GB）。
 
     模型已常驻时跳过 —— 这时「空闲不足」是本服务自己占的，拦住的恰恰是唯一的出路。
     """

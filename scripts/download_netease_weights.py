@@ -68,23 +68,49 @@ def hf_cache_root() -> Path:
     return Path(HF_HUB_CACHE)
 
 
+def _hf_cached(repo_id: str, filename: str) -> bool:
+    """HF 缓存里是否已有这个文件（不联网）。"""
+    try:
+        from huggingface_hub import try_to_load_from_cache
+    except Exception:
+        return False
+    try:
+        found = try_to_load_from_cache(repo_id=repo_id, filename=filename)
+    except Exception:
+        return False
+    return isinstance(found, str) and os.path.exists(found)
+
+
 def fetch(url: str, target: Path, proxies: dict | None, timeout: float = 60.0) -> float:
-    """流式下载，返回平均速度（MB/s）。已存在则跳过返回 -1。"""
+    """流式下载，返回平均速度（MB/s）。已存在则跳过返回 -1。
+
+    落盘走 `<name>.part` 原子改名：中断留下的半截文件不能长得像完整产物 ——
+    否则下次重试时 `download_one` 会把残件当缓存直接铺进 HF 缓存（实测踩过：
+    t2s_model 断在 434/2644 MB，若不防会污染缓存）。
+    """
     import requests
 
     if target.exists() and target.stat().st_size > 0:
         return -1.0
     target.parent.mkdir(parents=True, exist_ok=True)
+    part = target.with_suffix(target.suffix + ".part")
+    if part.exists():
+        part.unlink()
     started = time.monotonic()
     done = 0
-    with requests.get(url, stream=True, timeout=timeout, proxies=proxies or {}) as response:
-        response.raise_for_status()
-        with open(target, "wb") as handle:
-            for chunk in response.iter_content(1 << 20):
-                if not chunk:
-                    continue
-                handle.write(chunk)
-                done += len(chunk)
+    try:
+        with requests.get(url, stream=True, timeout=timeout, proxies=proxies or {}) as response:
+            response.raise_for_status()
+            with open(part, "wb") as handle:
+                for chunk in response.iter_content(1 << 20):
+                    if not chunk:
+                        continue
+                    handle.write(chunk)
+                    done += len(chunk)
+    except Exception:
+        part.unlink(missing_ok=True)
+        raise
+    os.replace(part, target)
     return done / 1e6 / max(time.monotonic() - started, 0.1)
 
 
@@ -180,9 +206,13 @@ def main() -> int:
                 print(f"  → 本地目录 netease/models/{dirname}/{filename}（来自 {repo_id}）")
         return 0
 
-    # 1. 必须进 HF 缓存的三个文件
+    # 1. 必须进 HF 缓存的三个文件（已在缓存里的直接跳过：脚本要可重入，
+    #    否则每次都要重拖 2.6 GB 的 t2s_model —— 10.21 实测断点复跑时才暴露）
     for repo_id, filename, _ms in HF_CACHE_FILES:
         print(f"[HF 缓存] {repo_id}/{filename}")
+        if _hf_cached(repo_id, filename):
+            print("    ✓ 已在缓存，跳过\n")
+            continue
         try:
             source = download_one(repo_id, filename, proxies, staging)
             pointer = seed_hf_cache(repo_id, filename, source, proxies)
@@ -196,6 +226,11 @@ def main() -> int:
     plan = list(LOCAL_DIR_FILES) + (list(R2T2_FILES) if args.include_r2t2 else [])
     for repo_id, dirname, filename, _ms in plan:
         dest = NETEASE_MODELS / dirname / filename
+        # 目标已在本地目录的文件直接跳过 —— 只补缺口，别把 2 GB 的 w2v-bert 再拖一遍
+        if dest.exists() and dest.stat().st_size > 0:
+            print(f"[本地目录] {repo_id}/{filename} → netease/models/{dirname}")
+            print(f"    ✓ 已就位（{dest.stat().st_size / 1e6:.0f} MB），跳过\n")
+            continue
         print(f"[本地目录] {repo_id}/{filename} → netease/models/{dirname}")
         try:
             source = download_one(repo_id, filename, proxies, staging)

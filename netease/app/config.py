@@ -54,8 +54,11 @@ class Settings:
     r2t2_gpu_util: float = 0.35
     r2t2_max_model_len: int = 16384
     r2t2_max_new_tokens: int = 4096
-    #: R2T2 后端：vllm（上游推荐）。llama.cpp 形态差异大，不在本期支持范围
-    r2t2_backend: str = "vllm"
+    #: R2T2 后端。默认 `transformers`（离线转写，Windows 原生可用；独立解释器
+    #: `NETEASE_R2T2_PYTHON` 指向 `netease/r2t2-venv`，见 README「R2T2」节）。
+    #: `vllm` 是完整能力（含流式），但 PyPI 只有 Linux wheel —— WSL 部署时显式设回 vllm。
+    #: 旧默认 vllm 的时代 Windows 上永远起不来 worker，等于一条死配置。
+    r2t2_backend: str = "transformers"
 
     #: 任务产物目录（合成/转写输出落盘在这里，便于排障）
     data_dir: Path = field(default_factory=lambda: NETEASE_DIR / ".data")
@@ -71,7 +74,7 @@ class Settings:
             r2t2_model=_env("NETEASE_R2T2_MODEL"),
             r2t2_python=_env("NETEASE_R2T2_PYTHON"),
             r2t2_worker=_env("NETEASE_R2T2_WORKER"),
-            r2t2_backend=_env("NETEASE_R2T2_BACKEND", "vllm") or "vllm",
+            r2t2_backend=_env("NETEASE_R2T2_BACKEND", "transformers") or "transformers",
         )
         try:
             settings.r2t2_gpu_util = float(_env("NETEASE_R2T2_GPU_UTIL", "0.35") or 0.35)
@@ -116,7 +119,20 @@ class Settings:
 
     @property
     def resolved_r2t2_python(self) -> str:
-        return self.r2t2_python or "python"
+        """R2T2 worker 解释器：显式 env → r2t2-venv 自动探测 → 裸 `python`。
+
+        探测放这一层而不是只在 launcher（scripts/netease.mjs）注入：任何方式起的
+        服务（start.bat / 手动 python server.py / launcher）都该拿到同一个正确默认值。
+        transformers 后端的 qwen-asr 钉死 transformers==4.57.6，落在独立 venv
+        `netease/r2t2-venv`；它不存在时回退裸 python，worker 起不来会报
+        WORKER_INTERPRETER_MISSING 并给出建 venv 的指引。
+        """
+        if self.r2t2_python:
+            return self.r2t2_python
+        candidate = NETEASE_DIR / "r2t2-venv" / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+        if candidate.exists():
+            return str(candidate)
+        return "python"
 
     @property
     def resolved_r2t2_worker(self) -> str:

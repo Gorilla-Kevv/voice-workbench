@@ -38,7 +38,7 @@
 
 | 位置 | 改了什么 | 为什么必须在这里 |
 | --- | --- | --- |
-| `engine.py` 的 `ENGINES` | 多一个 `asr` 引擎（`required_mb=2048`） | 引擎注册表是显存互斥的**唯一**仲裁者，ASR 与 TTS / RVC / DDSP-SVC 抢同一张卡 |
+| `engine.py` 的 `ENGINES` | 多一个 `asr` 引擎（`required_mb=2048` 为**静态兜底档 = 默认配置 Paraformer-large fp32**；阶段 42 起真实门槛按「模型×尺寸×精度」参数化，来自 `asr/catalog.REQUIRED_VRAM_MB`，`acquire(..., required_mb=...)` 传入） | 引擎注册表是显存互斥的**唯一**仲裁者，ASR 与 TTS / RVC / DDSP-SVC 抢同一张卡；参数化门槛把「small 被误拦 / large-v3 被误放」的两头失真都修掉（坑 86） |
 | `routers/__init__.py` | 调用 `asr.register(app, ctx)` | 新板块路由的统一挂载点 |
 | `api.py` 的 `Context` 与 `register_runners` | 造一个 `AsrEngine`、`register_unloader("asr", ...)`、注册 `JobKind.ASR_TRAIN` 的执行体 | 对象生命周期与任务执行体只在装配层创建 |
 
@@ -152,7 +152,8 @@
 └─ POST /v1/asr/train      → routers/asr.py: asr_train
      └─ JobStore.create(JobKind.ASR_TRAIN) → Scheduler.submit(job)
           └─ routers/asr.py: make_asr_train_runner（调度器执行）
-               ├─ EngineRegistry.acquire("asr")      ← 显存互斥的唯一入口
+               ├─ EngineRegistry.acquire("asr", required_mb=catalog.required_vram_mb(resolve 后的参数))
+               │                                                ← 显存互斥的唯一入口（阶段 42 参数化门槛）
                └─ asyncio.to_thread(training.run, ctx.asr, request, progress, log, cancelled)
                     ├─ collect()                扫描 + 去重 + 时长过滤
                     ├─ AsrEngine.transcribe()   逐条（命中缓存则直接取）

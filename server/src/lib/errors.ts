@@ -26,19 +26,22 @@ export class AppError extends Error {
   readonly code: AppErrorCode;
   /** 是否可安全重试（前端据此决定是否显示「重试」按钮） */
   readonly retryable: boolean;
+  /** 给使用者的下一步动作（全仓契约：只报 message 用户无从下手） */
+  readonly hint?: string;
   readonly details?: unknown;
 
   constructor(
     status: number,
     code: AppErrorCode,
     message: string,
-    options: { retryable?: boolean; details?: unknown } = {},
+    options: { retryable?: boolean; hint?: string; details?: unknown } = {},
   ) {
     super(message);
     this.name = 'AppError';
     this.status = status;
     this.code = code;
     this.retryable = options.retryable ?? false;
+    this.hint = options.hint;
     this.details = options.details;
   }
 }

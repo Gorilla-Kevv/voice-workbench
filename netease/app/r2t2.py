@@ -71,13 +71,20 @@ class R2T2Manager:
             missing.append("模型未在本地找到（将按 HF repo id 在线加载，需提前下载或配置 HF_ENDPOINT）")
         elif not is_local:
             missing.append(f"模型目录不存在：{model}")
+        interpreter = self._settings.resolved_r2t2_python
+        # 解释器支持整条命令行（`wsl.exe python`）：只对「绝对路径指向单个可执行文件」的
+        # 形态做存在性检查，其余形态交给 spawn 时的真实错误
+        first_token = shlex.split(interpreter, posix=False)[0] if interpreter.strip() else ""
+        if first_token and Path(first_token).is_absolute() and not Path(first_token).exists():
+            missing.append(f"R2T2 解释器不存在：{first_token}（NETEASE_R2T2_PYTHON 配置有误）")
         return {
             "engine": "asr",
             "model": model,
             "model_local": is_local,
+            "backend": self._settings.r2t2_backend,
             "installed": not missing,
             "missing": missing,
-            "interpreter": self._settings.resolved_r2t2_python,
+            "interpreter": interpreter,
         }
 
     # ------------------------------------------------------------------ 生命周期
@@ -113,12 +120,17 @@ class R2T2Manager:
                 },
             )
         except FileNotFoundError as error:
+            backend = self._settings.r2t2_backend
             raise WorkerError(
                 "WORKER_INTERPRETER_MISSING",
                 f"找不到 R2T2 worker 解释器：{python}",
-                "设置 NETEASE_R2T2_PYTHON 指向包含 r2t2 依赖的 python，或把服务整体跑在 netease venv 里；"
-                "Windows 装不了 vLLM（只有 Linux wheel），要走 WSL2 时填 `wsl.exe python` 并配 "
-                "NETEASE_R2T2_WORKER 指向 Linux 侧的 r2t2_worker.py（见 netease/README.md）。",
+                (
+                    "transformers（离线）后端用 `netease/r2t2-venv`："
+                    "按 netease/README.md「R2T2」节建好后设 NETEASE_R2T2_PYTHON 指向它的 python.exe；"
+                    "vllm（流式）后端只有 Linux/WSL 有发行包，填 `wsl.exe python` 并配 "
+                    "NETEASE_R2T2_WORKER 指向 Linux 侧的 r2t2_worker.py。"
+                    f"（当前后端：{backend}）"
+                ),
             ) from error
         self._reader = threading.Thread(target=self._read_loop, daemon=True, name="r2t2-reader")
         self._reader.start()

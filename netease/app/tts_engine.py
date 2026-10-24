@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import gc
 import threading
 import time
 import uuid
@@ -214,11 +215,64 @@ class TtsPipeline:
                 del model
                 import torch  # noqa: PLC0415
 
+                # 先 gc 再 empty_cache：transformers 系模型普遍有循环引用，
+                # 不把引用图清掉，empty_cache 归还不了多少（irodori / gsv5 同款顺序）
+                gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
             except Exception:
                 pass
         return self.status()
+
+    def warmup_real(self) -> dict[str, Any]:
+        """加载完成后跑一次**最小真实合成**，把 CUDA 算子预热掉。
+
+        为什么要做：冷启动后第一条真实合成的耗时大头不是模型加载，而是算子首跑
+        （cuDNN autotune / kernel 编译 / allocator 池扩张，实测首条 378 s，
+        稳态 RTF 2.0~2.5）。`/v1/confucius/warmup` 原来只 `ensure_loaded()`，
+        这段代价会原样转嫁给用户的第一条请求。
+
+        做法：用一段合成的低幅正弦当参考音（内容无所谓，只是让特征提取 /
+        CAMPPlus / BigVGAN 有合法输入），fast 档最小步数跑一句两字文本，
+        产物即弃。参考音缓存在 `.data/warmup_ref.wav` 复用。
+
+        **任何失败都不阻塞 warmup** —— 预热是优化不是准入，「模型已就绪」
+        不能因为预热失败变成 500，失败原因如实带在返回值里。
+        """
+        if not self.loaded:
+            return {"kernel_warmup": "skipped", "reason": "model not loaded"}
+        ref_path = self._settings.data_dir / "warmup_ref.wav"
+        output_path: Optional[str] = None
+        try:
+            import soundfile as sf  # noqa: PLC0415
+
+            if not ref_path.exists():
+                duration_sec, sample_rate = 3.2, 22050
+                t = np.linspace(0.0, duration_sec, int(duration_sec * sample_rate), endpoint=False)
+                tone = (0.3 * np.sin(2.0 * np.pi * 220.0 * t)).astype(np.float32)
+                ref_path.parent.mkdir(parents=True, exist_ok=True)
+                sf.write(str(ref_path), tone, sample_rate)
+            started = time.monotonic()
+            # fast 档的两个裸参数都给到最小：预热只求「把算子跑过一遍」，
+            # 音质无所谓，产物会被立刻删掉
+            result = self.generate(
+                text="预热。", lang="zh", prompt_wav=ref_path, num_beams=1, n_timesteps=8
+            )
+            output_path = result.get("path")
+            return {
+                "kernel_warmup": "done",
+                "elapsed_sec": round(time.monotonic() - started, 2),
+                "sample_rate": result.get("sample_rate"),
+            }
+        except Exception as error:  # noqa: BLE001 - 预热失败只记录，不阻塞 warmup 端点
+            return {"kernel_warmup": "failed", "reason": f"{type(error).__name__}: {error}"}
+        finally:
+            for path in (output_path,):
+                if path:
+                    try:
+                        Path(path).unlink(missing_ok=True)
+                    except Exception:  # noqa: BLE001
+                        pass
 
     # ------------------------------------------------------------------ 推理
 
