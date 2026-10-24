@@ -24,10 +24,12 @@ from __future__ import annotations
 
 import json
 import os
+import queue
 import re
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -519,8 +521,38 @@ def build_train_command(settings: Settings, request: TrainRequest) -> "tuple[Lis
     return command, pre
 
 
-def _run_command(command: List[str], cwd: Path, log: Callable[[str], None], timeout: Optional[float] = None) -> int:
-    """跑一条命令，把输出逐行转发给日志。"""
+def _terminate_tree(process: subprocess.Popen) -> None:
+    """终止子进程及其整棵进程树（Windows 上 preprocess 会再 spawn worker）。"""
+    if process.poll() is not None:
+        return
+    if os.name == "nt":
+        subprocess.run(
+            ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+    else:
+        process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+
+
+def _run_command(
+    command: List[str],
+    cwd: Path,
+    log: Callable[[str], None],
+    timeout: Optional[float] = None,
+    cancelled: Optional[Callable[[], bool]] = None,
+    env: Optional[Dict[str, str]] = None,
+) -> int:
+    """跑一条命令，把输出逐行转发给日志；支持外部取消与进程树清理。
+
+    `cancelled` 是阶段 44 为 DDSP-SVC 训练加的：训练可能跑几小时，用户点「取消」
+    后不能等它自己结束。RVC 的既有调用不传该参数，行为不变。
+    """
     process = subprocess.Popen(
         command,
         cwd=str(cwd),
@@ -529,14 +561,77 @@ def _run_command(command: List[str], cwd: Path, log: Callable[[str], None], time
         text=True,
         encoding="utf-8",
         errors="replace",
+        bufsize=1,
+        env=env,
     )
     assert process.stdout is not None  # noqa: S101 - 只为类型收窄
-    for line in process.stdout:
-        line = line.rstrip()
-        if line:
-            log(line)
-    process.wait(timeout=timeout)
-    return process.returncode
+
+    lines: "queue.Queue[str]" = queue.Queue()
+
+    def reader() -> None:
+        try:
+            for raw in process.stdout:  # type: ignore[union-attr]
+                lines.put(raw)
+        finally:
+            lines.put("")
+
+    reader_thread = threading.Thread(target=reader, daemon=True)
+    reader_thread.start()
+    deadline = time.time() + float(timeout) if timeout else None
+    cancelled_flag = False
+
+    while True:
+        try:
+            raw = lines.get(timeout=0.25)
+        except queue.Empty:
+            raw = ""
+        if raw:
+            for piece in raw.replace("\r", "\n").split("\n"):
+                piece = piece.strip()
+                if piece:
+                    # tqdm 的进度条可能攒成超长一行；截断避免日志被刷爆。
+                    # 回调若抛异常（例如控制台编码问题），必须先杀进程树再上抛，
+                    # 否则训练子进程会变成孤儿继续吃 CPU/显存。
+                    try:
+                        log(piece[:1000])
+                    except BaseException:
+                        _terminate_tree(process)
+                        raise
+
+        if process.poll() is not None:
+            # 先等读线程把管道尾部刷完，否则最后几行（含 final checkpoint）可能丢
+            reader_thread.join(timeout=1.0)
+            while True:
+                try:
+                    tail = lines.get_nowait()
+                except queue.Empty:
+                    break
+                if tail:
+                    for piece in tail.replace("\r", "\n").split("\n"):
+                        piece = piece.strip()
+                        if piece:
+                            try:
+                                log(piece[:1000])
+                            except BaseException:
+                                _terminate_tree(process)
+                                raise
+            break
+
+        if cancelled is not None and cancelled():
+            cancelled_flag = True
+            _terminate_tree(process)
+            try:
+                log("[cancel] 收到取消请求，已终止进程树")
+            except BaseException:
+                pass
+            break
+
+        if deadline is not None and time.time() > deadline:
+            _terminate_tree(process)
+            raise subprocess.TimeoutExpired(command, timeout)
+
+    code = process.wait()
+    return 130 if cancelled_flag else int(code)
 
 
 def write_filelist(settings: Settings, request: TrainRequest) -> Path:

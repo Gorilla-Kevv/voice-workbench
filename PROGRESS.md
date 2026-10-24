@@ -6,7 +6,14 @@
 > 压缩前的完整台账见提交 `17b6701` 的本文件）。
 
 ## 进度看板
-- 最新完成：**阶段 43 = 对外能力网关（/api/open/* + /api/capabilities）**（10.24 BY ZCode）——
+- 最新完成：**阶段 44 = DDSP-SVC 训练入口（P5）**（10.24 BY Qoder）—— 上游两段式
+  `preprocess.py → train_reflow.py` 的编排层：语料扫描 / 9:1 划分 / `duration < 最短片段`
+  硬校验 / 缓存计数守卫 / 自适应存档与日志 / 最终权重补存 / `model_*.pt + config.yaml` 归位；
+  新增 `POST /v1/svc/train/plan|train` 与 `svc_train` 训练任务；前端歌声转换页训练卡 +
+  通用训练结果卡（RVC 页同步复用）。CPU 真机回归 `.tmp/verify_svc_train.py` 10/10 +
+  HTTP 8/8 + 任务 8/8 + 取消 3/3；typecheck/eslint/build 全绿。
+  **GPU 训练与浏览器走查待窗口**（起 dev 服务需用户确认）。
+- 同日上一轮：**阶段 43 = 对外能力网关（/api/open/* + /api/capabilities）**（10.24 BY ZCode）——
   13 项推理能力（TTS×6 含云端 MiMo / ASR×4 / RVC / DDSP-SVC / UVR5）收敛为
   `capabilityCatalog.ts` 真源表 + 统一调用端点（speech/transcriptions/convert/singing-convert/separate）；
   OpenAI 兼容路径 + 本仓错误契约（AppError 增 hint 字段，errorHandler 渲染）；上游 node:http
@@ -28,21 +35,23 @@
   `netease/r2t2-venv` + 权重 4.1GB + 三个真 bug（坑 82~84）；**真机转写未跑成**（llama-server
   占卡 ~5GB，用户保持现状），`python .tmp/smoke_r2t2_transcribe.py` 待显存窗口。
 - 工作池跟踪（GitHub Issues）：
-- 工作池跟踪（GitHub Issues）：
   - `ready-for-agent` 0 张；
   - `ready-for-human` 5 张（#1~#5 真机走查：产出记录三源 / RVC 训练前端 / GSV 两段式 / 变声翻唱加载 / Irodori 整链路+耳朵验收）；
   - `needs-triage` 1 张（#11 网易档位选择器——历史叫停，等点头，半小时工作量）；#10 已随阶段 41 关闭。
-- 硬件窗口状态：~6.0 GB 空闲显存（10.23 记录；**常跑极限 6GB 的前提是 llama-server 不常驻**——用户的
-  Qwen2.5-7B 本地服务 `-ngl 99` 占约 5GB，端口 8081，10.23 用户选择保持现状）。真机验证前先看当日
+- 硬件窗口状态：10.24 21:20 实测 **free 2393 MB**（llama-server 仍常驻；**常跑极限 6GB 的前提是它不常驻**——
+  用户的 Qwen2.5-7B 本地服务 `-ngl 99` 占约 5GB，端口 8081，10.23 用户选择保持现状）。真机验证前先看当日
   `nvidia-smi` free 与 `--query-compute-apps` 进程表，要它让位须用户点头。
 - 下一阶段入口：
   1. **R2T2 GPU 侧数据点**（显存 ≥6.2GB 窗口 = 先请用户关 llama-server）：`python .tmp/smoke_r2t2_transcribe.py`
      ——CPU 链路已闭环（坑 87/88），只剩 GPU bf16 的 RTF/装载耗时；之后网易转写页浏览器走一遍离线模式；
   2. 真机验证三件事：netease `/v1/confucius/warmup` 的 `warmup_real`（≥5GB 空闲）+ IndexTTS 5500 门槛装载 + 阶段 42 门槛表真机画像回填（坑 86/26 同法）；
-  3. #11 网易合成页档位选择器（等用户点头，后端三档现成）；
-  4. 用户侧真机走查 #1~#5（显存窗口）；
-  5. 备选立项：P5 DDSP-SVC 训练入口（确定性高，见 VOICE-MODEL-MANAGEMENT-PLAN.md §4.5）、
-     P4 网易微调（要改上游硬编码，不确定性大，§4.4）、app/ 主前端与知识总簿的视觉谱系对齐评估（阶段 42 候选）。
+  3. **阶段 44 的 GPU 训练窗口**：`/v1/svc/train` 用 `device=cuda` 跑一次真实歌声语料
+     （batch 先 4~8，1~2 epoch 观察显存），再在翻唱页选新音色做一次转换；
+     回归脚本 `.tmp/verify_svc_train.py` 当前走 CPU 通道（合成 3/4 秒素材），GPU 画像待回填；
+  4. #11 网易合成页档位选择器（等用户点头，后端三档现成）；
+  5. 用户侧真机走查 #1~#5（显存窗口）＋ 阶段 44 训练卡的浏览器走查（自动模式起 dev 服务被拦截，需用户点头）；
+  6. 备选立项：P4 网易微调（要改上游硬编码，不确定性大，§4.4）、
+     app/ 主前端与知识总簿的视觉谱系对齐评估（阶段 42 候选）。P5 已随阶段 44 完成。
 - 已否决路线：GPT-SoVITS 整体迁移 Genie-TTS（阶段 27）；dots.tts 试点（阶段 28）；R2T2 流式（上游写死 vLLM-only，平台不可行）。
 
 ## 编号说明（2026-10-06 合规整理时补记）
@@ -51,46 +60,56 @@
 - 另有一次未单独立目的「阶段 26补」（侧栏手动折叠 + RVC/SVC 页去整页报错，提交 b1ee653），已并入阶段 26 条目，不重复列。
 - 早期条目（阶段 1~20）的署名与完成时间多为整理时按 git 提交时间**补记**；无法证实的标「未记录」，不臆造。
 
-## 阶段 43 — 对外能力网关 /api/open/* + /api/capabilities [完成时间：10.24 BY ZCode]
+## 阶段 44 — DDSP-SVC 训练入口（P5）[计划时间：10.24 20:30 BY Qoder][完成时间：10.24 21:23 BY Qoder]
 
 - 分支：feature/vc-svc
-- 背景：用户要求「所有部署的模型在不改变原有功能的基础上做能力分割与接口暴露，偶尔有别的任务调用」。
-  拍板三项：OpenAI 兼容路径 + 本仓错误契约；范围=推理类全部 + 云端 MiMo（训练/批量不进同步 façade）；
-  撞显存默认不让位、`focus:true` 显式仲裁。两路探索确认的关键差异（façade 层吸收）：
-  trainer/irodori/gsv5 原生认 voice_id 而 netease/indextts 只认 ref_path；trainer 反过来不收 multipart；
-  响应四家 base64 WAV、trainer audio_url；引擎忙状态码 429/403 vs 409 不一。
+- 背景：`docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §4.5 / P5 的遗留项——上游
+  `vendor/ddsp-svc` 的训练代码齐全（`preprocess.py` + `train_reflow.py`），但**没有任何编排层**：
+  无 train 端点、无数据目录契约、无时长约束校验、无产物归位。本阶段补齐「能训出可加载音色」的闭环。
 
 ### 已完成明细
 
 | 模块 | 改动内容 |
 | --- | --- |
-| `server/src/services/capabilityCatalog.ts`（新） | 13 项能力唯一真源：id/label/kind/runtime/aliases/ref（voice_id_param、path_param）/upstream（path+style）/audio_input_param/fixed_params/extra_params/arbiter_engine/vram_source/hint；`findCapability()` 归一查找；`toOpenAiModel()` |
-| `server/src/services/openClients.ts`（新） | 上游客户端：**node:http 直连**（避开 undici headersTimeout≈300s，坑 77 同族；默认 900s，clamp 10s~1800s）；multipart 只拼文本字段；结构化错误**原样透传**、非结构化包 `OPEN_UPSTREAM_ERROR`、死端口抛 `RuntimeUnreachableError`；`downloadUpstream()` 回环取 trainer audio_url |
-| `server/src/routes/open.ts`（新） | `GET /open/v1/models`（OpenAI list）、`POST /open/v1/audio/{speech,transcriptions,convert,singing-convert,separate}`；voice_id→路径折算（`getVoiceAudioPath`）并带出音色自带 prompt_text/prompt_lang（gsv5 裸路径必需）；params 按 extra_params 白名单透传；`focus:true` 先 `resourceArbiter.focus()`；format=wav 裸字节 / json / audio（转换类回读产物文件）；`collectRuntimeStatus()` 汇总五运行时 available/loaded/显存门槛（数值全转发自服务端字段，坑 19）+ 5s 缓存 |
-| `server/src/routes/index.ts` | 挂载 `GET /api/capabilities` + `use('/api/open')`（JSON 契约，express.json 之后无坑 20 风险，注释写明约束） |
-| `server/src/lib/errors.ts` + `middleware/errorHandler.ts` | **AppError 增加 hint 字段**（可选，additive），全局错误体渲染 hint——坑 19 的「hint 必须展示」从各路由手写升级为全局契约 |
-| `docs/OPEN-API.md`（新） | 契约全文：端点/参数/错误语义表、参考音频差异表、显存互斥与 focus、curl+urllib 示例（坑 54 提醒）、训练/批量/voicelib 指向既有透传 |
-| `AGENTS.md` | 外部共享约束「三类」→「四类」（+④ 回环 HTTP 能力调用）；`AGENT_CHANGELOG.md` 补阶段 40~43 留痕 |
-| `.tmp/verify_open_gateway.mts`（新） | 回归锁：能力表完整性/别名无冲突/上游客户端（JSON+multipart+错误透传+死端口）/HTTP 集成（挂真 express+errorHandler）25 项 |
+| `trainer/app/svc/training.py`（新） | 语料递归扫描 + 9:1 划分（验证集上限 10）+ `duration < 最短片段` 阻塞校验 + 绝对路径配置生成 + 预处理缓存计数守卫（不信任退出码）+ 自适应 `interval_val/interval_log` + 最终权重补存 + `model_*.pt + config.yaml` 同目录归位 + 取消/进程树清理 |
+| `trainer/app/svc/train_preprocess.py`（新） | 薄包装：注入 vendor 根（embedded Python 的 `._pth` 不含脚本目录/cwd）；把上游 `DotDict` 换成可 pickle 版本（Windows spawn 必需）；CPU 模式给 `torch.load` 补 `map_location='cpu'` |
+| `trainer/app/svc/train_entry.py`（新） | 薄包装：复刻 `train_reflow.py` 主流程，训练结束补存最终 `model_<step>.pt`（上游只在 interval 整数倍存档，小数据集会「跑完什么都没有」）；补 torch 2.0 兼容 shim（`torch.amp.GradScaler`、`torch.optim.optimizer.ParamsT`） |
+| `trainer/app/routers/svc.py` | `POST /v1/svc/train/plan`（预检：语料/时长/权重/步数/显存）+ `POST /v1/svc/train`（`JobKind.SVC_TRAIN` 入训练池）；`make_svc_train_runner` 按设备走 `engines.acquire("svc_train")`（别名→train，6144MB） |
+| `trainer/app/api.py` / `routers/vc.py` | 注册 `SVC_TRAIN` runner；**补 `SvcError`/`VcError` 的 400 + hint 处理器**（此前裸 500）；RVC 训练 runner 同步修「ok=False 被调度器标 succeeded」与取消状态 |
+| `trainer/app/vc/training.py` | `_run_command` 升为可取消 + 进程树清理（`taskkill /T /F`）+ 日志回调异常先杀进程再上抛；RVC 既有调用行为不变 |
+| `app/src/types/svc.ts` / `lib/vc.ts` | 训练契约（payload/preflight/plan/submit）+ `svcApi.trainPlan/train` |
+| `app/src/pages/SingingConversionPage.tsx` | 新增「训练音色（DDSP-SVC）」卡：语料目录/轮数/批大小/片段时长/F0/精度/设备、500ms 防抖预检、问题与警告就地展示、JobPanel 实时进度、训练结果卡片 |
+| `app/src/components/features/TrainResultCard.tsx`（新） + `hooks/useTrainHistory.ts`（新） | RVC 与 DDSP-SVC 共用训练结果面板；历史失败记录展示后端 error（含 hint）；RVC 页改为复用同一组件 |
+| `.tmp/verify_svc_train*.py`（4 个，新） + `svc_train_fixture.py` | 自包含回归锁：真 CPU 训练 / HTTP 预检与错误 / 任务生命周期 / 取消路径；夹具自动生成 3/4 秒合成素材 |
 
 ### 测试结果
 
 | 测试项 | 结果 |
 | --- | --- |
-| `.tmp/verify_open_gateway.mts` | **25/25**：C 段能力表 5 + U 段上游客户端 5 + M 段 models 形状 3 + P 段 capabilities 3 + E 段错误路径 9（未知模型 400/缺参考 400/不可达 503/voice 404 透传/params.model 400/uvr 免 model/kind 不匹配/mimo 密钥时序） |
-| `npm run typecheck` / `npm --prefix server run build` | 全绿 |
-| 现有页面链路 | 零改动（纯加法，5 份透传代理未动） |
+| `.tmp/verify_svc_train.py` | **10/10**：预检/时长拦截/真实 preprocess→train→产物归位→`bootstrap.load_model` 可加载（CPU，合成 3/4 秒） |
+| `.tmp/verify_svc_train_http.py` | **8/8**：health / plan 三阶段 / 预检 / 步数 / 时长 issues / 坏参数 400 + hint / 目录不存在 issues |
+| `.tmp/verify_svc_train_job.py` | **8/8**：TestClient 提交 → 轮询 running→succeeded；进度实时到 `step 1/1`；产物 2 件且同目录 |
+| `.tmp/verify_svc_train_cancel.py` | **3/3**：预处理器运行中取消 → 任务 cancelled，无残留 Python 进程 |
+| `npm run typecheck` / eslint / `npm run build` | 全绿 |
+| 整合包 py3.9 `py_compile` | 全绿（training.py / 两个 wrapper / routers / api / vc.training） |
 
 ### 披露与遗留
 
-- **真机联调未做**（五运行时未启动 + 显存窗口）：起服务后跑 `.tmp/verify_open.py`（待写）或直接
-  curl 一次 speech——与 R2T2 冒烟、warmup_real、IndexTTS 装载、ASR 门槛画像共用同一个显存窗口
-  （PROGRESS 下一阶段入口）。
-- mimo 的 `design`/`clone` 模式依赖调用方给 instruction/样本；preset 清单经 capabilities 的 mimo
-  条目 hint 指引。多段合成的 `extra_segments_base64` 是权宜（wav 不可直接拼接）。
-- 5 份近重复透传代理未合并（独立重构，避免「不改原有功能」约束下引入回归）；已在本节记录为候选。
+- **未做 GPU 真机训练**：当前 free 2393 MB（llama-server 常驻），低于 train 引擎 6144MB 门槛；
+  回归走 CPU 零显存通道。GPU 的 batch/精度/峰值显存需在窗口打开后实测回填（坑 79 同法）。
+- **未做浏览器走查**：自动模式下起 dev 服务被权限层拦截，训练卡只经过 typecheck/build 与
+  HTTP 层验证；布局/交互需用户在浏览器点一遍。
+- **真实歌声素材与耳朵验收未做**：回归用合成正弦只证明链路与产物可加载，不证明音质。
+- 长音频未自动切片（上游训练时随机裁 2 秒窗口）；当前对 >60 秒素材只给警告，建议用户预切成 3~15 秒。
+- torch 2.0 shim 依赖上游当前源码；vendor 升级到要求更高 torch 的版本时要重新评估
+  （或为训练单独建 venv）。
+- 上游 `preprocess.py` 会吞单文件异常：当前用 `units/` 计数守卫（≥50% 才继续），个别跳过只告警。
+- `interval_log` 按总步数自适应（≤50 步 → 1），避免小数据集「一步日志都没有」导致界面停在 0.3；
+  超长训练仍可能产生较多日志（JobStore 只留 400 条，工作目录 train.log 完整）。
 
-## 已完成阶段速览（1 ~ 42）
+- 本次文档更新时间：10.24 21:23
+
+## 已完成阶段速览（1 ~ 43）
 
 | 阶段 | 内容 | 完成 | BY |
 | --- | --- | --- | --- |
@@ -158,3 +177,4 @@
 | 40 | 6GB 极限显存校准（IndexTTS 5500 / gsv5 turbo 3584）+ unload 统一先 gc + netease warmup 真实合成预热 + serviceCatalog 服务身份收敛（坑 79~81） | 10.21 | ZCode |
 | 41 | R2T2 离线转写接入：worker transformers 分支（bf16/batch=1/240s 分段/静音预热）+ `netease/r2t2-venv` 独立解释器 + 权重 4.1GB + 三个真 bug（坑 82~84，另坑 85 venv 建法）；真机转写 10.24 已闭环（CPU 模式双语实测，坑 87/88），GPU RTF 数据点待显存窗口 | 10.21~10.24 | ZCode |
 | 42 | ASR 显存准入参数化（catalog 门槛表 + acquire(required_mb) 覆盖 + resolve 后设门；small 误拦/large-v3 误放两头修掉，坑 86） | 10.23 | ZCode |
+| 43 | 对外能力网关（`/api/open/*` + `/api/capabilities`；13 项能力真源表 + 统一调用 + hint 全局契约；回归 25/25） | 10.24 | ZCode |

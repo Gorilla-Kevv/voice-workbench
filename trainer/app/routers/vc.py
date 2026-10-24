@@ -129,6 +129,13 @@ def make_vc_train_runner(ctx):
                 log,
                 lambda: cancel_event.is_set(),
             )
+            if result.get("cancelled"):
+                raise asyncio.CancelledError()
+            if not result.get("ok", True):
+                # 调度器只看 runner 是否抛异常；返回 ok=False 会被标成 succeeded
+                detail = str(result.get("error") or "训练失败")
+                hint = str(result.get("hint") or "")
+                raise RuntimeError(detail + ("\n" + hint if hint else ""))
             return {"job_id": job.id, **result}
         finally:
             handle.release()

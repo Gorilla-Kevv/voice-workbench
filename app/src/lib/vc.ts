@@ -15,6 +15,9 @@ import type {
   SvcCoverSyncResponse,
   SvcModelUploadResponse,
   SvcPipelineStatus,
+  SvcTrainPayload,
+  SvcTrainPlanResponse,
+  SvcTrainSubmitResponse,
   VcCatalog,
   VcConvertAsyncResponse,
   VcConvertPayload,
@@ -172,6 +175,12 @@ export const svcApi = {
     });
     return localRequest('/v1/svc/convert', { method: 'POST', body: form, timeoutMs: 0 }, baseUrl);
   },
+
+  trainPlan: (payload: SvcTrainPayload, baseUrl?: string): Promise<SvcTrainPlanResponse> =>
+    localRequest('/v1/svc/train/plan', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 60_000 }, baseUrl),
+
+  train: (payload: SvcTrainPayload, baseUrl?: string): Promise<SvcTrainSubmitResponse> =>
+    localRequest('/v1/svc/train', { method: 'POST', body: JSON.stringify(payload), timeoutMs: 0 }, baseUrl),
 };
 
 // --------------------------------------------------------------------------

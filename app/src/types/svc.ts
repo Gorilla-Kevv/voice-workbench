@@ -147,3 +147,97 @@ export interface SvcModelUploadResponse {
   has_config: boolean;
   message: string;
 }
+
+// --------------------------------------------------------------------------
+// 训练（阶段 44）
+// --------------------------------------------------------------------------
+
+export interface SvcTrainPayload {
+  name: string;
+  corpus_dir: string;
+  epochs?: number;
+  batch_size?: number;
+  /** 训练片段时长（秒），必须小于最短音频 */
+  duration?: number;
+  f0_method?: string;
+  amp_dtype?: 'fp16' | 'fp32' | 'bf16' | string;
+  device?: 'auto' | 'cuda' | 'cpu' | string;
+  workers?: number;
+  keep_workdir?: boolean;
+}
+
+export interface SvcTrainStage {
+  key: string;
+  label: string;
+  command: string;
+}
+
+export interface SvcTrainInvalidFile {
+  path: string;
+  reason: string;
+}
+
+export interface SvcTrainPreflight {
+  ok: boolean;
+  /** 阻塞项：跑下去必然失败 */
+  issues: string[];
+  /** 非阻塞：能跑但结果打折 */
+  warnings: string[];
+  device: string;
+  corpus: {
+    dir: string;
+    files: number;
+    total_s: number;
+    shortest_s: number;
+    longest_s: number;
+    train_count: number;
+    val_count: number;
+    extensions: string[];
+    invalid: SvcTrainInvalidFile[];
+  };
+  config: {
+    path: string;
+    template: string;
+    duration_s: number;
+    sample_rate: number;
+    amp_dtype: string;
+    f0_method: string;
+  };
+  steps: {
+    batches_per_epoch: number;
+    total: number;
+    epochs: number;
+    batch_size: number;
+    interval_val: number;
+    interval_force_save: number;
+    workers: number;
+  };
+  pretrained: {
+    rmvpe: string | null;
+    contentvec: string;
+    vocoder: string;
+    missing: string[];
+  };
+  output: {
+    workdir: string;
+    model_dir: string;
+  };
+  vram: {
+    required_mb: number;
+    free_mb: number | null;
+    ok: boolean;
+  };
+}
+
+export interface SvcTrainPlanResponse {
+  ok: boolean;
+  stages: SvcTrainStage[];
+  request: SvcTrainPayload;
+  preflight: SvcTrainPreflight;
+}
+
+export interface SvcTrainSubmitResponse {
+  ok: boolean;
+  job_id: string;
+  message: string;
+}

@@ -37,7 +37,7 @@
 
 ### 分支
 
-- 当前：`feature/vc-svc`（origin 已同步）
+- 当前：`feature/vc-svc`（阶段 40~44 本地提交，未推送远端）
 - 主分支：`main`
 - 远程：`https://github.com/Gorilla-Kevv/voice-workbench.git`
 
@@ -54,6 +54,7 @@
 7. Irodori-TTS：第四个 Python 运行时 `irodori/`，日语特化克隆与 Speaker Inversion 固化训练，长尾护栏与多片段长参考
 8. GPT-SoVITS v5：第五个 Python 运行时 `gsv5/`，上游 main 核心源码与双变体（v5turbo / v5dev）零样本推理底模接入，SettingsPage 服务卡与侧栏状态卡全链路贯通
 9. AI 声音知识图谱与规范导出包：`knowledge-atlas/` Linear 风格交互门户与 `knowledge-export/` 规范手册包，知识收集整合工作流 `knowledge-inbox/`
+10. DDSP-SVC 训练入口（阶段 44）：两段式 `preprocess → train_reflow` 编排、数据/时长约束、最终权重补存、产物 `.pt + config.yaml` 归位、前端训练卡与共用训练结果卡
 
 ### 非目标
 
@@ -80,6 +81,7 @@
 | `server/src/services/sovits.ts` | 托管 Python 服务：探活、解释器探测、日志环形缓冲 |
 | `trainer/app/sovits/` | 与官方代码的直连层：`bootstrap`（定位+sys.path）、`catalog`（能力清单，唯一常量源）、`pipeline`（**跨进程代理**）、`synth`（请求翻译 + 异常归一）、`voices`（音色库） |
 | `trainer/app/sovits/worker/` | **官方管线 worker 子进程**（见 `docs/ENGINE-ISOLATION.md`）：`protocol`（行协议+stdout 隔离）、`server`（请求循环 + interrupt 读线程）、`client`（主进程侧拉起/心跳/退避重启）、`__main__`（按文件路径启动的入口） |
+| `trainer/app/svc/training.py`（阶段 44） | **DDSP-SVC 训练编排**：语料扫描/9:1 划分/`duration < 最短片段` 校验/绝对路径 config/预处理缓存计数守卫/自适应存档与日志/最终权重补存/`model_*.pt + config.yaml` → `models/ddsp-svc/<name>/`。两个子进程薄包装 `train_preprocess.py` / `train_entry.py` 负责 embedded Python 的 sys.path、上游 `DotDict` 的 Windows spawn、CPU `torch.load` 与 torch 2.0 兼容 shim（见坑 89~94） |
 | `trainer/app/` | `training.py`（12 阶段编排）、`batch.py`、`inference.py`、`annotations.py`（清单读写）、`jobs.py`、`queue.py` |
 | `trainer/tools/uvr_cli.py` | UVR5 非交互封装（调官方 `vr.py`/`mdxnet.py`，不改官方代码） |
 | `netease/` | **第二个 Python 运行时**（py≥3.10）：`server.py`、`app/tts_engine.py`（Confucius4-TTS 直连）、`app/r2t2.py` + `app/r2t2_worker.py`（R2T2 子进程 worker，vLLM 需 main 环境）、`app/engine.py`（引擎互斥）。上游 API 漂移只改 `tts_engine.py` / `r2t2_worker.py` 两个薄文件 |
@@ -141,6 +143,12 @@
   训练错误码：`TRAIN_MANIFEST_EMPTY`(422，**守卫一**) / `TRAIN_NO_SOURCE` / `TRAIN_MULTI_SOURCE` /
   `TRAIN_NO_DATA` / `DATASET_ID_INVALID` / `DATASET_NOT_FOUND` / `JOB_CANCELLED` / `JOB_NOT_FOUND` /
   `METADATA_BROKEN` / `CODEC_LOAD_FAILED`(503)
+- DDSP-SVC 训练端点（trainer 原生，经网关 `/api/sovits/*` 透传；阶段 44）：
+  `POST /v1/svc/train/plan`（**只体检**：语料条数/最短片段/时长约束/F0 依赖/预训练权重/
+  步数与存档间隔/显存/产物目录）、`POST /v1/svc/train`（`JobKind.SVC_TRAIN` 入训练池；
+  产物 `model_*.pt + config.yaml` 同目录落到 `models/ddsp-svc/<name>/`）。
+  `device=cpu` 是零显存排障通道（子进程隐藏 CUDA，fp32，很慢）；GPU 走
+  `engines.acquire("svc_train")`（别名→train，6144MB 静态门槛）。任务取消会终止整棵进程树。
 - 音色库端点（网关原生 `/api/voicelib/*`，阶段 26补7，**不依赖任何 Python 服务**；
   阶段 30-4 追加片段端点 `POST|PATCH|DELETE /:id/ref-clips[/:index]` 与
   `GET /:id/ref-clips/:index/audio`，字段契约见 `server/src/services/voiceLibrary.ts` 的兼容铁律）：
@@ -882,6 +890,7 @@
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]`（脚本幂等：已就位文件跳过，断点残件 .part 原子落盘——坑 83） |
 | R2T2 离线转写 | 回归 `python .tmp/verify_r2t2_offline.py --runtime`（26 项，R5 触发真 load 验导入路径）；真机冒烟 `python .tmp/smoke_r2t2_transcribe.py [audio.wav] [--device cpu]`（GPU 模式内置 6200MB 显存护栏，坑 78；`--device cpu` 走零显存排障通道 fp32——10.24 已双语实测通过，见坑 87/88）；环境建法见 `netease/README.md`「R2T2 离线转写」节 |
 | ASR 准入门槛回归 | `python .tmp/verify_asr_gate.py`（25 项，参数化表 + 引擎覆盖行为；trainer 真实口径用整合包 python 跑——阶段 42，坑 86） |
+| DDSP-SVC 训练回归 | 整合包 python 跑：`.tmp/verify_svc_train.py`（10 项，真 CPU 训练）/ `.tmp/verify_svc_train_http.py`（8）/ `.tmp/verify_svc_train_job.py`（8）/ `.tmp/verify_svc_train_cancel.py`（3）。脚本用 TestClient，**无需常驻服务**；夹具 `.tmp/svc_train_fixture.py` 自动生成 3/4 秒合成素材（阶段 44） |
 | 能力网关回归 | `cd server && node_modules/.bin/tsx ../.tmp/verify_open_gateway.mts`（25 项，死端口+内置假上游，不吃显存——阶段 43；契约见 docs/OPEN-API.md） |
 | worker 隔离验证（5 个脚本，共 139 项） | 先起服务 `./GPT-SoVITS-v2pro-20250604/runtime/python.exe trainer/server.py --port 19881 --no-open --no-warmup`，然后：`python .tmp/worker_smoke.py`（32 项，任意 py）、`python .tmp/verify_http.py 19881`（51 项）、`python .tmp/verify_recovery.py 19881`（14 项）；另两个用整合包解释器：`.tmp/verify_isolation.py`（12 项）、`.tmp/verify_synthesis.py`（30 项）。**脚本里都清掉了 `http_proxy`**（本机系统代理会拦 127.0.0.1） |
 | 只起网关+前端 | `npm run dev:cloud` |
@@ -897,7 +906,7 @@
 
 ### 当前状态
 
-- `feature/vc-svc` 分支，origin 已同步（本地有阶段 6 改动待提交）
+- `feature/vc-svc` 分支；阶段 40~44 已在本地提交（未推送远端，按约定只在用户要求时 push）
 - `main` 分支停在 `f83d51b`（未包含 vc-svc 功能）
 - 功能可用；本地服务、网关、前端三进程由 `start.bat` 统一拉起
 - 术语表 100 条 + 页面接入 74 处
@@ -1049,6 +1058,14 @@
   的透传链路零改动，训练/批量不进同步 façade。回归 `.tmp/verify_open_gateway.mts` 25/25
   （死端口+内置假上游）+ typecheck/build 全绿。**真机联调待显存窗口**（与 R2T2 冒烟同批）。
   外部调用入口文档：`docs/OPEN-API.md`；AGENTS.md 外部共享约束已扩为四类（+④ 能力调用）。
+- **DDSP-SVC 训练入口已交付（阶段 44，10.24 BY Qoder）**：上游 `preprocess.py → train_reflow.py`
+  两段式补齐编排层 —— 语料扫描/9:1 划分/`duration < 最短片段` 阻塞校验/绝对路径 config/
+  预处理缓存计数守卫/自适应存档与日志/最终权重补存/`model_*.pt + config.yaml` 归位；
+  `POST /v1/svc/train/plan|train` + `JobKind.SVC_TRAIN` + `engines.acquire("svc_train")`；
+  前端歌声转换页新增训练卡与共用训练结果卡（RVC 页同步复用，历史失败显示 error）。
+  **CPU 真跑回归 10/10 + HTTP 8/8 + 任务 8/8 + 取消 3/3**，typecheck/eslint/build 全绿。
+  新增坑 89~95（embedded sys.path / DotDict spawn / torch 2.0 shim / CPU torch.load /
+  最终存档 / interval_log / 错误处理器与调度器语义）。**GPU 训练与浏览器走查待窗口**。
 - **6GB 显存校准与网关解耦已完成（阶段 40，10.21 BY ZCode）**：IndexTTS 门槛 3072→5500、gsv5 turbo
   3072→3584（坑 78/79）；五运行时 unload 统一「先 `gc.collect()` 再 `empty_cache()`」；netease warmup
   跑一次最小真实合成预热算子（`warmup_real`，失败不阻塞——坑 80，首条 378s 的对症解）；网关新增
@@ -1086,6 +1103,7 @@
 
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
+| 高 | **阶段 44 的 GPU 训练 / 浏览器走查** | CPU 回归全绿（`.tmp/verify_svc_train.py` 10/10、http 8/8、job 8/8、cancel 3/3）；GPU 需 ≥6144MB 空闲（10.24 21:20 实测 2393MB，llama-server 常驻），先用 batch 4~8 跑 1~2 epoch 观察显存；训练卡的浏览器走查需起 dev 服务（自动模式被拦，需用户点头）；真实歌声素材与耳朵验收一并做 |
 | 高 | **产出记录页的浏览器人工走查（阶段 32 遗留验收）** | 跑一次 RVC 变声 + 一次翻唱 + 一次训练，三条记录都要出现在「产出记录」，且能内联播放、能复制本机路径。数据源已实测可用（`total=45`，音频地址加前缀 200），只差用户在浏览器点一遍 |
 | 高 | **RVC 训练前端入口的真机冒烟（阶段 29补2 遗留）** | 前端已落地（独立训练卡 + 全量表单 + 提交前预检），typecheck / eslint / vite build 全过。只差起服务后在浏览器走一遍：变声页 → 训练音色 → 全量微调，**故意把采样率改成 v2 + 40k 看预检报红并禁用提交** → 改回 32k 提交一次小 epochs 训练 |
 | 中 | **阶段 34 的真机冒烟（GPT-SoVITS 两段式选择器）** | 前端已落地：`SovitsVoicePicker` 的「零样本 / 微调权重」Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`。要起服务走一遍：零样本合成 → 切微调选一对自训权重 → 加载到显存 → 合成 → **切回零样本确认不再带权重路径** |
@@ -1122,6 +1140,9 @@
   动任何结果栏前必看第 18 条（统一走 `useResultStack`）；动资源预估前看第 19 条（门槛值在服务
   端）与第 24 / 72 / 86 条（门槛随请求参数分档：精度 / batch / ASR 尺寸×精度——同一条原则的三个实例）；动任何上传/导入入口前看第 21、25 条（磁盘路径不能当 URL、拖拽统一走 `useFileDrop`）；
   动音色库（网关或 trainer 任一侧）前必看第 27 条（共写同一份 JSON，persist 前必须刷新）
+- 动 DDSP-SVC 训练（`trainer/app/svc/training.py` 与两个 wrapper）前必看坑 89~95：
+  embedded sys.path / `DotDict` spawn / torch 2.0 shim / CPU `torch.load` / 最终存档 /
+  `interval_log` / `SvcError+VcError` 处理器与调度器成功语义
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志
 
@@ -1278,6 +1299,57 @@
     推论：**验「模型坏了没有」和「模型好不好」要分开**——静音素材只能验链路通，文本质量
     必须用已知内容的真人语音。
 
+89. **DDSP-SVC 训练脚本不能直接按路径启动（embedded Python 的 sys.path + rmvpe 相对路径）**
+    整合包 `runtime/python39._pth` 固定了 `sys.path`，**既不包含 cwd 也不包含脚本目录**；
+    RVC 的 `preprocess.py` 自己 `sys.path.append(os.getcwd())`，DDSP 的没有 → 直接跑
+    `vendor/ddsp-svc/preprocess.py` 会死在 `ModuleNotFoundError: No module named 'logger'`。
+    另外上游 rmvpe 写死 `pretrain/rmvpe/model.pt`（相对 cwd），而权重在
+    `models/pretrained/ddsp/`。**修法**：`trainer/app/svc/train_preprocess.py` 按路径注入
+    vendor 根；调用方把 cwd 固定到任务工作目录，并在那里给 rmvpe 建链接。
+    `train_entry.py` 同理（训练脚本也 import `logger`/`reflow`）。
+
+90. **上游 `DotDict` 在 Windows spawn 下不可 pickle（Linux fork 不暴露）**
+    `vendor/ddsp-svc/logger/utils.py::DotDict.__getattr__` 对所有未知属性返回 None（而不是抛
+    AttributeError），pickle 查找 `__getstate__` 时拿到 None 并调用它 → Windows 的
+    `ProcessPoolExecutor` 启动 worker 时报 `TypeError: 'NoneType' object is not callable`
+    （`multiprocessing.reduction.dump`）。Linux 的 fork 不序列化 initializer 参数，所以上游一直正常。
+    **修法**：`train_preprocess.py` 在 import 上游前把 `utils.DotDict` 换成同语义、但对 dunder
+    正确抛 `AttributeError` 的可 pickle 实现；子进程导入 `__mp_main__`（同一个包装器）时自动应用。
+
+91. **torch 2.0 与上游 torch≥2.3 的两处 API 差异（训练段）**
+    整合包是 torch 2.0.0；上游 `reflow/solver.py` 写 `from torch.amp import GradScaler`，
+    `optimizer/chained_optimizer.py` 写 `from torch.optim.optimizer import ParamsT` —— 两个名字
+    都是 2.3+ 才有。**修法**：`train_entry.py` 在 import solver 前补
+    `torch.amp.GradScaler = torch.cuda.amp.GradScaler`、`torch.optim.optimizer.ParamsT = Union[...]`。
+    这是版本 shim，不是上游补丁；升级 vendor 或换训练 venv 时要重新评估。
+
+92. **CPU 零显存通道会让 CUDA checkpoint 反序列化失败**
+    CPU 模式设 `CUDA_VISIBLE_DEVICES=""` 是为了让 rmvpe 的 `infer_from_audio` 不自作主张用 GPU；
+    但 RMVPE / ContentVec 的 `torch.load` 上游没写 `map_location`，权重是从 CUDA 张量保存的 →
+    `Attempting to deserialize object on CUDA device 0 but device_count() is 0`。
+    **修法**：`training.run` 透传 `SVC_PREPROCESS_CPU=1`，`train_preprocess.py` 在 CPU 模式下
+    给 `torch.load` 补默认 `map_location='cpu'`（父进程与 spawn 子进程都执行）。
+
+93. **上游只在 `interval_val` 整数倍存档，小数据集会「跑完什么都没有」**
+    `train_reflow.py` 的保存点在 `global_step % interval_val == 0`，官方默认 2000；10 条音频、
+    batch 8、200 轮只有 250 步 → **训练正常结束但磁盘上没有 `model_*.pt`**。
+    **修法**：`train_entry.py` 用记录型 Saver 包住 `reflow.solver.train`，训练结束后补存最终
+    `model_<global_step>.pt`；同时 `training._pick_interval()` 选能整除总步数的验证/存档间隔
+    （≤2000，找不到就取总步数）。**凡是「只有定时存档」的上游训练脚本，都要在收尾补一次最终存档。**
+
+94. **`interval_log=10` + 小步数 = 一条训练日志都没有（界面永远停在 0.3）**
+    阶段 44 首次 job 回归就踩到：总步数 1 时，`step % 10 != 0`，上游一行 `epoch: ... loss: ... step:`
+    都不打，前端只能看到「训练中」。**修法**：`training.run` 按总步数自适应
+    `interval_log`（≤50 步 → 1，≤500 → 5，否则 10）。**不要**用宽松的 `step:` 正则兜底——
+    验证阶段的 tqdm 行 `sample time step:  50%|...` 也会命中，表现为进度条跳到 `step 100/1`。
+
+95. **`SvcError` / `VcError` 没有登记处理器 + 训练失败被调度器标成 succeeded**
+    前者不在 `SovitsError` 体系里，FastAPI 没有 handler → 端点里的业务错误全变成裸 500
+    （阶段 44 补了 400 + code/hint 的 handler）。后者是调度器的语义：
+    `_execute()` 只看 runner 是否抛异常，runner 返回 `{ok:false,...}` 仍会被标 SUCCEEDED；
+    RVC 训练此前「失败但历史显示成功」就是这个原因。**修法**：runner 在 `ok=False` 时抛
+    `RuntimeError(error + hint)`、取消时抛 `asyncio.CancelledError`；RVC 与 DDSP-SVC 两侧都改了。
+
 > 本次文档更新时间：10.23 [BY ZCode]（阶段 42：ASR 显存准入参数化——坑 86；docs/ASR.md 与 HANDOFF 命令表/建议行同步）
 
 > 本次文档更新时间：10.21~10.23 [BY ZCode]（阶段 40：6GB 极限显存校准 + warmup_real + serviceCatalog，坑 79~81；阶段 41：R2T2 离线转写接入——worker transformers 分支 + r2t2-venv 独立解释器 + 权重 4.1GB + 三个真 bug（warmup 挂死坑 82 / 下载残件坑 83 / shlex 反斜杠坑 84），回归 25/25，真机转写待显存窗口）
@@ -1285,3 +1357,5 @@
 > 本次文档更新时间：10.23 [BY ZCode]（阶段 40/41 索引同步：技术栈行、核心接口 R2T2 分层、命令表加 R2T2 体检/权重/冒烟三行、当前状态补两条阶段条目、下一步表划掉 R2T2 行、建议清单扩坑 82~85。**硬件环境新事实**：占卡大户 = 用户自跑的 `llama-server.exe`（Qwen2.5-7B `-ngl 99`，端口 8081，约 5GB），10.23 用户拍板保持现状——「6GB 常跑极限」以其不常驻为前提，已写入 PROGRESS 硬件窗口状态）
 
 > 本次文档更新时间：10.24 [BY ZCode]（阶段 42 索引：ASR 准入参数化见坑 86；阶段 43：对外能力网关 `/api/open/*` + `/api/capabilities` 交付——核心接口段、命令表、当前状态三条已记；新文档 docs/OPEN-API.md；AGENTS.md 外部共享约束扩四类；AGENT_CHANGELOG 补阶段 40~43 留痕）
+
+> 本次文档更新时间：10.24 21:23 [BY Qoder]（阶段 44：DDSP-SVC 训练入口（P5）——新增 `trainer/app/svc/training.py` + 两个子进程薄包装 + `/v1/svc/train/plan|train` + `SVC_TRAIN` runner；前端歌声转换页训练卡与 RVC/DDSP 共用训练结果卡；修复 `SvcError`/`VcError` 裸 500 与训练失败被标 succeeded；新增坑 89~95；CPU 回归 10/10 + 8/8 + 8/8 + 3/3，GPU 训练与浏览器走查待窗口）

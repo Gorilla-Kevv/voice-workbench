@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, Music2, Scissors, Upload, Waves } from 'lucide-react';
+import { AlertTriangle, Loader2, Music2, Scissors, Upload, Waves } from 'lucide-react';
 import { toast } from 'sonner';
 import { RequestError } from '@/lib/errors';
 import { ABPlayer } from '@/components/features/ABPlayer';
@@ -7,6 +7,7 @@ import { JobPanel } from '@/components/features/JobPanel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { TermTip } from '@/components/features/TermTip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -18,13 +19,22 @@ import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { RunResultCard } from '@/components/features/RunResultCard';
+import { TrainResultCard } from '@/components/features/TrainResultCard';
 import { useResultStack } from '@/hooks/useResultStack';
+import { useSvcTrainHistory } from '@/hooks/useSvcTrainHistory';
 import { notifyVcRunChanged } from '@/hooks/useVcRunHistory';
 import { dropHighlight, applyFilesToInput, useFileDrop } from '@/hooks/useFileDrop';
 import { cn } from '@/lib/utils';
 import { pickArtifactUrl, svcApi, uvrApi } from '@/lib/vc';
 import { formatBytes, modelsApi, type ModelEntry, type ModelStrayFile } from '@/lib/models';
-import type { SovitsJob, SvcCatalog, SvcModel, SvcPipelineStatus } from '@/types';
+import type {
+  SovitsJob,
+  SvcCatalog,
+  SvcModel,
+  SvcPipelineStatus,
+  SvcTrainPayload,
+  SvcTrainPlanResponse,
+} from '@/types';
 
 /** 一次翻唱的产物组合：多轨 + 当时的歌名与音色，够独立回听 */
 interface CoverResultItem {
@@ -151,7 +161,335 @@ export function SingingConversionPage({ onGoSettings }: { onGoSettings?: () => v
         accentText={ACCENT_TEXT}
         emptyHint="上面跑一次翻唱"
       />
+      <SvcTrainCard catalog={catalog} accentSolid={ACCENT_SOLID} onTrained={refresh} />
       <SeparateOnlyCard />
+    </div>
+  );
+}
+
+/**
+ * 训练音色（DDSP-SVC）。
+ *
+ * 与 RVC 的训练卡刻意同构：先预检（数据量 / 片段时长 / 预训练权重 / 步数 / 显存），
+ * 通过了才能提交；提交后走 `svc_train` 任务，产物是 `.pt + config.yaml` 一对，
+ * 直接进 `models/ddsp-svc/<name>/`，翻唱向导的音色下拉立刻能看到。
+ *
+ * 三个容易踩的上游约束都在预检里前置了：
+ *   * `data.duration` 必须小于最短片段（否则上游以难懂的方式炸）；
+ *   * 上游只在 interval 整数倍存档（小数据集会「跑完什么都没有」）—— 后端选了
+ *     能整除总步数的间隔，并在训练结束时补存最终权重；
+ *   * CPU 模式是零显存排障通道，但很慢，不承诺可用时间。
+ */
+function SvcTrainCard({
+  catalog,
+  accentSolid,
+  onTrained,
+}: {
+  catalog: SvcCatalog | null;
+  accentSolid: string;
+  onTrained: () => void;
+}) {
+  const history = useSvcTrainHistory();
+  const [name, setName] = useState('my-singing-voice');
+  const [corpusDir, setCorpusDir] = useState('');
+  const [epochs, setEpochs] = useState(200);
+  const [batchSize, setBatchSize] = useState(8);
+  const [duration, setDuration] = useState(2);
+  const [f0Method, setF0Method] = useState('rmvpe');
+  const [ampDtype, setAmpDtype] = useState('fp16');
+  const [device, setDevice] = useState('auto');
+  const [keepWorkdir, setKeepWorkdir] = useState(false);
+
+  const [plan, setPlan] = useState<SvcTrainPlanResponse | null>(null);
+  const [planError, setPlanError] = useState<string | null>(null);
+  const [planning, setPlanning] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const payload = useMemo<SvcTrainPayload>(
+    () => ({
+      name: name || 'my-singing-voice',
+      corpus_dir: corpusDir,
+      epochs,
+      batch_size: batchSize,
+      duration,
+      f0_method: f0Method,
+      amp_dtype: ampDtype,
+      device,
+      workers: 1,
+      keep_workdir: keepWorkdir,
+    }),
+    [name, corpusDir, epochs, batchSize, duration, f0Method, ampDtype, device, keepWorkdir],
+  );
+
+  const runPlan = useCallback(async () => {
+    setPlanning(true);
+    try {
+      const result = await svcApi.trainPlan(payload);
+      setPlan(result);
+      setPlanError(null);
+    } catch (cause) {
+      setPlan(null);
+      setPlanError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setPlanning(false);
+    }
+  }, [payload]);
+
+  // 参数一动就重新预检（防抖 500ms）：提交按钮的可用性直接挂在预检结论上。
+  // 语料目录为空时不预检 —— 否则首屏就是一块「请提供语料目录」的红字。
+  useEffect(() => {
+    if (!corpusDir.trim()) {
+      setPlan(null);
+      setPlanError(null);
+      return;
+    }
+    const timer = window.setTimeout(() => void runPlan(), 500);
+    return () => window.clearTimeout(timer);
+  }, [runPlan, corpusDir]);
+
+  const preflight = plan?.preflight ?? null;
+  const blocked = Boolean(preflight && !preflight.ok);
+  const f0Options = catalog?.f0_methods?.length
+    ? catalog.f0_methods
+    : [{ key: 'rmvpe', label: 'rmvpe', hint: '默认' }, { key: 'harvest', label: 'harvest', hint: 'pyworld' }, { key: 'dio', label: 'dio', hint: 'pyworld' }];
+
+  const submit = async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await svcApi.train(payload);
+      setJobId(result.job_id);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="space-y-5">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Waves className={`size-4 ${ACCENT_TEXT}`} /> 训练音色（DDSP-SVC）
+          </CardTitle>
+          <CardDescription>
+            用干净干声训练一个歌声转换音色：先提取 F0 / units 缓存，再训 Rectified Flow。
+            产物是 <code className="font-mono">.pt + config.yaml</code> 一对，直接进音色库；
+            训练期间独占显卡。
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="svc-train-name">音色名</Label>
+              <Input
+                id="svc-train-name"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                className="h-8 text-xs"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="svc-train-corpus">语料目录（本机路径）</Label>
+              <Input
+                id="svc-train-corpus"
+                value={corpusDir}
+                onChange={(e) => setCorpusDir(e.target.value)}
+                placeholder="F:\\datasets\\my-singing-voice"
+                className="h-8 font-mono text-xs"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                推荐 3~15 秒的干净干声切片，总时长 10 分钟以上；目录会递归扫描。
+              </p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>
+                <TermTip term="epoch">训练轮数 {epochs}</TermTip>
+              </Label>
+              <Slider value={[epochs]} min={10} max={2000} step={10} onValueChange={(v) => setEpochs(v[0])} />
+              {preflight ? (
+                <p className="text-[11px] text-muted-foreground">
+                  约 {preflight.steps.batches_per_epoch} batch/轮 × {epochs} 轮 ={' '}
+                  <strong>{preflight.steps.total}</strong> 步
+                </p>
+              ) : null}
+            </div>
+            <div className="space-y-1.5">
+              <Label>
+                <TermTip term="batch">批大小 {batchSize}</TermTip>
+              </Label>
+              <Slider value={[batchSize]} min={1} max={32} step={1} onValueChange={(v) => setBatchSize(v[0])} />
+              <p className="text-[11px] text-muted-foreground">8GB 卡先从 8 起步；显存不足时降到 2~4。</p>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>训练片段时长 {duration.toFixed(1)} 秒</Label>
+              <Slider
+                value={[duration]}
+                min={0.5}
+                max={5}
+                step={0.1}
+                onValueChange={(v) => setDuration(Number(v[0].toFixed(1)))}
+              />
+              <p className="text-[11px] text-muted-foreground">必须小于最短片段；预检会拦。</p>
+            </div>
+            <div className="space-y-1.5">
+              <Label>
+                <TermTip term="F0 方法">F0 提取方法</TermTip>
+              </Label>
+              <Select value={f0Method} onValueChange={setF0Method}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {f0Options.map((item) => (
+                    <SelectItem key={item.key} value={item.key}>{item.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label>训练精度</Label>
+              <Select value={ampDtype} onValueChange={setAmpDtype}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="fp16">fp16（推荐，省显存）</SelectItem>
+                  <SelectItem value="fp32">fp32（最稳，最慢）</SelectItem>
+                  <SelectItem value="bf16">bf16（RTX 30 系以上）</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1.5">
+              <Label>训练设备</Label>
+              <Select value={device} onValueChange={setDevice}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="auto">自动（有 CUDA 用 GPU）</SelectItem>
+                  <SelectItem value="cuda">强制 GPU</SelectItem>
+                  <SelectItem value="cpu">CPU（零显存排障，很慢）</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between gap-2 rounded-lg border p-3">
+            <div>
+              <Label htmlFor="svc-train-keep" className="text-xs">保留工作目录（排障用）</Label>
+              <p className="text-[11px] text-muted-foreground">成功时默认清理缓存；失败时总会保留日志。</p>
+            </div>
+            <Switch id="svc-train-keep" checked={keepWorkdir} onCheckedChange={setKeepWorkdir} />
+          </div>
+
+          <div className="space-y-2">
+            {planning ? (
+              <p className="flex items-center gap-2 text-xs text-muted-foreground">
+                <Loader2 className="size-3 animate-spin" /> 正在预检参数…
+              </p>
+            ) : null}
+            {planError ? <p className="text-xs text-destructive">预检失败：{planError}</p> : null}
+
+            {preflight ? (
+              <div
+                className={cn(
+                  'space-y-1.5 rounded-lg border p-3 text-xs',
+                  preflight.ok ? 'border-border bg-muted/30' : 'border-destructive/50 bg-destructive/5',
+                )}
+              >
+                <p className={cn('font-medium', preflight.ok ? 'text-emerald-600' : 'text-destructive')}>
+                  {preflight.ok ? '预检通过，可以提交' : '预检未通过 —— 以下问题跑下去必然失败'}
+                </p>
+                {preflight.issues.map((issue) => (
+                  <p key={issue} className="flex gap-1.5 text-destructive">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>{issue}</span>
+                  </p>
+                ))}
+                {preflight.warnings.map((warning) => (
+                  <p key={warning} className="flex gap-1.5 text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>{warning}</span>
+                  </p>
+                ))}
+                <div className="grid gap-1 pt-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+                  <p>
+                    语料 <strong>{preflight.corpus.files}</strong> 条 ·{' '}
+                    {(preflight.corpus.total_s / 60).toFixed(1)} 分钟 · 最短{' '}
+                    {preflight.corpus.shortest_s.toFixed(2)}s
+                  </p>
+                  <p>
+                    训练/验证 <strong>{preflight.corpus.train_count}</strong> /{' '}
+                    <strong>{preflight.corpus.val_count}</strong> · 设备 {preflight.device}
+                  </p>
+                  <p>
+                    片段时长 {preflight.config.duration_s.toFixed(1)}s · {preflight.config.sample_rate}Hz ·{' '}
+                    {preflight.config.amp_dtype}
+                  </p>
+                  <p>
+                    {preflight.device === 'cuda'
+                      ? `显存门槛 ${preflight.vram.required_mb}MB · 当前空闲 ${preflight.vram.free_mb ?? '未知'}MB`
+                      : 'CPU 模式：不占显存'}
+                  </p>
+                </div>
+                <p className="text-[11px] text-muted-foreground">
+                  产物目录 <code className="font-mono">{preflight.output.model_dir}</code>
+                </p>
+              </div>
+            ) : null}
+          </div>
+
+          {error ? <p className="text-xs text-destructive">{error}</p> : null}
+
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              className={`h-8 text-xs ${accentSolid}`}
+              disabled={busy || !corpusDir || blocked}
+              onClick={() => void submit()}
+            >
+              {busy ? <Loader2 className="size-3.5 animate-spin" /> : null} 开始训练
+            </Button>
+            <Button size="sm" variant="outline" className="h-8 text-xs" disabled={planning} onClick={() => void runPlan()}>
+              重新预检
+            </Button>
+            <p className="text-xs text-muted-foreground">
+              训练走 engines.acquire 独占显卡；显存不足会明确拒绝，不会静默降级。
+            </p>
+          </div>
+
+          <JobPanel
+            jobId={jobId}
+            onComplete={() => {
+              onTrained();
+              history.refresh();
+            }}
+            accent={ACCENT_TEXT}
+            title="DDSP-SVC 训练任务"
+          />
+        </CardContent>
+      </Card>
+
+      <TrainResultCard
+        records={history.records}
+        loading={history.loading}
+        error={history.error}
+        refresh={() => {
+          history.refresh();
+          onTrained();
+        }}
+        title="训练结果（DDSP-SVC）"
+        description="历次歌声转换训练的模型与 config.yaml。记录来自本地服务（重启后仍在），点路径文字可复制。"
+        emptyHint="还没有训练记录。上面备好语料后跑一次训练，产物会自动出现在这里。"
+        accentText={ACCENT_TEXT}
+      />
     </div>
   );
 }

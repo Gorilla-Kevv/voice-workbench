@@ -45,6 +45,8 @@ export interface VcTrainRecord {
   createdAt: number;
   finishedAt: number | null;
   state: string;
+  /** 失败时的错误（后端已把 hint 拼进 error），用于历史记录里的可诊断展示 */
+  error?: string | null;
   artifacts: VcTrainArtifact[];
 }
 

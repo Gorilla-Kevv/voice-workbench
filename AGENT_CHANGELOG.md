@@ -6,6 +6,21 @@
 
 ---
 
+## [2026-10-24 21:23 BY Qoder] 阶段 44：DDSP-SVC 训练入口（P5）
+
+- **文件改动**：
+  1. 新增 `trainer/app/svc/training.py`（语料扫描/9:1 划分/`duration` 校验/绝对路径 config/预处理计数守卫/自适应存档与日志/最终权重补存/产物归位/取消）、`trainer/app/svc/train_preprocess.py`、`trainer/app/svc/train_entry.py`（embedded Python 路径注入、可 pickle DotDict、CPU `torch.load`、torch 2.0 shim、最终存档）；
+  2. `trainer/app/routers/svc.py`（`/v1/svc/train/plan|train` + `make_svc_train_runner`）、`trainer/app/api.py`（注册 `SVC_TRAIN`；补 `SvcError`/`VcError` 400+hint handler）、`trainer/app/routers/vc.py`（失败/取消状态修正）、`trainer/app/vc/training.py`（`_run_command` 可取消 + 进程树清理 + 回调异常保护）；
+  3. 前端：`app/src/types/svc.ts`、`lib/vc.ts`、`pages/SingingConversionPage.tsx`（训练卡）、新 `components/features/TrainResultCard.tsx`、新 `hooks/useTrainHistory.ts` / `useSvcTrainHistory.ts`、`pages/VoiceConversionPage.tsx` + `hooks/useVcTrainHistory.ts`（复用共享结果卡）、`types/vc.ts`（历史错误字段）；
+  4. 回归锁：`.tmp/verify_svc_train.py`（10）、`.tmp/verify_svc_train_http.py`（8）、`.tmp/verify_svc_train_job.py`（8）、`.tmp/verify_svc_train_cancel.py`（3）、`.tmp/svc_train_fixture.py`；
+  5. 文档：`PROGRESS.md` / `HANDOFF.md`（坑 89~95、命令表、状态）/ 本日志。
+- **原因**：`docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §4.5 / P5 遗留——上游训练脚本齐全但无编排层；用户要求继续推进。
+- **验证**：四条回归全绿（CPU 零显存真跑；含 TestClient 任务生命周期与取消）；`npm run typecheck` / eslint / `npm run build` 全绿；整合包 py3.9 `py_compile` 全绿。**未做 GPU 训练与浏览器走查**（当前 free 2393MB，低于 6144MB 训练门槛；起 dev 服务在自动模式被权限层拦截）。
+- **对其他 Agent 的影响**：新增 `/v1/svc/train/plan|train` 与 `JobKind.SVC_TRAIN`（经网关 `/api/sovits/*` 透传）；`SvcError`/`VcError` 现在返回 400 + code/hint（此前裸 500）；RVC 训练失败不再被标 succeeded；`_run_command` 增加可取消能力（RVC 既有调用行为不变）；未启动/停止任何常驻服务。
+- **回滚方式**：git 还原上述文件并删除新增模块/回归锁；无数据迁移；`models/ddsp-svc/` 下已有模型不受影响。
+
+---
+
 ## [2026-10-24 BY ZCode] 阶段 41补1：R2T2 真机转写闭环（CPU 模式）+ 两处真 bug
 
 - **文件改动**：`netease/app/r2t2_worker.py`（新增 `--device auto/cuda/cpu`，CPU=fp32；main() 开头摘除脚本目录 sys.path——修「netease/app/r2t2.py 遮蔽 site-packages 的 r2t2 包」）；`.tmp/smoke_r2t2_transcribe.py`（--device 透传、CPU 跳过显存护栏、静音素材 peak 预检、超时 1500s）；`.tmp/verify_r2t2_offline.py`（+R5 真 load 导入路径检查，25→26 项）；`netease/README.md`/`HANDOFF.md`（坑 87/88）/`PROGRESS.md` 同步。

@@ -1033,6 +1033,41 @@ def _register_errors(app: FastAPI, ctx: Context) -> None:
     async def _sovits_error(_: Request, exc: SovitsError) -> JSONResponse:
         return JSONResponse(status_code=exc.http_status, content={"ok": False, "error": exc.to_dict()})
 
+    # RVC / DDSP-SVC 的薄错误类历史上没有登记处理器 → 端点里的 VcError / SvcError
+    # 会变成裸 500。阶段 44 补上，让训练预检失败也带 code / hint / retryable。
+    from .svc.bootstrap import SvcError as _SvcError  # noqa: PLC0415
+    from .vc.bootstrap import VcError as _VcError  # noqa: PLC0415
+
+    @app.exception_handler(_SvcError)
+    async def _svc_error(_: Request, exc: _SvcError) -> JSONResponse:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "ok": False,
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "hint": exc.hint,
+                    "retryable": False,
+                },
+            },
+        )
+
+    @app.exception_handler(_VcError)
+    async def _vc_error(_: Request, exc: _VcError) -> JSONResponse:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "ok": False,
+                "error": {
+                    "code": exc.code,
+                    "message": exc.message,
+                    "hint": exc.hint,
+                    "retryable": False,
+                },
+            },
+        )
+
     @app.exception_handler(AdmissionError)
     async def _admission(_: Request, exc: AdmissionError) -> JSONResponse:
         return JSONResponse(
@@ -1192,7 +1227,7 @@ def register_runners(ctx: Context) -> None:
         return await ctx.training.run(job, payload, cancel_event)
 
     from .routers.asr import make_asr_train_runner  # noqa: PLC0415
-    from .routers.svc import make_svc_runner  # noqa: PLC0415
+    from .routers.svc import make_svc_runner, make_svc_train_runner  # noqa: PLC0415
     from .routers.uvr import make_separation_runner  # noqa: PLC0415
     from .routers.vc import make_vc_runner, make_vc_train_runner  # noqa: PLC0415
 
@@ -1200,6 +1235,7 @@ def register_runners(ctx: Context) -> None:
     ctx.scheduler.register(JobKind.TRAIN, train_runner)
     ctx.scheduler.register(JobKind.SEPARATE, make_separation_runner(ctx))
     ctx.scheduler.register(JobKind.SVC_INFER, make_svc_runner(ctx))
+    ctx.scheduler.register(JobKind.SVC_TRAIN, make_svc_train_runner(ctx))
     ctx.scheduler.register(JobKind.VC_INFER, make_vc_runner(ctx))
     ctx.scheduler.register(JobKind.VC_TRAIN, make_vc_train_runner(ctx))
     ctx.scheduler.register(JobKind.ASR_TRAIN, make_asr_train_runner(ctx))

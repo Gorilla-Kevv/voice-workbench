@@ -13,18 +13,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import shutil
 import uuid
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import Body, FastAPI, File, Form, UploadFile
 
 from ..audio.io import AUDIO_SUFFIXES
 from ..jobs import Job, JobKind
-from ..svc import catalog
+from ..svc import catalog, training
 from ..svc.bootstrap import SvcError
 from ..svc.cover import run_cover
+from ..svc.training import SvcTrainRequest
 
 
 def _svc_engine(ctx):
@@ -128,6 +130,47 @@ def make_svc_runner(ctx):
             handle.release()
 
     return svc_runner
+
+
+def make_svc_train_runner(ctx):
+    """DDSP-SVC 训练任务执行体。"""
+
+    async def svc_train_runner(job: Job, cancel_event) -> Dict[str, Any]:
+        request = SvcTrainRequest(**(job.request or {}))
+
+        def progress(fraction: float, message: str) -> None:
+            ctx.store.update(job, progress=round(float(fraction), 3), message=message)
+
+        def log(message: str) -> None:
+            ctx.store.log(job, message)
+
+        device = request.resolved_device()
+        handle = None
+        if device == "cuda":
+            handle = ctx.engines.acquire("svc_train", reason="DDSP-SVC 训练：%s" % request.name)
+        try:
+            result = await asyncio.to_thread(
+                training.run,
+                ctx.settings,
+                request,
+                progress,
+                log,
+                lambda: cancel_event.is_set(),
+                job.id,
+            )
+            if result.get("cancelled"):
+                # 让调度器走 CancelledError 分支，把任务标成 cancelled 而不是 succeeded
+                raise asyncio.CancelledError()
+            if not result.get("ok", True):
+                detail = str(result.get("error") or "训练失败")
+                hint = str(result.get("hint") or "")
+                raise RuntimeError(detail + ("\n" + hint if hint else ""))
+            return {"job_id": job.id, **result}
+        finally:
+            if handle is not None:
+                handle.release()
+
+    return svc_train_runner
 
 
 def register(app: FastAPI, ctx) -> None:
@@ -276,6 +319,53 @@ def register(app: FastAPI, ctx) -> None:
             },
             wait=wait,
         )
+
+    @app.post("/v1/svc/train/plan", tags=["svc"])
+    def svc_train_plan(payload: Any = Body(default=None)) -> Any:
+        """只做训练预检：数据、时长约束、预训练权重、显存与存档间隔。"""
+        request = training.request_from_payload(payload)
+        return {
+            "ok": True,
+            "stages": training.plan(ctx.settings, request),
+            "request": request.to_payload(),
+            "preflight": training.preflight(ctx.settings, request),
+        }
+
+    @app.post("/v1/svc/train", tags=["svc"])
+    async def svc_train(payload: Any = Body(default=None)) -> Any:
+        """提交 DDSP-SVC 训练任务（JobKind.SVC_TRAIN，走训练池）。
+
+        `async def` 不是可选项：`scheduler.submit()` 里的取消事件需要事件循环，
+        FastAPI 的同步端点会被丢进无事件循环的 anyio 线程池（坑 38 的同款）。
+        """
+        request = training.request_from_payload(payload)
+        if not str(request.corpus_dir or "").strip():
+            raise SvcError(
+                "请先提供语料目录",
+                hint="把干净干声放到一个本机目录里；推荐 3~15 秒切片，总时长 10 分钟以上。",
+                code="MISSING_INPUT",
+            )
+        # 预检会扫语料并读 nvidia-smi，别阻塞事件循环
+        check = await asyncio.to_thread(training.preflight, ctx.settings, request)
+        if not check["ok"]:
+            raise SvcError(
+                "训练参数不可用：%s" % "；".join(check["issues"]),
+                hint="按预检提示修改；/v1/svc/train/plan 会给出同样的结论。",
+                code="BAD_PARAM",
+            )
+        job = ctx.store.create(
+            JobKind.SVC_TRAIN,
+            name="歌声转换训练：%s" % request.clean_name,
+            request=request.to_payload(),
+            owner="local",
+            priority=1,
+        )
+        ctx.scheduler.submit(job)
+        return {
+            "ok": True,
+            "job_id": job.id,
+            "message": "训练任务已入队，请轮询 /v1/jobs/%s" % job.id,
+        }
 
 
 async def _submit(

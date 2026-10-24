@@ -107,7 +107,7 @@ models/RVC语音模型/Mujica全员/     → ...
 | P2 产出记录页 | ✅ 完成（2026-10-09，PROGRESS 阶段 32） |
 | P3 体验收尾 | 🟡 进行中（2026-10-10：未识别文件 + RVC / DDSP-SVC 两页接线已完成，**GPT-SoVITS 两段式选择器**留到阶段 34） |
 | P4 网易微调接入 | 待立项 |
-| P5 DDSP-SVC 训练入口 | 待立项 |
+| P5 DDSP-SVC 训练入口 | ✅ 已完成（阶段 44，2026-10-24） |
 
 
 ### 3.1 统一根目录 `models/`
@@ -415,6 +415,10 @@ config/train_t2s.yaml / train_s2a.yaml 训练配置
 **因此**：`models/index/` 不建。UI 里明确告诉用户「IndexTTS 是纯零样本引擎」。
 
 ### 4.5 DDSP-SVC 训练入口补做（阶段 27补4 遗留）
+
+> **已完成（阶段 44，2026-10-24）**：实现见 `trainer/app/svc/training.py` + 两个子进程薄包装；
+> 端点 `/v1/svc/train/plan|train`，前端歌声转换页训练卡。CPU 回归 10/10 + HTTP 8/8 + 任务 8/8 + 取消 3/3；
+> GPU 画像与浏览器走查待显存窗口。下面的设计保留为历史依据。
 
 **现状**：`trainer/app/routers/svc.py` 只有
 `catalog / pipeline / models{load,unload,upload,delete} / convert / cover` ——
