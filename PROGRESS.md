@@ -60,7 +60,7 @@
 - 另有一次未单独立目的「阶段 26补」（侧栏手动折叠 + RVC/SVC 页去整页报错，提交 b1ee653），已并入阶段 26 条目，不重复列。
 - 早期条目（阶段 1~20）的署名与完成时间多为整理时按 git 提交时间**补记**；无法证实的标「未记录」，不臆造。
 
-## 阶段 44 — DDSP-SVC 训练入口（P5）[计划时间：10.24 20:30 BY Qoder][完成时间：10.24 21:23 BY Qoder]
+## 阶段 44 — DDSP-SVC 训练入口（P5）[计划时间：10.24 20:30 BY Qoder][完成时间：10.24 21:32 BY Qoder]
 
 - 分支：feature/vc-svc
 - 背景：`docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §4.5 / P5 的遗留项——上游
@@ -78,7 +78,7 @@
 | `trainer/app/api.py` / `routers/vc.py` | 注册 `SVC_TRAIN` runner；**补 `SvcError`/`VcError` 的 400 + hint 处理器**（此前裸 500）；RVC 训练 runner 同步修「ok=False 被调度器标 succeeded」与取消状态 |
 | `trainer/app/vc/training.py` | `_run_command` 升为可取消 + 进程树清理（`taskkill /T /F`）+ 日志回调异常先杀进程再上抛；RVC 既有调用行为不变 |
 | `app/src/types/svc.ts` / `lib/vc.ts` | 训练契约（payload/preflight/plan/submit）+ `svcApi.trainPlan/train` |
-| `app/src/pages/SingingConversionPage.tsx` | 新增「训练音色（DDSP-SVC）」卡：语料目录/轮数/批大小/片段时长/F0/精度/设备、500ms 防抖预检、问题与警告就地展示、JobPanel 实时进度、训练结果卡片 |
+| `app/src/pages/SingingConversionPage.tsx` | 新增「训练音色（DDSP-SVC）」卡：语料目录/轮数/批大小/片段时长/F0/精度/设备、500ms 防抖预检（请求序号防陈旧覆盖）、问题与警告就地展示、JobPanel 实时进度、训练结果卡片 |
 | `app/src/components/features/TrainResultCard.tsx`（新） + `hooks/useTrainHistory.ts`（新） | RVC 与 DDSP-SVC 共用训练结果面板；历史失败记录展示后端 error（含 hint）；RVC 页改为复用同一组件 |
 | `.tmp/verify_svc_train*.py`（4 个，新） + `svc_train_fixture.py` | 自包含回归锁：真 CPU 训练 / HTTP 预检与错误 / 任务生命周期 / 取消路径；夹具自动生成 3/4 秒合成素材 |
 
@@ -107,7 +107,7 @@
 - `interval_log` 按总步数自适应（≤50 步 → 1），避免小数据集「一步日志都没有」导致界面停在 0.3；
   超长训练仍可能产生较多日志（JobStore 只留 400 条，工作目录 train.log 完整）。
 
-- 本次文档更新时间：10.24 21:23
+- 本次文档更新时间：10.24 21:32
 
 ## 已完成阶段速览（1 ~ 43）
 

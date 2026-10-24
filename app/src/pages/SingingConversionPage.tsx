@@ -203,6 +203,8 @@ function SvcTrainCard({
   const [plan, setPlan] = useState<SvcTrainPlanResponse | null>(null);
   const [planError, setPlanError] = useState<string | null>(null);
   const [planning, setPlanning] = useState(false);
+  // 预检请求可能比下一次参数变化慢：用序号丢弃过期响应，避免旧结论覆盖新结论
+  const planSeq = useRef(0);
   const [jobId, setJobId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -224,16 +226,19 @@ function SvcTrainCard({
   );
 
   const runPlan = useCallback(async () => {
+    const seq = ++planSeq.current;
     setPlanning(true);
     try {
       const result = await svcApi.trainPlan(payload);
+      if (seq !== planSeq.current) return;
       setPlan(result);
       setPlanError(null);
     } catch (cause) {
+      if (seq !== planSeq.current) return;
       setPlan(null);
       setPlanError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setPlanning(false);
+      if (seq === planSeq.current) setPlanning(false);
     }
   }, [payload]);
 

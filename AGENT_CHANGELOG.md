@@ -6,12 +6,12 @@
 
 ---
 
-## [2026-10-24 21:23 BY Qoder] 阶段 44：DDSP-SVC 训练入口（P5）
+## [2026-10-24 21:32 BY Qoder] 阶段 44：DDSP-SVC 训练入口（P5）
 
 - **文件改动**：
   1. 新增 `trainer/app/svc/training.py`（语料扫描/9:1 划分/`duration` 校验/绝对路径 config/预处理计数守卫/自适应存档与日志/最终权重补存/产物归位/取消）、`trainer/app/svc/train_preprocess.py`、`trainer/app/svc/train_entry.py`（embedded Python 路径注入、可 pickle DotDict、CPU `torch.load`、torch 2.0 shim、最终存档）；
   2. `trainer/app/routers/svc.py`（`/v1/svc/train/plan|train` + `make_svc_train_runner`）、`trainer/app/api.py`（注册 `SVC_TRAIN`；补 `SvcError`/`VcError` 400+hint handler）、`trainer/app/routers/vc.py`（失败/取消状态修正）、`trainer/app/vc/training.py`（`_run_command` 可取消 + 进程树清理 + 回调异常保护）；
-  3. 前端：`app/src/types/svc.ts`、`lib/vc.ts`、`pages/SingingConversionPage.tsx`（训练卡）、新 `components/features/TrainResultCard.tsx`、新 `hooks/useTrainHistory.ts` / `useSvcTrainHistory.ts`、`pages/VoiceConversionPage.tsx` + `hooks/useVcTrainHistory.ts`（复用共享结果卡）、`types/vc.ts`（历史错误字段）；
+  3. 前端：`app/src/types/svc.ts`、`lib/vc.ts`、`pages/SingingConversionPage.tsx`（训练卡，含预检请求序号防陈旧覆盖）、新 `components/features/TrainResultCard.tsx`、新 `hooks/useTrainHistory.ts` / `useSvcTrainHistory.ts`、`pages/VoiceConversionPage.tsx` + `hooks/useVcTrainHistory.ts`（复用共享结果卡）、`types/vc.ts`（历史错误字段）；
   4. 回归锁：`.tmp/verify_svc_train.py`（10）、`.tmp/verify_svc_train_http.py`（8）、`.tmp/verify_svc_train_job.py`（8）、`.tmp/verify_svc_train_cancel.py`（3）、`.tmp/svc_train_fixture.py`；
   5. 文档：`PROGRESS.md` / `HANDOFF.md`（坑 89~95、命令表、状态）/ 本日志。
 - **原因**：`docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §4.5 / P5 遗留——上游训练脚本齐全但无编排层；用户要求继续推进。

@@ -1358,4 +1358,4 @@
 
 > 本次文档更新时间：10.24 [BY ZCode]（阶段 42 索引：ASR 准入参数化见坑 86；阶段 43：对外能力网关 `/api/open/*` + `/api/capabilities` 交付——核心接口段、命令表、当前状态三条已记；新文档 docs/OPEN-API.md；AGENTS.md 外部共享约束扩四类；AGENT_CHANGELOG 补阶段 40~43 留痕）
 
-> 本次文档更新时间：10.24 21:23 [BY Qoder]（阶段 44：DDSP-SVC 训练入口（P5）——新增 `trainer/app/svc/training.py` + 两个子进程薄包装 + `/v1/svc/train/plan|train` + `SVC_TRAIN` runner；前端歌声转换页训练卡与 RVC/DDSP 共用训练结果卡；修复 `SvcError`/`VcError` 裸 500 与训练失败被标 succeeded；新增坑 89~95；CPU 回归 10/10 + 8/8 + 8/8 + 3/3，GPU 训练与浏览器走查待窗口）
+> 本次文档更新时间：10.24 21:32 [BY Qoder]（阶段 44：DDSP-SVC 训练入口（P5）——新增 `trainer/app/svc/training.py` + 两个子进程薄包装 + `/v1/svc/train/plan|train` + `SVC_TRAIN` runner；前端歌声转换页训练卡与 RVC/DDSP 共用训练结果卡；修复 `SvcError`/`VcError` 裸 500 与训练失败被标 succeeded；新增坑 89~95；CPU 回归 10/10 + 8/8 + 8/8 + 3/3，GPU 训练与浏览器走查待窗口）
