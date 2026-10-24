@@ -147,7 +147,13 @@ def make_svc_train_runner(ctx):
         device = request.resolved_device()
         handle = None
         if device == "cuda":
-            handle = ctx.engines.acquire("svc_train", reason="DDSP-SVC 训练：%s" % request.name)
+            handle = ctx.engines.acquire(
+                "svc_train",
+                reason="DDSP-SVC 训练：%s" % request.name,
+                # 阶段 44 GPU 实测：batch 8 × 2s / fp16 峰值增量约 1.4GB，
+                # 静态 6144 会把 6GB 卡误挡；按 batch × duration 参数化。
+                required_mb=request.vram_required_mb(),
+            )
         try:
             result = await asyncio.to_thread(
                 training.run,

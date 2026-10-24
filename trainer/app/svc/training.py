@@ -105,6 +105,14 @@ class SvcTrainRequest:
             )
         return raw
 
+    def vram_required_mb(self) -> int:
+        """本次训练请求的显存门槛（阶段 44 GPU 画像，见 `required_vram_mb()`）。"""
+        return required_vram_mb(
+            _coerce_int(self.batch_size, DEFAULT_BATCH_SIZE),
+            _coerce_float(self.duration, DEFAULT_DURATION),
+            _coerce_int(self.workers, 1),
+        )
+
     def to_payload(self) -> Dict[str, Any]:
         """持久化到 Job.request 的形状（只含 dataclass 字段，值已归一）。"""
         return {
@@ -294,6 +302,23 @@ def _f0_dependency_issue(method: str, settings: Settings) -> Optional[str]:
     return "未知 F0 方法：%s" % method
 
 
+def required_vram_mb(batch_size: int, duration: float, workers: int = 1) -> int:
+    """DDSP-SVC 训练的显存门槛（按请求参数分档，坑 24/72/86 同一原则）。
+
+    2026-10-24 GPU 实测（RTX 4060 Laptop 8GB，batch 8 × duration 2s，fp16，
+    cache_device=cpu，workers=1，12 条 3.2s 素材）：整条链（预处理 + 训练 + 验证）
+    峰值增量约 **1.4GB**（nvidia-smi 峰值 used 3224MB，基线 1808MB）。
+    这里取 2.0GB 起步（实测 + 余量），并按 batch × 片段时长线性缩放；
+    预处理 workers>1 时每个额外 worker 会各自加载 rmvpe/contentvec/vocoder，
+    预留 800MB/worker。上限沿用训练引擎的 6144MB（再高会让 8GB 卡完全进不去）。
+    """
+    batch = max(1, int(batch_size))
+    seconds = max(MIN_DURATION, float(duration))
+    workers = max(1, int(workers))
+    scaled = 1024 + int(48 * batch * seconds) + 800 * (workers - 1)
+    return max(2048, min(ENGINES["train"].required_mb, scaled))
+
+
 def preflight(settings: Settings, request: SvcTrainRequest) -> Dict[str, Any]:
     """训练前的可执行体检。返回 `{ok, issues, warnings, ...}`。"""
     issues: List[str] = []
@@ -417,7 +442,7 @@ def preflight(settings: Settings, request: SvcTrainRequest) -> Dict[str, Any]:
     if total_steps > 50000:
         warnings.append("总步数 %d 很大（约 %.1f 万），单次训练可能数小时；建议先小轮数试跑。" % (total_steps, total_steps / 10000.0))
 
-    vram_required = ENGINES["train"].required_mb if device == "cuda" else 0
+    vram_required = required_vram_mb(batch_size, duration, workers) if device == "cuda" else 0
     vram_free = free_vram_mb() if device == "cuda" else None
     vram_ok = True
     if device == "cuda" and vram_free is not None:

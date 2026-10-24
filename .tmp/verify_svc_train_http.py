@@ -74,6 +74,22 @@ with TestClient(app) as client:
     miss_issues = (miss_plan.json().get("preflight") or {}).get("issues") or []
     check("H8 语料目录不存在进 issues", any("不存在" in item for item in miss_issues), miss_issues)
 
+    try:
+        import torch
+
+        has_cuda = bool(torch.cuda.is_available())
+    except Exception:  # noqa: BLE001
+        has_cuda = False
+    if has_cuda:
+        cuda_plan = client.post(
+            "/v1/svc/train/plan",
+            json=dict(payload, device="cuda", batch_size=8),
+        )
+        vram = (cuda_plan.json().get("preflight") or {}).get("vram") or {}
+        check("H9 CUDA 门槛参数化（batch 8 × 2s → 2048MB）", vram.get("required_mb") == 2048, vram)
+    else:
+        print("SKIP H9 无 CUDA")
+
 print("ALL %d CHECKS PASSED" % passed if not failed else "FAILED: %s" % failed)
 if (WORK / "http-data").exists():
     shutil.rmtree(WORK / "http-data", ignore_errors=True)

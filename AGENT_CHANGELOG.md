@@ -6,6 +6,16 @@
 
 ---
 
+## [2026-10-24 22:12 BY Qoder] 阶段 44补：GPU 真机画像与 svc_train 门槛参数化
+
+- **文件改动**：`trainer/app/svc/training.py`（新增 `required_vram_mb(batch, duration, workers)`，preflight 用它算门槛）、`trainer/app/routers/svc.py`（`engines.acquire("svc_train", required_mb=...)`）、`.tmp/verify_svc_train.py`（10→13 项，加门槛参数化检查）、`.tmp/verify_svc_train_http.py`（8→9 项，H9 CUDA 门槛）、新增 `.tmp/smoke_svc_train_gpu.py`（GPU 冒烟/画像采样）；PROGRESS/HANDOFF 同步。
+- **原因**：用户于 10.24 22:00 左右打开 GPU 窗口；静态 `train` 6144MB 门槛加 512MB 预留需 6656MB，而当时 free 6141MB，会把本可跑下的 DDSP 训练误拒。按坑 24/72/86 的参数化原则回填实测画像。
+- **验证**：12 条 3.2s 合成素材 / batch 8 / fp16 / cache CPU / workers 1 → GPU 预处理 + 训练 2 步成功；nvidia-smi 峰值 used 3234MB（基线 1817，增量 **1417MB**）、最低 free 4724MB；产物 GPU 加载 + raw 转换 3.2s 音频 **2.14s**（含加载）；`required_mb=2048` 的 engine gate 通过。回归：CPU 训练 13/13、HTTP 9/9、任务 8/8、取消 3/3、**CUDA 真实 runner/调度器 6/6**（`.tmp/verify_svc_train_gpu_job.py`）。
+- **对其他 Agent 的影响**：`svc_train` 的显存门槛不再是静态 6144，而是 `max(2048, min(6144, 1024 + 48*batch*seconds + 800*(workers-1)))`；preflight 的 `vram.required_mb` 数值随之变化。未启动/停止常驻服务；GPU 训练进程已结束（free 回到 ~6131MB）。
+- **回滚方式**：git 还原 `training.py` / `routers/svc.py` 两处；删除 `.tmp/smoke_svc_train_gpu.py` 与文档改动；无数据迁移。
+
+---
+
 ## [2026-10-24 21:32 BY Qoder] 阶段 44：DDSP-SVC 训练入口（P5）
 
 - **文件改动**：

@@ -62,6 +62,12 @@ bad = training.SvcTrainRequest(
 )
 bad_pre = training.preflight(settings, bad)
 check("P4 片段过短被拦截", not bad_pre["ok"] and any("片段过短" in item for item in bad_pre["issues"]))
+check("P5 门槛参数化：batch 8 × 2s", training.required_vram_mb(8, 2.0, 1) == 2048)
+check(
+    "P6 门槛随 batch × 时长上升",
+    training.required_vram_mb(8, 5.0, 1) > training.required_vram_mb(8, 2.0, 1),
+)
+check("P7 门槛上限 6144", training.required_vram_mb(64, 10.0, 4) == 6144)
 
 logs = []
 result = training.run(

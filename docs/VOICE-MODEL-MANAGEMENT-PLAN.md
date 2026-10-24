@@ -542,6 +542,13 @@ POST /v1/svc/train        提交任务（JobKind.SVC_TRAIN，走训练池）
 大概率要降 batch 并考虑 `cache_device='cpu'`。
 **不凭参数估算承诺可跑**（这是坑 42 的教训：显存判定必须实测）。
 
+> **阶段 44 GPU 实测（2026-10-24，RTX 4060 Laptop 8GB）**：12 条 3.2s 合成素材、
+> batch 8、`duration=2`、fp16、`cache_device=cpu`、`workers=1`，GPU 预处理 + 训练
+> 2 步 + 验证整链峰值 **增量 1417MB**（used 3234 / 基线 1817，最低 free 4724）；
+> 产物 GPU 加载 + raw 转换 3.2s 音频 2.14s（含加载）。静态 6144MB 门槛会把 6GB
+> 窗口误挡，已改为 `required_vram_mb(batch, duration, workers)` 参数化（默认 2048MB，
+> 上限 6144MB）。**真实歌声素材的音质与长音频行为仍需耳朵验收**。
+
 
 ---
 

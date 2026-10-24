@@ -10,9 +10,10 @@
   `preprocess.py → train_reflow.py` 的编排层：语料扫描 / 9:1 划分 / `duration < 最短片段`
   硬校验 / 缓存计数守卫 / 自适应存档与日志 / 最终权重补存 / `model_*.pt + config.yaml` 归位；
   新增 `POST /v1/svc/train/plan|train` 与 `svc_train` 训练任务；前端歌声转换页训练卡 +
-  通用训练结果卡（RVC 页同步复用）。CPU 真机回归 `.tmp/verify_svc_train.py` 10/10 +
-  HTTP 8/8 + 任务 8/8 + 取消 3/3；typecheck/eslint/build 全绿。
-  **GPU 训练与浏览器走查待窗口**（起 dev 服务需用户确认）。
+  通用训练结果卡（RVC 页同步复用）。CPU 真机回归 `.tmp/verify_svc_train.py` 13/13 +
+  HTTP 9/9 + 任务 8/8 + 取消 3/3；typecheck/eslint/build 全绿。
+  **GPU 真机画像已回填**：batch 8 × 2s / fp16 峰值增量约 1.4GB，`svc_train` 门槛参数化为
+  2048MB（12 条素材、GPU 训练 + 产物加载/转换已闭环）；浏览器走查与真实素材耳朵验收待做。
 - 同日上一轮：**阶段 43 = 对外能力网关（/api/open/* + /api/capabilities）**（10.24 BY ZCode）——
   13 项推理能力（TTS×6 含云端 MiMo / ASR×4 / RVC / DDSP-SVC / UVR5）收敛为
   `capabilityCatalog.ts` 真源表 + 统一调用端点（speech/transcriptions/convert/singing-convert/separate）；
@@ -60,7 +61,7 @@
 - 另有一次未单独立目的「阶段 26补」（侧栏手动折叠 + RVC/SVC 页去整页报错，提交 b1ee653），已并入阶段 26 条目，不重复列。
 - 早期条目（阶段 1~20）的署名与完成时间多为整理时按 git 提交时间**补记**；无法证实的标「未记录」，不臆造。
 
-## 阶段 44 — DDSP-SVC 训练入口（P5）[计划时间：10.24 20:30 BY Qoder][完成时间：10.24 21:32 BY Qoder]
+## 阶段 44 — DDSP-SVC 训练入口（P5）[计划时间：10.24 20:30 BY Qoder][完成时间：10.24 22:14 BY Qoder]
 
 - 分支：feature/vc-svc
 - 背景：`docs/VOICE-MODEL-MANAGEMENT-PLAN.md` §4.5 / P5 的遗留项——上游
@@ -81,25 +82,31 @@
 | `app/src/pages/SingingConversionPage.tsx` | 新增「训练音色（DDSP-SVC）」卡：语料目录/轮数/批大小/片段时长/F0/精度/设备、500ms 防抖预检（请求序号防陈旧覆盖）、问题与警告就地展示、JobPanel 实时进度、训练结果卡片 |
 | `app/src/components/features/TrainResultCard.tsx`（新） + `hooks/useTrainHistory.ts`（新） | RVC 与 DDSP-SVC 共用训练结果面板；历史失败记录展示后端 error（含 hint）；RVC 页改为复用同一组件 |
 | `.tmp/verify_svc_train*.py`（4 个，新） + `svc_train_fixture.py` | 自包含回归锁：真 CPU 训练 / HTTP 预检与错误 / 任务生命周期 / 取消路径；夹具自动生成 3/4 秒合成素材 |
+| GPU 门槛参数化（补） | `training.required_vram_mb(batch, duration, workers)`：按 batch×片段时长线性缩放，workers>1 每个额外 worker 预留 800MB（预处理会复制 rmvpe/contentvec/vocoder）；`svc_train` runner 用 `required_mb` 覆盖静态 train 6144。实测 batch 8 × 2s / fp16：整链峰值增量 **1417MB**，门槛 **2048MB**（含 512MB 预留后需 2560MB） |
+| `.tmp/smoke_svc_train_gpu.py`（新） | GPU 真机冒烟：12 条 3.2s 合成素材 → GPU 预处理 + 训练 2 步 + 产物 GPU 加载/raw 转换；旁路采样 nvidia-smi 峰值 |
 
 ### 测试结果
 
 | 测试项 | 结果 |
 | --- | --- |
-| `.tmp/verify_svc_train.py` | **10/10**：预检/时长拦截/真实 preprocess→train→产物归位→`bootstrap.load_model` 可加载（CPU，合成 3/4 秒） |
-| `.tmp/verify_svc_train_http.py` | **8/8**：health / plan 三阶段 / 预检 / 步数 / 时长 issues / 坏参数 400 + hint / 目录不存在 issues |
+| `.tmp/verify_svc_train.py` | **13/13**：预检/时长拦截/门槛参数化 3 项/真实 preprocess→train→产物归位→`bootstrap.load_model` 可加载（CPU，合成 3/4 秒） |
+| `.tmp/verify_svc_train_http.py` | **9/9**：health / plan 三阶段 / 预检 / 步数 / 时长 issues / 坏参数 400 + hint / 目录不存在 issues / CUDA 门槛 2048 |
 | `.tmp/verify_svc_train_job.py` | **8/8**：TestClient 提交 → 轮询 running→succeeded；进度实时到 `step 1/1`；产物 2 件且同目录 |
 | `.tmp/verify_svc_train_cancel.py` | **3/3**：预处理器运行中取消 → 任务 cancelled，无残留 Python 进程 |
+| `.tmp/smoke_svc_train_gpu.py` | **GPU 真机**：12 条 3.2s 素材 / batch 8 / fp16；preprocess→train 2 步成功；峰值 used 3234MB（基线 1817 / 增量 1417MB）、最低 free 4724MB；产物 GPU 加载 + raw 转换 3.2s 音频 2.14s（含加载）；引擎门槛 acquire 通过 |
+| `.tmp/verify_svc_train_gpu_job.py` | **6/6**：CUDA + 真实 `svc_train` runner/调度器（2 条合成素材，batch 8）——预检门槛 2048、任务 succeeded、进度到 `step 1/1`、产物两件同目录 |
 | `npm run typecheck` / eslint / `npm run build` | 全绿 |
 | 整合包 py3.9 `py_compile` | 全绿（training.py / 两个 wrapper / routers / api / vc.training） |
 
 ### 披露与遗留
 
-- **未做 GPU 真机训练**：当前 free 2393 MB（llama-server 常驻），低于 train 引擎 6144MB 门槛；
-  回归走 CPU 零显存通道。GPU 的 batch/精度/峰值显存需在窗口打开后实测回填（坑 79 同法）。
+- **GPU 真机训练已闭环（10.24 22:12）**：空闲 6141MB 窗口下，12 条 3.2s 合成素材、batch 8、
+  fp16、cache CPU、workers 1：preprocess→train 2 步成功，整链峰值增量 1417MB
+  （used 3234 / 基线 1817、最低 free 4724），产物 GPU 加载 + raw 转换 3.2s 音频 2.14s（含加载）。
+  静态 6144 门槛会把这次窗口误挡，已按 batch×duration×workers 参数化为 2048MB（含预留需 2560MB）。
+  **真实歌声素材与耳朵验收仍未做**：合成正弦只证明链路、产物与显存画像，不证明音质。
 - **未做浏览器走查**：自动模式下起 dev 服务被权限层拦截，训练卡只经过 typecheck/build 与
   HTTP 层验证；布局/交互需用户在浏览器点一遍。
-- **真实歌声素材与耳朵验收未做**：回归用合成正弦只证明链路与产物可加载，不证明音质。
 - 长音频未自动切片（上游训练时随机裁 2 秒窗口）；当前对 >60 秒素材只给警告，建议用户预切成 3~15 秒。
 - torch 2.0 shim 依赖上游当前源码；vendor 升级到要求更高 torch 的版本时要重新评估
   （或为训练单独建 venv）。
@@ -107,7 +114,7 @@
 - `interval_log` 按总步数自适应（≤50 步 → 1），避免小数据集「一步日志都没有」导致界面停在 0.3；
   超长训练仍可能产生较多日志（JobStore 只留 400 条，工作目录 train.log 完整）。
 
-- 本次文档更新时间：10.24 21:32
+- 本次文档更新时间：10.24 22:14
 
 ## 已完成阶段速览（1 ~ 43）
 

@@ -890,7 +890,9 @@
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]`（脚本幂等：已就位文件跳过，断点残件 .part 原子落盘——坑 83） |
 | R2T2 离线转写 | 回归 `python .tmp/verify_r2t2_offline.py --runtime`（26 项，R5 触发真 load 验导入路径）；真机冒烟 `python .tmp/smoke_r2t2_transcribe.py [audio.wav] [--device cpu]`（GPU 模式内置 6200MB 显存护栏，坑 78；`--device cpu` 走零显存排障通道 fp32——10.24 已双语实测通过，见坑 87/88）；环境建法见 `netease/README.md`「R2T2 离线转写」节 |
 | ASR 准入门槛回归 | `python .tmp/verify_asr_gate.py`（25 项，参数化表 + 引擎覆盖行为；trainer 真实口径用整合包 python 跑——阶段 42，坑 86） |
-| DDSP-SVC 训练回归 | 整合包 python 跑：`.tmp/verify_svc_train.py`（10 项，真 CPU 训练）/ `.tmp/verify_svc_train_http.py`（8）/ `.tmp/verify_svc_train_job.py`（8）/ `.tmp/verify_svc_train_cancel.py`（3）。脚本用 TestClient，**无需常驻服务**；夹具 `.tmp/svc_train_fixture.py` 自动生成 3/4 秒合成素材（阶段 44） |
+| DDSP-SVC 训练回归 | 整合包 python 跑：`.tmp/verify_svc_train.py`（13 项，真 CPU 训练 + 门槛参数化）/ `.tmp/verify_svc_train_http.py`（9）/ `.tmp/verify_svc_train_job.py`（8）/ `.tmp/verify_svc_train_cancel.py`（3）。脚本用 TestClient，**无需常驻服务**；夹具 `.tmp/svc_train_fixture.py` 自动生成 3/4 秒合成素材（阶段 44） |
+| DDSP-SVC GPU 画像 | 整合包 python 跑 `.tmp/smoke_svc_train_gpu.py`（12 条 3.2s 合成素材 / batch 8 / fp16；GPU 预处理+训练+产物加载/转换，旁路采样 nvidia-smi 峰值；需 ≥3GB 空闲，产物落 `trainer/.tmp/ddsp_gpu/` 并移出受管模型库）；调度路径另跑 `.tmp/verify_svc_train_gpu_job.py`（6 项，CUDA + 真实 runner/调度器） |
+
 | 能力网关回归 | `cd server && node_modules/.bin/tsx ../.tmp/verify_open_gateway.mts`（25 项，死端口+内置假上游，不吃显存——阶段 43；契约见 docs/OPEN-API.md） |
 | worker 隔离验证（5 个脚本，共 139 项） | 先起服务 `./GPT-SoVITS-v2pro-20250604/runtime/python.exe trainer/server.py --port 19881 --no-open --no-warmup`，然后：`python .tmp/worker_smoke.py`（32 项，任意 py）、`python .tmp/verify_http.py 19881`（51 项）、`python .tmp/verify_recovery.py 19881`（14 项）；另两个用整合包解释器：`.tmp/verify_isolation.py`（12 项）、`.tmp/verify_synthesis.py`（30 项）。**脚本里都清掉了 `http_proxy`**（本机系统代理会拦 127.0.0.1） |
 | 只起网关+前端 | `npm run dev:cloud` |
@@ -1065,7 +1067,11 @@
   前端歌声转换页新增训练卡与共用训练结果卡（RVC 页同步复用，历史失败显示 error）。
   **CPU 真跑回归 10/10 + HTTP 8/8 + 任务 8/8 + 取消 3/3**，typecheck/eslint/build 全绿。
   新增坑 89~95（embedded sys.path / DotDict spawn / torch 2.0 shim / CPU torch.load /
-  最终存档 / interval_log / 错误处理器与调度器语义）。**GPU 训练与浏览器走查待窗口**。
+  最终存档 / interval_log / 错误处理器与调度器语义）。**GPU 真机画像已回填（10.24 22:12）**：
+  12 条 3.2s 素材 / batch 8 / fp16 / cache CPU / workers 1 → 整链峰值增量 1417MB
+  （used 3234 / 基线 1817），GPU 训练 + 产物加载/转换闭环；静态 6144 门槛会误挡 6GB 卡，
+  已参数化为 `required_vram_mb(batch, duration, workers)`（默认 2048MB）。浏览器走查与
+  真实素材耳朵验收仍待做。
 - **6GB 显存校准与网关解耦已完成（阶段 40，10.21 BY ZCode）**：IndexTTS 门槛 3072→5500、gsv5 turbo
   3072→3584（坑 78/79）；五运行时 unload 统一「先 `gc.collect()` 再 `empty_cache()`」；netease warmup
   跑一次最小真实合成预热算子（`warmup_real`，失败不阻塞——坑 80，首条 378s 的对症解）；网关新增
@@ -1103,7 +1109,7 @@
 
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
-| 高 | **阶段 44 的 GPU 训练 / 浏览器走查** | CPU 回归全绿（`.tmp/verify_svc_train.py` 10/10、http 8/8、job 8/8、cancel 3/3）；GPU 需 ≥6144MB 空闲（10.24 21:20 实测 2393MB，llama-server 常驻），先用 batch 4~8 跑 1~2 epoch 观察显存；训练卡的浏览器走查需起 dev 服务（自动模式被拦，需用户点头）；真实歌声素材与耳朵验收一并做 |
+| 高 | **阶段 44 的真实素材训练与浏览器走查** | GPU 画像已回填（12 条合成素材 / batch 8 / fp16 / workers 1：峰值增量 1417MB，门槛参数化 2048MB；10.24 22:12 窗口 free 6141MB）；回归 13/13 + 9/9 + 8/8 + 3/3 + GPU job 6/6。剩：① 用**真实歌声语料**跑一次（batch 8 起）并做耳朵验收；② 训练卡浏览器走查（起 dev 服务需用户点头，自动模式被拦） |
 | 高 | **产出记录页的浏览器人工走查（阶段 32 遗留验收）** | 跑一次 RVC 变声 + 一次翻唱 + 一次训练，三条记录都要出现在「产出记录」，且能内联播放、能复制本机路径。数据源已实测可用（`total=45`，音频地址加前缀 200），只差用户在浏览器点一遍 |
 | 高 | **RVC 训练前端入口的真机冒烟（阶段 29补2 遗留）** | 前端已落地（独立训练卡 + 全量表单 + 提交前预检），typecheck / eslint / vite build 全过。只差起服务后在浏览器走一遍：变声页 → 训练音色 → 全量微调，**故意把采样率改成 v2 + 40k 看预检报红并禁用提交** → 改回 32k 提交一次小 epochs 训练 |
 | 中 | **阶段 34 的真机冒烟（GPT-SoVITS 两段式选择器）** | 前端已落地：`SovitsVoicePicker` 的「零样本 / 微调权重」Tabs + 「加载到显存」热切换，`SynthesisPage` 按模式下发 `gpt`/`sovits`。要起服务走一遍：零样本合成 → 切微调选一对自训权重 → 加载到显存 → 合成 → **切回零样本确认不再带权重路径** |
@@ -1350,6 +1356,18 @@
     RVC 训练此前「失败但历史显示成功」就是这个原因。**修法**：runner 在 `ok=False` 时抛
     `RuntimeError(error + hint)`、取消时抛 `asyncio.CancelledError`；RVC 与 DDSP-SVC 两侧都改了。
 
+96. **DDSP-SVC 训练的静态 6144 门槛会把 6GB 卡误挡（GPU 画像回填，阶段 44）**
+    `ENGINES["train"] = 6144` 是按 GPT-SoVITS/RVC 训练定的静态档；DDSP-SVC 实际轻得多。
+    2026-10-24 GPU 实测（RTX 4060 Laptop 8GB，12 条 3.2s 素材，batch 8 × duration 2s，
+    fp16，cache_device=cpu，workers=1）：整链（预处理 + 训练 + 验证）nvidia-smi 峰值
+    used **3234MB**、基线 1817MB，**增量 1417MB**；训练 2 步约 2.6s；产物 GPU 加载 +
+    raw 转换 3.2s 音频 2.14s（含加载）。当时 free 6141MB，静态门槛要 6144+512=6656 →
+    会被误拒，而实际完全跑得下。**修法**：`training.required_vram_mb(batch, duration, workers)`
+    = `max(2048, min(6144, 1024 + 48*batch*seconds + 800*(workers-1)))`；runner 用
+    `engines.acquire("svc_train", required_mb=...)` 覆盖静态档，preflight 显示同一数值。
+    这是坑 24/72/86「门槛随请求参数变化」的第四个实例；重新测画像的入口是
+    `.tmp/smoke_svc_train_gpu.py`（旁路采样 nvidia-smi 峰值）。
+
 > 本次文档更新时间：10.23 [BY ZCode]（阶段 42：ASR 显存准入参数化——坑 86；docs/ASR.md 与 HANDOFF 命令表/建议行同步）
 
 > 本次文档更新时间：10.21~10.23 [BY ZCode]（阶段 40：6GB 极限显存校准 + warmup_real + serviceCatalog，坑 79~81；阶段 41：R2T2 离线转写接入——worker transformers 分支 + r2t2-venv 独立解释器 + 权重 4.1GB + 三个真 bug（warmup 挂死坑 82 / 下载残件坑 83 / shlex 反斜杠坑 84），回归 25/25，真机转写待显存窗口）
@@ -1359,3 +1377,5 @@
 > 本次文档更新时间：10.24 [BY ZCode]（阶段 42 索引：ASR 准入参数化见坑 86；阶段 43：对外能力网关 `/api/open/*` + `/api/capabilities` 交付——核心接口段、命令表、当前状态三条已记；新文档 docs/OPEN-API.md；AGENTS.md 外部共享约束扩四类；AGENT_CHANGELOG 补阶段 40~43 留痕）
 
 > 本次文档更新时间：10.24 21:32 [BY Qoder]（阶段 44：DDSP-SVC 训练入口（P5）——新增 `trainer/app/svc/training.py` + 两个子进程薄包装 + `/v1/svc/train/plan|train` + `SVC_TRAIN` runner；前端歌声转换页训练卡与 RVC/DDSP 共用训练结果卡；修复 `SvcError`/`VcError` 裸 500 与训练失败被标 succeeded；新增坑 89~95；CPU 回归 10/10 + 8/8 + 8/8 + 3/3，GPU 训练与浏览器走查待窗口）
+
+> 本次文档更新时间：10.24 22:14 [BY Qoder]（阶段 44 GPU 画像回填：12 条 3.2s 合成素材 / batch 8 / fp16 / workers 1，整链峰值增量 1417MB、GPU 训练 + 产物加载/转换闭环；静态 6144 门槛误挡 6GB 卡 → `required_vram_mb(batch, duration, workers)` 参数化为 2048MB，新增坑 96；回归升 13/13 + 9/9 + GPU job 6/6；`smoke_svc_train_gpu.py` / `verify_svc_train_gpu_job.py` 入命令表；浏览器走查与真实素材耳朵验收仍待做）
