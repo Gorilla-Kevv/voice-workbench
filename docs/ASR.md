@@ -118,6 +118,40 @@
 收敛到「该后端确实支持」的取值上，并把每一处纠正写进 `notes`。
 不静默替换：用户以为自己用了 large，实际跑的是 medium，这种误会比报错更糟。
 
+### 3.2 已落地模型与显存画像（2026-10-24 实测）
+
+测试条件：RTX 4060 Laptop 8GB，单条 3 秒合成音频；每套模型单独加载、转写一次、
+卸载后再测下一套。**增量 = nvidia-smi used 相对加载前基线的差值**（基线约 1.8~2.0GB，
+含桌面与其它常驻程序）；整机 used = 基线 + 增量。合成音频的识别文本无意义，
+这里只用于测「加载 + 一次短推理」的显存与耗时。
+
+| 模型 | 入口 | 磁盘 | 实测常驻增量 | 实测峰值增量 | 项目准入门槛 | 状态 |
+| --- | --- | --- | --- | --- | --- | --- |
+| FunASR Paraformer-large（zh）+ FSMN-VAD + CT-Punc | ASR 板块 · 常驻（默认中文） | 848MB + 4MB + 283MB ≈ **1.1GB** | **+1213MB** | **+1257MB** | 2048MB | 已安装；`funasr_source=local`，3s 音频加载+推理 10.7s（RTF 0.068） |
+| faster-whisper small | ASR 板块 · 常驻（HF 缓存） | **464MB** | **+260MB**（int8） | **+260MB** | int8 1024MB / default 1536MB | 已落地，但官方尺寸清单从 medium 起，UI 下拉不含 small；API 直传 `model=small` 可加载 |
+| faster-whisper large-v3-turbo · fp16 | ASR 板块 · 常驻 | **1.6GB** | **+1568MB** | **+1808MB** | 3072MB | 已安装；UI 可选 |
+| faster-whisper large-v3-turbo · int8 | 同上 | 1.6GB | **+800MB** | **+1072MB** | 2560MB | 已安装；UI 可选 |
+| faster-whisper large-v3-turbo · fp32 | 同上 | 1.6GB | **+3212MB** | **+3646MB** | 6144MB | 已安装；UI 可选（设置默认精度是 float32） |
+| R2T2（Confucius4-R2T2） | 网易转写 · 独立运行时 | **3.9GB** | GPU bf16 净占约 **5.5GB**（阶段 41/坑 12 文档口径）；CPU 模式 **0** | — | **6144MB** | 已安装；离线 transformers 后端，`r2t2-venv` 就绪；本次未加载（free 5978MB < 6144MB 门槛） |
+
+**未落地（首次使用会联网下载）**：
+
+| 模型 | 准入门槛 | 说明 |
+| --- | --- | --- |
+| FunASR SenseVoice-Small（`iic/SenseVoiceSmall`） | 1536MB | 中英日韩粤，最省显存；当前缓存里没有，非中文走 FunASR 时会触发下载 |
+| FunASR UniASR yue（`speech_UniASR_yue`） | 2048MB | 粤语专用；`tools/asr/models` 下没有该目录 |
+| faster-whisper medium / medium.en / large / large-v2 / large-v3 | 4096MB / 8192MB | 仅有 small 与 large-v3-turbo 的 HF 缓存；其余尺寸首次使用下载 |
+
+**两条口径不要混用**：`REQUIRED_VRAM_MB` 是 `engines.acquire(required_mb=...)` 的**准入门槛**
+（宁估高不估低，实际测量普遍低于门槛）；上表的「实测增量」是模型真正吃掉的显存。
+门槛暂时保持保守值，不为实测值下调。
+
+**一次测量误差披露**：首次直接调用 FunASR 时未绑定 GPT-SoVITS 安装目录，走了远端别名，
+在 `D:\AI_Cache\modelscope\models\iic\` 下载了 `speech_seaco_paraformer_large...`（953MB）与
+`punc_ct-transformer_cn-en-common-vocab471067-large`（1.2GB）；该组合实测 +2236MB。
+正常服务启动会 `bootstrap.install()` 绑定整合包并优先使用本地 1.1GB 那套（本节第一行）。
+这两份 ModelScope 缓存不是默认路径，可保留作 fallback，也可清理。
+
 ---
 
 ## 4. 训练入口的职责范围与调用关系

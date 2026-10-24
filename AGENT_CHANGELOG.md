@@ -6,6 +6,22 @@
 
 ---
 
+## [2026-10-24 22:43 BY Qoder] ASR 已落地模型与显存画像（只补文档/注释，无行为改动）
+
+- **文件改动**：`docs/ASR.md` 新增 §3.2「已落地模型与显存画像」；`trainer/app/asr/catalog.py` 的 `REQUIRED_VRAM_MB` 后补一段实测注释。`.tmp/measure_asr_*.py` / `measure_whisper_turbo_fp32.py` 为一次性测量脚本（未入库）。
+- **原因**：用户询问「目前搭载好的 ASR 模型有哪些、各自占用多少显存」。代码里的 `REQUIRED_VRAM_MB` 是准入门槛（量级估算），不是实际占用；顺手把真机画像写进文档，避免下次再猜。
+- **验证 / 操作**：在本机 RTX 4060 Laptop 8GB 上逐个加载→3 秒音频转写→卸载：
+  FunASR Paraformer-zh（本地 1.1GB）+1213MB / 峰值 +1257MB（门槛 2048）；
+  faster-whisper small int8 +260MB（门槛 1024）；
+  large-v3-turbo fp16 +1568/+1808、int8 +800/+1072、fp32 +3212/+3646（门槛 3072/2560/6144）；
+  R2T2 未加载（free 5978MB < 6144MB 门槛；文档口径 GPU bf16 净占约 5.5GB，CPU 0）。
+  每次均 `engine.unload()`，GPU 已释放（22:43 used 1886 / free 6072MB），无常驻服务残留。
+- **副作用披露**：首次直接调用 FunASR 时未绑定 GPT-SoVITS 安装目录，走了远端别名，在 `D:\AI_Cache\modelscope\models\iic\` 下载了 `speech_seaco_paraformer_large...`（953MB）与 `punc_ct-transformer_cn-en-common-vocab471067-large`（1.2GB）。正常服务启动会 `bootstrap.install()` 并优先用本地 1.1GB 那套；这两份缓存不是默认路径，可保留作 fallback 或清理。
+- **对其他 Agent 的影响**：无代码行为变化，`REQUIRED_VRAM_MB` 门槛值未改；仅新增文档与注释。
+- **回滚方式**：git 还原 `docs/ASR.md` 与 `catalog.py` 注释；ModelScope 缓存按需清理。
+
+---
+
 ## [2026-10-24 22:12 BY Qoder] 阶段 44补：GPU 真机画像与 svc_train 门槛参数化
 
 - **文件改动**：`trainer/app/svc/training.py`（新增 `required_vram_mb(batch, duration, workers)`，preflight 用它算门槛）、`trainer/app/routers/svc.py`（`engines.acquire("svc_train", required_mb=...)`）、`.tmp/verify_svc_train.py`（10→13 项，加门槛参数化检查）、`.tmp/verify_svc_train_http.py`（8→9 项，H9 CUDA 门槛）、新增 `.tmp/smoke_svc_train_gpu.py`（GPU 冒烟/画像采样）；PROGRESS/HANDOFF 同步。

@@ -151,6 +151,10 @@ REQUIRED_VRAM_MB: Dict[str, Dict[str, int]] = {
     "whisper-large": {"float32": 8192, "int8": 3584, "default": 4608},      # 1.5B：fp16 ~3 GB + 激活；fp32 在 8 GB 卡上等于拒绝
     "whisper-large-v3-turbo": {"float32": 6144, "int8": 2560, "default": 3072},  # turbo 编码器 large + 解码器减半
 }
+#: 2026-10-24 本机实测画像（RTX 4060 8GB，3 秒音频，nvidia-smi used 相对基线增量；
+#: 基线约 1.8~2.0GB）：FunASR Paraformer-zh(local)+VAD+Punc +1213 / 峰值 +1257；
+#: whisper-small int8 +260；large-v3-turbo fp16 +1568/+1808、int8 +800/+1072、
+#: fp32 +3212/+3646。门槛保持「宁估高」不因实测下调；条件与 R2T2 口径见 docs/ASR.md §3.2。
 
 #: 尺寸/标识 → 权重档（官方脚本把 large 归一 large-v3，常驻通道同款归一，
 #: 见 pipeline._default_model_id）
