@@ -67,6 +67,20 @@ export interface AsrBackendDiagnostic {
   script: { available: boolean; path: string; error: string };
 }
 
+/** 常驻模型的权重就绪与参数化显存门槛（阶段 44补2） */
+export interface AsrResidentModelStatus {
+  id: string;
+  key: string;
+  backend: string;
+  label: string;
+  languages: string[];
+  weights_ready: boolean | null;
+  weights_source: string;
+  weights_path: string;
+  weights_hint: string;
+  vram_required_mb: number | null;
+}
+
 /** `GET /v1/asr/catalog` 的响应 */
 export interface AsrCatalog {
   ok: boolean;
@@ -74,6 +88,8 @@ export interface AsrCatalog {
   presets: AsrPreset[];
   language_labels: Record<string, string>;
   defaults: { backend: string; size: string; language: string; precision: string };
+  /** 常驻模型状态（按模型 id 索引） */
+  resident_model_status?: Record<string, AsrResidentModelStatus>;
   diagnostics: AsrDiagnostics;
   engine: AsrPipelineStatus;
 }
@@ -122,6 +138,11 @@ export interface AsrResolved {
   reason: string;
   /** 被纠正过的参数说明，界面要显示出来 */
   notes: string[];
+  /** 权重是否就绪（false 时调用会返回 WEIGHTS_MISSING；null = 未知） */
+  weights_ready?: boolean | null;
+  weights_source?: string;
+  weights_path?: string;
+  weights_hint?: string;
 }
 
 export interface AsrSegment {

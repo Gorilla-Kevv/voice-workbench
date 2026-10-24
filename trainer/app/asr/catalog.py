@@ -31,6 +31,8 @@ __all__ = [
     "RESIDENT_MODELS",
     "RESIDENT_MODULES",
     "backend_meta",
+    "backend_model_languages",
+    "default_resident_model",
     "defaults",
     "describe",
     "language_label",
@@ -38,6 +40,7 @@ __all__ = [
     "preset",
     "required_vram_mb",
     "resident_channel_module",
+    "resident_model_meta",
     "resident_models",
 ]
 
@@ -83,6 +86,68 @@ RESIDENT_MODELS: Dict[str, List[Dict[str, Any]]] = {
     # faster-whisper 的模型标识与 Whisper 尺寸同名，由 `resident_models()` 从尺寸派生
     "fasterwhisper": [],
 }
+
+
+def resident_model_meta(model_key: str) -> Optional[Dict[str, Any]]:
+    """按 key / id 查一个常驻模型的元信息（含它自己的语种集合与所属后端）。
+
+    这是阶段 44补2 修复的关键：`BACKENDS[backend].languages` 是**后端级**清单
+    （funasr 官方脚本只有 zh/yue），而 SenseVoice 自己的语种是 zh/en/ja/ko/yue。
+    `resolve()` 必须先认模型、再决定是否换后端，否则 `funasr + ja` 会被切成
+    fasterwhisper，而 model 还留在 SenseVoice 上，最后走错加载器。
+    """
+    wanted = (model_key or "").strip()
+    if not wanted:
+        return None
+    for backend, items in RESIDENT_MODELS.items():
+        for item in items:
+            if wanted in {str(item.get("key") or ""), str(item.get("id") or "")}:
+                return {**item, "backend": backend}
+    # faster-whisper 的尺寸名与模型标识同名；显式 pin 时也要能识别，
+    # 这样 backend 不会把 `large-v3-turbo` 当成未知 FunASR 模型。
+    if wanted in {
+        "tiny", "base", "small", "medium", "medium.en",
+        "large", "large-v2", "large-v3", "large-v3-turbo",
+        "whisper-large-v3-turbo",
+    }:
+        size = wanted.replace("whisper-", "", 1)
+        return {
+            "key": size,
+            "id": size,
+            "label": "Whisper %s" % size,
+            "languages": list(BACKENDS["fasterwhisper"]["languages"]),
+            "backend": "fasterwhisper",
+        }
+    return None
+
+
+def backend_model_languages(backend: str) -> List[str]:
+    """后端的「官方清单 + 常驻模型」语种并集。
+
+    `funasr` 的官方脚本只声明 zh/yue，但常驻 SenseVoice 还支持 en/ja/ko；
+    判断「要不要为了语种换后端」时必须以这个并集为准，否则日语会被误切到 whisper。
+    """
+    meta = BACKENDS.get(backend) or {}
+    languages = [str(item) for item in meta.get("languages") or []]
+    for item in RESIDENT_MODELS.get(backend, []):
+        for language in item.get("languages") or []:
+            value = str(language)
+            if value not in languages:
+                languages.append(value)
+    return languages
+
+
+def default_resident_model(backend: str, language: str) -> Optional[Dict[str, Any]]:
+    """某后端为某个语种默认挑哪个常驻模型；挑不出时返回 None。"""
+    if backend != "funasr":
+        return None
+    lang = (language or "").strip()
+    if lang == "zh":
+        return resident_model_meta("paraformer-zh")
+    if lang in {"en", "ja", "ko", "yue"}:
+        return resident_model_meta("sensevoice-small")
+    return None
+
 
 #: 场景预设。前端「一键智能转写」直接取 `reference`，用户也可以手动改。
 PRESETS: List[Dict[str, Any]] = [
@@ -286,8 +351,13 @@ def normalize(
     language: str = "",
     precision: str = "",
     settings: Any = None,
+    language_pool: Optional[List[str]] = None,
 ) -> Tuple[str, str, str, str, List[str]]:
     """把一组参数收敛到「该后端确实支持」的取值上。
+
+    `language_pool` 用于「显式 pin 了常驻模型」的场景：SenseVoice 的语种集合
+    （zh/en/ja/ko/yue）比 funasr 后端的官方脚本清单（zh/yue）更宽；此时以模型
+    为准，而不是把 ja 改回 zh。传 None 时沿用后端清单。
 
     返回 `(backend, size, language, precision, notes)`。`notes` 里是每一处被纠正的
     原因 —— 前端会把它显示出来，而不是静默替换：用户以为自己用了 large，
@@ -303,7 +373,10 @@ def normalize(
     meta = BACKENDS[chosen]
 
     sizes = [str(item) for item in meta.get("sizes") or []]
-    languages = [str(item) for item in meta.get("languages") or []]
+    languages = [
+        str(item)
+        for item in ((language_pool if language_pool else meta.get("languages")) or [])
+    ]
     precisions = [str(item) for item in meta.get("precisions") or []]
 
     resolved_size = (size or base["size"]).strip()

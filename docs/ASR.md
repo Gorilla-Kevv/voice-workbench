@@ -152,6 +152,49 @@
 正常服务启动会 `bootstrap.install()` 绑定整合包并优先使用本地 1.1GB 那套（本节第一行）。
 这两份 ModelScope 缓存不是默认路径，可保留作 fallback，也可清理。
 
+### 3.3 权重就绪与 SenseVoice 路由（阶段 44补2）
+
+外部 Agent 的 SenseVoice 诊断报告（SaSTranslater，2026-10-24）指出 SenseVoice 不可用，总判断正确；
+但它把日语失败归因于「normalize 把 ja 改回 zh、落到 Paraformer」是**错误**的。真实链路是：
+
+1. `AsrEngine.resolve()` 原先在后端级语种清单上做「不支持就换后端」：funasr 只声明
+   `zh/yue`，`ja` 被切成 fasterwhisper；
+2. `model=iic/SenseVoiceSmall` 是调用方显式给的，不会跟着后端改；
+3. `_ensure_resident()` 看到 backend=fasterwhisper，就调用
+   `WhisperModel('iic/SenseVoiceSmall')`，直接走错加载器。
+
+修复后的规则：
+
+| 场景 | 解析结果 |
+| --- | --- |
+| `backend=funasr, language=ja, model=iic/SenseVoiceSmall` | funasr / ja / SenseVoice（不再切 fasterwhisper） |
+| `backend=funasr, language=ja`（无 model） | funasr / ja / SenseVoice（`default_resident_model()` 承接） |
+| `backend=funasr, language=zh` | funasr / zh / Paraformer |
+| `backend=funasr, language=ja, model=paraformer-zh` | 400 `LANGUAGE_UNSUPPORTED`（不静默改语种） |
+| `backend=fasterwhisper, model=iic/SenseVoiceSmall` | 以 model 的 backend 为准 → funasr/SenseVoice，并给出 note |
+| `backend=fasterwhisper, model=large-v3-turbo` | 尊重显式 Whisper 模型，不自动切 FunASR |
+
+权重语义：
+
+- `funasr_local_models()` 增加 `sensevoice` 探测（`tools/asr/models/SenseVoiceSmall`、
+  `iic/SenseVoiceSmall`、`*SenseVoice*` 完整快照），并兼容 `MODELSCOPE_CACHE`
+  下的 `models/iic/SenseVoiceSmall`；`funasr_model_path()` 返回 local/modelscope/missing。
+- 已知模型缺权重不再走官方别名静默下载：`_ensure_resident()` 与 ASR 路由在
+  `engines.acquire()` **之前**抛 **503 `WEIGHTS_MISSING`**，hint 给出
+  `snapshot_download('iic/SenseVoiceSmall')` 命令与本地放置路径。
+  这避免低显存窗口把「缺权重」误报成 429/`VRAM_INSUFFICIENT`。
+- `/v1/asr/catalog` 与轻量 `/v1/asr/readiness` 都返回
+  `resident_model_status`：`weights_ready/weights_source/weights_path/weights_hint/
+  vram_required_mb`（Paraformer 2048 / SenseVoice 1536）。
+- 网关 `/api/capabilities` 与 `/api/open/v1/models` 对固定模型 ASR 的 `available`
+  改为「运行时可达 **且** weights_ready=true」；`weights_ready=false/null` 一律不可用，
+  并新增 `weights_ready` / `weights_source` 字段。
+- SenseVoice 不挂 VAD/标点：不挂 VAD 是耳语 ASR 的刻意选择（避免气声被静音过滤），
+  标点需调用方后处理；capability hint 已写明。`size` 字段也移除（SenseVoice 无尺寸概念）。
+
+回归锁：`.tmp/verify_asr_sensevoice.py` **14/14**（catalog/readiness、ja 路由、backend/model
+冲突、显式模型保护、缺权重预检、伪造本地快照识别、引擎层安全网），不加载模型、不吃显存。
+
 ---
 
 ## 4. 训练入口的职责范围与调用关系

@@ -25,7 +25,7 @@ from typing import Any, Dict, List, Optional
 
 from fastapi import Body, FastAPI, File, Form, UploadFile
 
-from ..asr import catalog, training
+from ..asr import bootstrap, catalog, training
 from ..asr.bootstrap import AsrError
 from ..asr.training import DatasetRequest
 from ..audio.io import AUDIO_SUFFIXES
@@ -35,6 +35,22 @@ from ..jobs import Job, JobKind
 def _public(resolved: Dict[str, Any]) -> Dict[str, Any]:
     """去掉内部字段（`key` 是引擎用来判断「要不要重新加载」的元组，前端不需要）。"""
     return {name: value for name, value in resolved.items() if name != "key"}
+
+
+def _raise_if_weights_missing(resolved: Dict[str, Any]) -> None:
+    """常驻通道权重未就绪时，在 engines.acquire 之前就报 WEIGHTS_MISSING。
+
+    否则低显存窗口会先撞 429/VRAM_INSUFFICIENT，把「缺权重」误报成「显存不够」。
+    脚本通道不拦：官方脚本可以自己下载/使用自己的权重。
+    """
+    if resolved.get("channel") == "resident" and resolved.get("weights_ready") is False:
+        raise AsrError(
+            "模型权重未就绪：%s" % resolved.get("model"),
+            hint=str(resolved.get("weights_hint") or "先下载模型权重后重试。"),
+            code="WEIGHTS_MISSING",
+            status=503,
+            retryable=False,
+        )
 
 
 def _request_from(data: Any) -> DatasetRequest:
@@ -118,6 +134,7 @@ def make_asr_train_runner(ctx):
             model=request.model,
             channel=request.channel,
         )
+        _raise_if_weights_missing(resolved)
         for field_name in ("backend", "size", "language", "precision", "model", "channel"):
             setattr(request, field_name, resolved[field_name])
         handle = ctx.engines.acquire(
@@ -151,12 +168,20 @@ def register(app: FastAPI, ctx) -> None:
         return {
             "ok": True,
             **catalog.describe(ctx.settings),
+            # 常驻模型的权重就绪 + 参数化显存门槛（阶段 44补2）；
+            # 网关 /api/capabilities 用它判断 available / vram_required_mb。
+            "resident_model_status": bootstrap.resident_model_status(ctx.settings),
             "diagnostics": {
                 **ctx.asr.diagnostics(),
                 "datasets": training.list_datasets(ctx.settings),
             },
             "engine": ctx.asr.status(),
         }
+
+    @app.get("/v1/asr/readiness", tags=["asr"])
+    def asr_readiness() -> Any:
+        """轻量权重就绪探测（网关 /api/capabilities 用，不扫数据集、不加载模型）。"""
+        return {"ok": True, "resident_model_status": bootstrap.resident_model_status(ctx.settings)}
 
     @app.get("/v1/asr/pipeline", tags=["asr"])
     def asr_pipeline() -> Any:
@@ -188,6 +213,7 @@ def register(app: FastAPI, ctx) -> None:
             model=str(data.get("model") or ""),
             channel=str(data.get("channel") or ""),
         )
+        _raise_if_weights_missing(resolved)
         handle = ctx.engines.acquire(
             "asr",
             reason="加载 ASR 模型",
@@ -235,6 +261,7 @@ def register(app: FastAPI, ctx) -> None:
             backend=backend, size=size, language=language,
             precision=precision, model=model, channel=channel,
         )
+        _raise_if_weights_missing(resolved)
         handle = ctx.engines.acquire(
             "asr",
             reason="语音转写：%s" % src.name,

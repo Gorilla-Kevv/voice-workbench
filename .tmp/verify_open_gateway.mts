@@ -9,7 +9,7 @@ import assert from 'node:assert';
 process.env.MIMO_API_KEY = '';
 
 const { openRouter, capabilitiesHandler } = await import('../server/src/routes/open.js');
-const { CAPABILITIES, findCapability } = await import('../server/src/services/capabilityCatalog.js');
+const { CAPABILITIES, capabilityAvailability, findCapability } = await import('../server/src/services/capabilityCatalog.js');
 const { requestUpstream } = await import('../server/src/services/openClients.js');
 // .tmp 在仓库根，包解析要显式锚到 server 的 node_modules
 import { createRequire } from 'node:module';
@@ -43,6 +43,29 @@ check('C4 findCapability 大小写不敏感 + 别名命中',
   findCapability('Confucius4-TTS')?.id === 'confucius4-tts' && findCapability('netease-tts')?.id === 'confucius4-tts');
 check('C5 每个本地能力都有 arbiter_engine，mimo 为 null',
   CAPABILITIES.every((c) => (c.runtime === 'mimo') === (c.arbiter_engine === null)));
+
+// ---- 能力可用性：运行时可达 + ASR 固定模型权重就绪（阶段 44补2）
+const asrModels = {
+  'paraformer-zh': { weights_ready: true, weights_source: 'local', vram_required_mb: 2048 },
+  'iic/SenseVoiceSmall': { weights_ready: false, weights_source: 'missing', vram_required_mb: 1536 },
+};
+const senseSpec = CAPABILITIES.find((c) => c.id === 'sensevoice-small');
+const paraSpec = CAPABILITIES.find((c) => c.id === 'paraformer-zh');
+const whisperSpec = CAPABILITIES.find((c) => c.id === 'faster-whisper');
+check('C6 SenseVoice 权重未就绪 → available=false / vram=1536',
+  Boolean(senseSpec) && capabilityAvailability(senseSpec!, true, asrModels, 2048).available === false
+    && capabilityAvailability(senseSpec!, true, asrModels, 2048).vram_required_mb === 1536
+    && capabilityAvailability(senseSpec!, true, asrModels, 2048).weights_ready === false);
+check('C7 Paraformer 权重就绪 → available=true / vram=2048',
+  Boolean(paraSpec) && capabilityAvailability(paraSpec!, true, asrModels, 2048).available === true
+    && capabilityAvailability(paraSpec!, true, asrModels, 2048).vram_required_mb === 2048);
+check('C8 faster-whisper 无固定权重 → 仍按运行时可达（weights_ready=null）',
+  Boolean(whisperSpec) && capabilityAvailability(whisperSpec!, true, {}, 2048).available === true
+    && capabilityAvailability(whisperSpec!, true, {}, 2048).weights_ready === null);
+check('C9 ASR 能力声明 weights_key / SenseVoice 不再固定 size',
+  senseSpec?.weights_key === 'iic/SenseVoiceSmall'
+    && paraSpec?.weights_key === 'paraformer-zh'
+    && !('size' in (senseSpec?.fixed_params ?? {})));
 
 // ---------------------------------------------------------------- 单元：上游客户端
 const fakeUpstream = http.createServer((req, res) => {
@@ -114,8 +137,13 @@ check('M3 本地运行时未启动 → available=false', models.json.data.filter
 
 const caps = await call('GET', '/api/capabilities');
 check('P1 capabilities 13 项 + 端点指引', caps.json?.ok === true && caps.json.capabilities.length === 13 && caps.json.capabilities.every((c: any) => typeof c.endpoint === 'string' && c.endpoint.startsWith('POST /api/open/')));
-check('P2 实时状态字段齐（available/loaded/vram_required_mb/vram_source/hint）',
-  caps.json.capabilities.every((c: any) => typeof c.available === 'boolean' && (c.loaded === null || typeof c.loaded === 'boolean') && (c.vram_required_mb === null || typeof c.vram_required_mb === 'number') && typeof c.vram_source === 'string' && typeof c.hint === 'string'));
+check('P2 实时状态字段齐（available/weights_ready/loaded/vram_required_mb/vram_source/hint）',
+  caps.json.capabilities.every((c: any) => typeof c.available === 'boolean'
+    && (c.weights_ready === null || typeof c.weights_ready === 'boolean')
+    && (c.weights_source === null || typeof c.weights_source === 'string')
+    && (c.loaded === null || typeof c.loaded === 'boolean')
+    && (c.vram_required_mb === null || typeof c.vram_required_mb === 'number')
+    && typeof c.vram_source === 'string' && typeof c.hint === 'string'));
 check('P3 全部不可达时 vram_free_mb = null', caps.json.vram_free_mb === null);
 
 const unknown = await call('POST', '/api/open/v1/audio/speech', { model: 'no-such', text: 'x' });

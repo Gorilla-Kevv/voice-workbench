@@ -82,27 +82,80 @@ class AsrEngine:
         #: 传错就直接退出。这里的处理原则是**换后端，而不是换语种** ——
         #: 把一段英文音频当中文转是错的（Paraformer 会得到一串似是而非的汉字），
         #: 换成能处理英文的后端才对。
+        #:
+        #: 阶段 44补2 的关键修正：**显式 model 是权威**。先把 model 解析成
+        #: (backend, languages)，再决定要不要换后端；否则 `funasr + ja +
+        #: iic/SenseVoiceSmall` 会被切到 fasterwhisper，model 却仍留在 SenseVoice，
+        #: 最后拿 SenseVoice 的 id 去调 WhisperModel（backend/model 错配）。
         notes: List[str] = []
         target_language = (language or "").strip()
+        model_key = (model or "").strip()
         chosen_backend = (backend or "").strip()
-        if (
-            chosen_backend in catalog.BACKENDS
-            and target_language
-            and target_language not in (catalog.BACKENDS[chosen_backend].get("languages") or [])
-        ):
-            for candidate in ("funasr", "fasterwhisper"):
-                if candidate == chosen_backend:
-                    continue
-                if target_language in (catalog.BACKENDS[candidate].get("languages") or []):
-                    notes.append(
-                        "%s 不支持%s，已改用 %s（换后端，而不是把音频当成另一种语言来转）"
-                        % (chosen_backend, catalog.language_label(target_language), candidate)
-                    )
-                    chosen_backend = candidate
-                    break
+        base_backend = chosen_backend or str(getattr(self.settings, "asr_backend", "") or "") or catalog.DEFAULTS["backend"]
+        model_meta = catalog.resident_model_meta(model_key) if model_key else None
+        language_pool: Optional[List[str]] = None
+
+        if model_meta is not None:
+            model_backend = str(model_meta.get("backend") or "")
+            if chosen_backend and chosen_backend != model_backend:
+                notes.append(
+                    "model %s 属于 %s，已按 model 的 backend 解析（不再静默换后端）"
+                    % (model_key, model_backend)
+                )
+            chosen_backend = model_backend
+            language_pool = list(model_meta.get("languages") or [])
+            if target_language and language_pool and target_language not in language_pool:
+                raise AsrError(
+                    "模型 %s 不支持语种 %s" % (model_meta.get("label") or model_key, target_language),
+                    hint="该模型可用语种：%s。" % "、".join(language_pool),
+                    code="LANGUAGE_UNSUPPORTED",
+                    status=400,
+                    retryable=False,
+                )
+        else:
+            chosen_backend = base_backend
+            # 显式 pin 了未知 model 时也不自动换后端：宁可让加载器报清楚，
+            # 也不要出现「backend 换了、model 没换」的错配。
+            if not model_key and chosen_backend in catalog.BACKENDS and target_language:
+                supported = catalog.BACKENDS[chosen_backend].get("languages") or []
+                if target_language not in supported:
+                    # funasr 先看常驻模型能否承接（SenseVoice 的 en/ja/ko）；
+                    # 能承接就保持 funasr，否则沿用旧的换后端逻辑。
+                    preferred = catalog.default_resident_model(chosen_backend, target_language)
+                    if preferred is not None:
+                        notes.append(
+                            "funasr 的官方脚本不支持%s；由常驻 %s 承接，不切到 fasterwhisper"
+                            % (
+                                catalog.language_label(target_language),
+                                preferred.get("label") or preferred.get("id"),
+                            )
+                        )
+                    else:
+                        for candidate in ("funasr", "fasterwhisper"):
+                            if candidate == chosen_backend:
+                                continue
+                            if target_language in (catalog.BACKENDS[candidate].get("languages") or []):
+                                notes.append(
+                                    "%s 不支持%s，已改用 %s（换后端，而不是把音频当成另一种语言来转）"
+                                    % (chosen_backend, catalog.language_label(target_language), candidate)
+                                )
+                                chosen_backend = candidate
+                                break
+            if chosen_backend == "funasr":
+                preferred = catalog.default_resident_model(
+                    "funasr", target_language or catalog.defaults(self.settings).get("language", "zh")
+                )
+                if preferred is not None:
+                    model_key = str(preferred.get("id") or preferred.get("key") or "")
+                    language_pool = list(preferred.get("languages") or [])
 
         backend2, size2, language2, precision2, extra = catalog.normalize(
-            chosen_backend, size, language, precision, self.settings
+            chosen_backend,
+            size,
+            language,
+            precision,
+            self.settings,
+            language_pool=language_pool,
         )
         notes.extend(extra)
         picked = bootstrap.resolve_channel(self.settings, backend2, channel)
@@ -114,14 +167,19 @@ class AsrEngine:
         # 因为中文上 Paraformer 明显强于 Whisper（推荐文档的结论也是同一个方向）。
         # 与其等 whisper 检测完再切（那会把两个模型换来换去，反而更慢），
         # 不如在参数阶段就决定：语种明确是 zh / yue 时直接用 FunASR。
+        # 显式 model 时不做这个自动切换（尊重调用方 pin 的权重）。
         if (
             backend2 == "fasterwhisper"
             and language2 in {"zh", "yue"}
             and not channel
+            and not model_key
             and bootstrap.resident_support("funasr")["available"]
         ):
+            preferred = catalog.default_resident_model("funasr", language2)
+            model_key = str(preferred.get("id") or preferred.get("key") or "") if preferred else ""
+            language_pool = list(preferred.get("languages") or []) if preferred else None
             backend2, size2, language2, precision2, extra = catalog.normalize(
-                "funasr", "", language2, "", self.settings
+                "funasr", "", language2, "", self.settings, language_pool=language_pool
             )
             notes.extend(extra)
             notes.append(
@@ -130,7 +188,10 @@ class AsrEngine:
             )
             picked = bootstrap.resolve_channel(self.settings, backend2, channel)
 
-        model_id = (model or "").strip() or self._default_model_id(backend2, size2, language2)
+        model_id = model_key or self._default_model_id(backend2, size2, language2)
+        weights = bootstrap.model_weights_status(
+            self.settings, model_id, language2, backend=backend2
+        )
         return {
             "backend": backend2,
             "size": size2,
@@ -140,6 +201,12 @@ class AsrEngine:
             "channel": picked["channel"],
             "reason": picked["reason"],
             "notes": notes,
+            #: 权重就绪（True/False）或未知（None，例如 faster-whisper 的 HF 缓存）；
+            #: 外部调用方与 /api/capabilities 都靠这个字段判断「能不能直接跑」。
+            "weights_ready": weights.get("ready"),
+            "weights_source": weights.get("source") or "",
+            "weights_path": weights.get("path") or "",
+            "weights_hint": weights.get("hint") or "",
             "key": (backend2, size2, language2, precision2, model_id, picked["channel"]),
         }
 
@@ -207,6 +274,8 @@ class AsrEngine:
             "model": self._config.get("model"),
             "channel": self._config.get("channel"),
             "reason": self._config.get("reason", ""),
+            "weights_ready": self._config.get("weights_ready"),
+            "weights_source": self._config.get("weights_source"),
             "device": self._device or None,
             "funasr_source": self._funasr_source or None,
             "held_s": round(time.time() - self._loaded_at, 1) if self._loaded_at else 0.0,
@@ -221,6 +290,16 @@ class AsrEngine:
     def _ensure_resident(self, config: Dict[str, Any]) -> Any:
         if self._model is not None and self._key == config["key"]:
             return self._model
+        # 权重未就绪时在卸载旧模型之前就拒绝：既不会白丢当前模型，也不会把
+        # 一次「缺权重」误报成上游加载失败。
+        if config.get("weights_ready") is False:
+            raise AsrError(
+                "模型权重未就绪：%s" % config.get("model"),
+                hint=str(config.get("weights_hint") or "先下载模型权重后重试。"),
+                code="WEIGHTS_MISSING",
+                status=503,
+                retryable=False,
+            )
         self.unload()
         backend = config["backend"]
         model_id = config["model"]
@@ -245,30 +324,46 @@ class AsrEngine:
     def _build_funasr(self, model_id: str, language: str = "zh") -> Any:
         """构造 FunASR 模型。
 
-        优先吃整合包里**已下载**的权重（`tools/asr/models/`），
-        这也是官方 `funasr_asr.py::create_model()` 的做法 —— 同样的权重不必下两遍。
-        本地没有时才用官方别名（FunASR 会自动组合 VAD 与标点，但需要联网）。
+        优先吃整合包里**已下载**的权重（`tools/asr/models/`），其次吃
+        ModelScope 缓存里的完整快照；两者都没有时抛 `WEIGHTS_MISSING`，
+        不再靠官方别名静默联网下载（下载耗时不可控，且与「可用」语义冲突）。
         """
         auto_model = bootstrap.import_funasr()
         local = bootstrap.funasr_local_models(self.settings)
         kwargs: Dict[str, Any] = {}
+        weights = bootstrap.model_weights_status(self.settings, model_id, language)
 
         if model_id == "paraformer-zh":
-            if language == "yue":
-                target, revision = local.get("asr_yue"), "master"
-            else:
-                target, revision = local.get("asr"), "v2.0.4"
-            if target:
-                # 逐字参考文本要的正是 VAD + 标点：少了 VAD，短音频的静音段最容易出幻觉文本
-                kwargs.update(model=target, model_revision=revision)
-                if local.get("vad"):
-                    kwargs.update(vad_model=local["vad"], vad_model_revision="v2.0.4")
-                if local.get("punc"):
-                    kwargs.update(punc_model=local["punc"], punc_model_revision="v2.0.4")
-                self._funasr_source = "local"
-            else:
-                kwargs.update(model="paraformer-zh", vad_model="fsmn-vad", punc_model="ct-punc")
-                self._funasr_source = "remote"
+            target, revision = bootstrap.funasr_model_path(self.settings, model_id, language)
+            if target is None:
+                raise AsrError(
+                    "Paraformer-zh 权重未就绪",
+                    hint=str(weights.get("hint") or "先把 FunASR 权重放进 tools/asr/models。"),
+                    code="WEIGHTS_MISSING",
+                    status=503,
+                    retryable=False,
+                )
+            # 逐字参考文本要的正是 VAD + 标点：少了 VAD，短音频的静音段最容易出幻觉文本
+            kwargs.update(model=str(target), model_revision=revision)
+            if local.get("vad"):
+                kwargs.update(vad_model=local["vad"], vad_model_revision="v2.0.4")
+            if local.get("punc"):
+                kwargs.update(punc_model=local["punc"], punc_model_revision="v2.0.4")
+            self._funasr_source = str(weights.get("source") or "local")
+        elif model_id in {"iic/SenseVoiceSmall", "sensevoice-small"}:
+            target, _ = bootstrap.funasr_model_path(self.settings, model_id)
+            if target is None:
+                raise AsrError(
+                    "SenseVoice-Small 权重未就绪",
+                    hint=str(weights.get("hint") or "先下载 SenseVoice-Small 权重。"),
+                    code="WEIGHTS_MISSING",
+                    status=503,
+                    retryable=False,
+                )
+            # 耳语/ASMR 场景刻意不挂 VAD：VAD 会把气声段落当静音切掉；
+            # 标点也未接，调用方需要时自行后处理。
+            kwargs.update(model=str(target))
+            self._funasr_source = str(weights.get("source") or "local")
         else:
             kwargs.update(model=model_id)
             self._funasr_source = "remote"

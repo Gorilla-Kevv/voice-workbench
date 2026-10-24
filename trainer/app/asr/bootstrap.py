@@ -22,8 +22,9 @@ ASR 与另外几个板块（GPT-SoVITS / RVC / DDSP-SVC / UVR5）最容易踩空
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..errors import EnvironmentError_, SovitsError
 from . import catalog
@@ -41,6 +42,9 @@ __all__ = [
     "import_funasr",
     "import_whisper",
     "funasr_local_models",
+    "funasr_model_path",
+    "model_weights_status",
+    "resident_model_status",
 ]
 
 #: 后端 → 整合包里的脚本语义标签（对应 `discovery.TOOL_STEP_LAYOUT`）。
@@ -127,6 +131,60 @@ def probe_module(module: str) -> Optional[str]:
         return "%s: %s" % (exc.__class__.__name__, text) if text else exc.__class__.__name__
 
 
+def _is_complete_model_dir(path: Path) -> bool:
+    """目录里是否是一份可加载的 FunASR 快照（权重 + config.yaml）。"""
+    try:
+        if not path.is_dir():
+            return False
+        has_weights = any(
+            (path / name).is_file()
+            for name in ("model.pt", "model.pb", "model.bin", "model.safetensors")
+        )
+        return has_weights and (path / "config.yaml").is_file()
+    except OSError:
+        return False
+
+
+def _pick_complete_model(base: Path, names: List[str], glob: str = "") -> str:
+    for name in names:
+        candidate = base / name
+        if _is_complete_model_dir(candidate):
+            return str(candidate)
+    if glob:
+        try:
+            for path in sorted(base.glob(glob)):
+                if _is_complete_model_dir(path):
+                    return str(path)
+        except OSError:
+            pass
+    return ""
+
+
+def _modelscope_model_dir(model_id: str) -> Optional[Path]:
+    """ModelScope 缓存里的模型快照（只探测，不下载）。
+
+    `MODELSCOPE_CACHE` 在本机是 `D:\\AI_Cache\\modelscope`，快照落在
+    `models/<org>/<name>`；同时兼容默认 `~/.cache/modelscope/{hub,}/...`。
+    """
+    roots: List[Path] = []
+    env = os.environ.get("MODELSCOPE_CACHE", "").strip()
+    if env:
+        base = Path(env).expanduser()
+        roots.extend([base / "models", base / "hub" / "models", base / "hub"])
+    roots.extend(
+        [
+            Path.home() / ".cache" / "modelscope" / "hub" / "models",
+            Path.home() / ".cache" / "modelscope" / "hub",
+            Path.home() / ".cache" / "modelscope" / "models",
+        ]
+    )
+    for root in roots:
+        candidate = root / model_id
+        if _is_complete_model_dir(candidate):
+            return candidate
+    return None
+
+
 def funasr_local_models(settings: Any) -> Dict[str, str]:
     """整合包里已下载的 FunASR 权重（`tools/asr/models/`）。
 
@@ -135,8 +193,10 @@ def funasr_local_models(settings: Any) -> Dict[str, str]:
     实测整合包（v2pro-20250604）里这三个目录已经存在 —— 常驻通道直接吃这些
     本地路径，就不必再从 ModelScope 下一遍（同一套权重，两三百 MB）。
 
-    返回 `{"asr": 路径 或 "", "asr_yue": …, "vad": …, "punc": …}`；
-    缺哪一项就给空串，由调用方决定是否回落到官方别名。
+    SenseVoice 官方脚本不会自动下载（`create_model()` 只拉 Paraformer 三件套），
+    所以这里单独探测用户按 README/错误 hint 放进来的快照目录。
+
+    返回 `{"asr", "asr_yue", "vad", "punc", "sensevoice"}`；缺哪一项就给空串。
     """
     found = installation()
     if found is None:
@@ -157,7 +217,92 @@ def funasr_local_models(settings: Any) -> Dict[str, str]:
         "asr_yue": pick("speech_UniASR"),
         "vad": pick("speech_fsmn_vad"),
         "punc": pick("punc_ct-transformer"),
+        "sensevoice": _pick_complete_model(
+            base,
+            ["SenseVoiceSmall", "iic/SenseVoiceSmall", "speech_sensevoice_small"],
+            glob="*SenseVoice*",
+        ),
     }
+
+
+def funasr_model_path(settings: Any, model_id: str, language: str = "") -> Tuple[Optional[Path], str]:
+    """解析 FunASR 模型的本地路径。返回 `(path, source)`。
+
+    source ∈ local / modelscope / missing / remote。`remote` 只给不认识的
+    自定义 model id（仍允许 FunASR 自己去拉），已知模型缺权重一律 `missing`，
+    由调用方转成 `WEIGHTS_MISSING`，不再静默联网下载。
+    """
+    local = funasr_local_models(settings)
+    wanted = (model_id or "").strip()
+    if wanted == "paraformer-zh":
+        target = local.get("asr_yue") if (language or "").strip() == "yue" else local.get("asr")
+        if target and _is_complete_model_dir(Path(target)):
+            return Path(target), "local"
+        return None, "missing"
+    if wanted in {"iic/SenseVoiceSmall", "sensevoice-small"}:
+        target = local.get("sensevoice")
+        if target and _is_complete_model_dir(Path(target)):
+            return Path(target), "local"
+        cached = _modelscope_model_dir("iic/SenseVoiceSmall")
+        if cached is not None:
+            return cached, "modelscope"
+        return None, "missing"
+    return None, "remote"
+
+
+def model_weights_status(
+    settings: Any,
+    model_id: str,
+    language: str = "",
+    backend: str = "funasr",
+) -> Dict[str, Any]:
+    """某个常驻模型的权重就绪状态（不加载、不下载）。"""
+    if (backend or "").strip() != "funasr":
+        return {"ready": None, "source": "remote", "path": "", "hint": ""}
+    path, source = funasr_model_path(settings, model_id, language)
+    if source == "remote":
+        return {"ready": None, "source": source, "path": "", "hint": ""}
+    hint = ""
+    if path is None:
+        if model_id in {"iic/SenseVoiceSmall", "sensevoice-small"}:
+            hint = (
+                "下载 SenseVoice-Small 后再试："
+                "python -c \"from modelscope import snapshot_download; "
+                "snapshot_download('iic/SenseVoiceSmall')\"（会落到 MODELSCOPE_CACHE）；"
+                "或把快照目录放到 <GPT-SoVITS>/tools/asr/models/SenseVoiceSmall"
+                "（需 model.pt + config.yaml）。"
+            )
+        elif model_id == "paraformer-zh":
+            hint = (
+                "把 speech_paraformer-large / speech_fsmn_vad / punc_ct-transformer 放到 "
+                "<GPT-SoVITS>/tools/asr/models，或运行官方 tools/asr/funasr_asr.py 一次以下载。"
+            )
+    return {"ready": path is not None, "source": source, "path": str(path) if path else "", "hint": hint}
+
+
+def resident_model_status(settings: Any) -> Dict[str, Dict[str, Any]]:
+    """`/v1/asr/catalog` 的常驻模型状态（网关 capability discovery 消费）。"""
+    result: Dict[str, Dict[str, Any]] = {}
+    for backend, items in catalog.RESIDENT_MODELS.items():
+        for item in items:
+            model_id = str(item.get("id") or "")
+            if not model_id:
+                continue
+            status = model_weights_status(settings, model_id, backend=backend)
+            vram = catalog.required_vram_mb(backend, "large", "float32", model_id)
+            result[model_id] = {
+                "id": model_id,
+                "key": str(item.get("key") or ""),
+                "backend": backend,
+                "label": item.get("label") or model_id,
+                "languages": list(item.get("languages") or []),
+                "weights_ready": status["ready"],
+                "weights_source": status["source"],
+                "weights_path": status["path"],
+                "weights_hint": status["hint"],
+                "vram_required_mb": vram,
+            }
+    return result
 
 
 def module_present(module: str) -> bool:

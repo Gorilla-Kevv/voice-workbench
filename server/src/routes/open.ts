@@ -8,10 +8,12 @@ import { synthLimiter } from '../middleware/rateLimit.js';
 import { resourceArbiter } from '../services/arbiter.js';
 import {
   CAPABILITIES,
+  capabilityAvailability,
   findCapability,
   toOpenAiModel,
   type CapabilityKind,
   type CapabilitySpec,
+  type ResidentModelStatus,
 } from '../services/capabilityCatalog.js';
 import { synthesize, PRESET_VOICE_IDS } from '../services/mimo.js';
 import { downloadUpstream, requestUpstream, RuntimeUnreachableError } from '../services/openClients.js';
@@ -614,10 +616,16 @@ interface RuntimeStatus {
   vram: { free_mb: number | null; total_mb: number | null };
   /** 各能力项的服务端显存门槛（坑 19：数值全部来自服务端字段） */
   vramRequired: { [K in CapabilityKind]?: number | null };
+  /** ASR 常驻模型的权重就绪与参数化门槛（trainer /v1/asr/catalog） */
+  asrModels?: Record<string, ResidentModelStatus>;
 }
 
 const STATUS_CACHE_MS = 5_000;
 let statusCache: { at: number; value: Record<string, RuntimeStatus> } | null = null;
+
+function capabilityFallbackVram(spec: CapabilitySpec, status: RuntimeStatus): number | null {
+  return spec.kind in status.vramRequired ? status.vramRequired[spec.kind] ?? null : null;
+}
 
 async function fetchHealth(baseUrl: string, runtime: string): Promise<Record<string, unknown> | null> {
   try {
@@ -638,9 +646,10 @@ async function collectRuntimeStatus(): Promise<Record<string, RuntimeStatus>> {
     irodoriSummary(),
     gsv5Summary(),
   ]);
-  const [sovitsEngines, neteaseHealth, indexttsHealth, indexttsCatalog, irodoriHealth, gsv5Health, gsv5Catalog] =
+  const [sovitsEngines, asrCatalog, neteaseHealth, indexttsHealth, indexttsCatalog, irodoriHealth, gsv5Health, gsv5Catalog] =
     await Promise.all([
       requestUpstream(baseUrlOf('sovits'), 'sovits', { method: 'GET', path: '/v1/engines', timeoutMs: 5_000 }).catch(() => null),
+      requestUpstream(baseUrlOf('sovits'), 'sovits', { method: 'GET', path: '/v1/asr/readiness', timeoutMs: 5_000 }).catch(() => null),
       fetchHealth(baseUrlOf('netease'), 'netease'),
       fetchHealth(baseUrlOf('indextts'), 'indextts'),
       requestUpstream(baseUrlOf('indextts'), 'indextts', { method: 'GET', path: '/v1/catalog', timeoutMs: 5_000 }).catch(() => null),
@@ -662,6 +671,10 @@ async function collectRuntimeStatus(): Promise<Record<string, RuntimeStatus>> {
       if (name && mb != null) sovitsRequired[name] = mb;
     }
   }
+  const asrModels =
+    asrCatalog && asrCatalog.ok
+      ? ((asrCatalog.data as Params).resident_model_status as Record<string, ResidentModelStatus> | undefined) ?? {}
+      : {};
   const neteaseLoaded = neteaseHealth
     ? Boolean((neteaseHealth.engines as Params | undefined)?.confucius_tts
         ? ((neteaseHealth.engines as Params).confucius_tts as Params).loaded === true
@@ -695,6 +708,7 @@ async function collectRuntimeStatus(): Promise<Record<string, RuntimeStatus>> {
         svc: sovitsRequired.svc ?? null,
         separation: sovitsRequired.uvr5 ?? null,
       },
+      asrModels,
     },
     netease: {
       reachable: Boolean((netease as Params).reachable),
@@ -770,8 +784,13 @@ export async function capabilitiesHandler(_req: import('express').Request, res: 
     const runtimeStatus = status[spec.runtime];
     const loaded =
       spec.kind in runtimeStatus.loadedByKind ? runtimeStatus.loadedByKind[spec.kind] : null;
-    const available =
-      spec.runtime === 'mimo' ? Boolean(config.mimoApiKey) : runtimeStatus.reachable;
+    const availability = capabilityAvailability(
+      spec,
+      runtimeStatus.reachable,
+      runtimeStatus.asrModels,
+      capabilityFallbackVram(spec, runtimeStatus),
+      spec.runtime === 'mimo' ? Boolean(config.mimoApiKey) : undefined,
+    );
     return {
       id: spec.id,
       label: spec.label,
@@ -783,9 +802,11 @@ export async function capabilitiesHandler(_req: import('express').Request, res: 
       fixed_params: spec.fixed_params,
       extra_params: spec.extra_params,
       endpoint: `POST /api/open/${spec.kind === 'tts' ? 'v1/audio/speech' : spec.kind === 'asr' ? 'v1/audio/transcriptions' : spec.kind === 'vc' ? 'v1/audio/convert' : spec.kind === 'svc' ? 'v1/audio/singing-convert' : 'v1/audio/separate'}`,
-      available,
+      available: availability.available,
       loaded: loaded ?? null,
-      vram_required_mb: spec.kind in runtimeStatus.vramRequired ? runtimeStatus.vramRequired[spec.kind] ?? null : null,
+      weights_ready: availability.weights_ready,
+      weights_source: availability.weights_source,
+      vram_required_mb: availability.vram_required_mb,
       vram_source: spec.vram_source,
       hint: spec.hint,
     };
@@ -801,12 +822,17 @@ export async function capabilitiesHandler(_req: import('express').Request, res: 
 openRouter.get('/v1/models', async (_req, res, next) => {
   try {
     const status = await collectRuntimeStatus();
-    const data = CAPABILITIES.map((spec) =>
-      toOpenAiModel(
+    const data = CAPABILITIES.map((spec) => {
+      const runtimeStatus = status[spec.runtime];
+      const availability = capabilityAvailability(
         spec,
-        spec.runtime === 'mimo' ? Boolean(config.mimoApiKey) : status[spec.runtime].reachable,
-      ),
-    );
+        runtimeStatus.reachable,
+        runtimeStatus.asrModels,
+        capabilityFallbackVram(spec, runtimeStatus),
+        spec.runtime === 'mimo' ? Boolean(config.mimoApiKey) : undefined,
+      );
+      return toOpenAiModel(spec, availability.available);
+    });
     sendJson(res, { object: 'list', data });
   } catch (error) {
     next(error);

@@ -6,6 +6,23 @@
 
 ---
 
+## [2026-10-25 00:31 BY Qoder] 阶段 44补2：ASR SenseVoice 路由与权重就绪修复
+
+- **文件改动**：
+  1. `trainer/app/asr/catalog.py`（`resident_model_meta` / `backend_model_languages` / `default_resident_model`；`normalize(language_pool=...)`）；
+  2. `trainer/app/asr/pipeline.py`（resolve 改为显式 model 权威、显式模型不匹配语种 400、`_ensure_resident` 权重预检、`_build_funasr` 本地/ModelScope 路径、SenseVoice 不挂 VAD/punc）；
+  3. `trainer/app/asr/bootstrap.py`（SenseVoice 本地/ModelScope 探测、`funasr_model_path` / `model_weights_status` / `resident_model_status`）；
+  4. `trainer/app/routers/asr.py`（`GET /v1/asr/readiness`、catalog 加 `resident_model_status`、acquire 之前 `WEIGHTS_MISSING` 预检）；
+  5. `server/src/services/capabilityCatalog.ts` + `server/src/routes/open.ts`（`weights_key`、`capabilityAvailability`、ASR `available=可达 && weights_ready===true`、`weights_ready/weights_source`、SenseVoice 1536/无 size、fetch `/v1/asr/readiness`）；
+  6. `app/src/types/asr.ts`（weights 字段 additive）；`.tmp/verify_asr_sensevoice.py`（新 14 项）与 `.tmp/verify_open_gateway.mts`（25→29 项）；
+  7. 文档：`docs/ASR.md` §3.3、`docs/OPEN-API.md`、`PROGRESS.md`、`HANDOFF.md`（坑 97~99）。
+- **原因**：外部 Agent 提交 `docs/sensevoice-small-diagnosis.md`。复核确认报告总判断（SenseVoice 不可用、available 误报、元数据不一致）成立，但其「ja 被 normalize 改回 zh、落到 Paraformer」的根因判断错误；真实故障是 resolve 先换 backend 到 fasterwhisper、显式 model 仍保留 SenseVoice，最后走错加载器。按用户「开始按上面的修」实施。
+- **验证**：`.tmp/verify_asr_sensevoice.py` **14/14**（含 ja 路由 / 显式模型保护 / 缺权重 503 / readiness / 伪造本地快照 / 引擎层安全网；不加载模型）；`.tmp/verify_asr_gate.py` **25/25**；`.tmp/verify_open_gateway.mts` **29/29**；`npm run typecheck` / `npm run build` 全绿。**没有下载 SenseVoice 权重、没有真实加载/CER**（本机仍缺 `iic/SenseVoiceSmall`，约 1GB 待用户点头）；GPU 当前被 llama-server 等占用（free 969MB）。
+- **对其他 Agent 的影响**：ASR `resolve` 的语种/后端语义变化（显式 model 权威；funasr 的 ja/en/ko/yue 由 SenseVoice 承接；显式模型与语种不匹配返回 400 `LANGUAGE_UNSUPPORTED`）；ASR 固定模型缺权重返回 503 `WEIGHTS_MISSING`；`/api/capabilities` ASR 项新增 `weights_ready/weights_source` 且 `available` 更严格；`/api/open/v1/models` 同步。未启停常驻服务；未新增模型文件。
+- **回滚方式**：git 还原上述代码/文档与两个 `.tmp` 回归锁；无数据迁移；已存在的 ModelScope 缓存不受影响。
+
+---
+
 ## [2026-10-24 22:43 BY Qoder] ASR 已落地模型与显存画像（只补文档/注释，无行为改动）
 
 - **文件改动**：`docs/ASR.md` 新增 §3.2「已落地模型与显存画像」；`trainer/app/asr/catalog.py` 的 `REQUIRED_VRAM_MB` 后补一段实测注释。`.tmp/measure_asr_*.py` / `measure_whisper_turbo_fp32.py` 为一次性测量脚本（未入库）。

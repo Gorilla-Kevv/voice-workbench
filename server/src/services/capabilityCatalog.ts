@@ -43,6 +43,56 @@ export interface CapabilitySpec {
   /** 显存门槛从哪个服务端字段取（坑 19：网关不硬编码数字） */
   vram_source: string;
   hint: string;
+  /** ASR 能力固定的权重模型 id（/v1/asr/catalog 的 resident_model_status 键）；null = 不按单模型判断 */
+  weights_key?: string | null;
+}
+
+/** 服务端 `/v1/asr/catalog → resident_model_status` 的单模型状态 */
+export interface ResidentModelStatus {
+  weights_ready?: boolean | null;
+  weights_source?: string;
+  vram_required_mb?: number | null;
+}
+
+export interface CapabilityAvailability {
+  available: boolean;
+  weights_ready: boolean | null;
+  vram_required_mb: number | null;
+  weights_source: string | null;
+}
+
+/**
+ * 能力可用性：运行时可达 **且**（固定模型时）权重就绪，才算可用。
+ *
+ * 之前 `/api/capabilities` 与 `/api/open/v1/models` 都只看 runtime.reachable，
+ * 于是 SenseVoice 权重缺失时也报 available=true。这里把权重状态作为第二道门：
+ * 固定 model 的能力必须**明确 ready=true** 才算 available；状态缺失（null）
+ * 也按不可用处理，宁可让调用方看到 false 并去查 weights_ready，不报假阳性。
+ * 无固定 model 的能力（如 faster-whisper）仍按运行时可达判断。
+ */
+export function capabilityAvailability(
+  spec: CapabilitySpec,
+  reachable: boolean,
+  models?: Record<string, ResidentModelStatus>,
+  fallbackVram?: number | null,
+  mimoReady?: boolean,
+): CapabilityAvailability {
+  if (spec.runtime === 'mimo') {
+    return {
+      available: Boolean(mimoReady),
+      weights_ready: null,
+      vram_required_mb: fallbackVram ?? null,
+      weights_source: null,
+    };
+  }
+  const model = spec.weights_key ? models?.[spec.weights_key] : undefined;
+  const weightsReady = typeof model?.weights_ready === 'boolean' ? model.weights_ready : null;
+  return {
+    available: reachable && (spec.weights_key ? weightsReady === true : true),
+    weights_ready: weightsReady,
+    vram_required_mb: model?.vram_required_mb ?? fallbackVram ?? null,
+    weights_source: model?.weights_source ?? null,
+  };
 }
 
 export const CAPABILITIES: CapabilitySpec[] = [
@@ -150,8 +200,9 @@ export const CAPABILITIES: CapabilitySpec[] = [
     fixed_params: { backend: 'funasr', size: 'large', model: 'paraformer-zh' },
     extra_params: ['language', 'use_cache'],
     arbiter_engine: 'asr',
-    vram_source: 'sovits GET /v1/engines → engines[name=asr].required_mb',
-    hint: '中文转写首选。准入门槛按「模型×尺寸×精度」参数化（阶段 42）。',
+    vram_source: 'sovits GET /v1/asr/readiness → resident_model_status[paraformer-zh].vram_required_mb',
+    hint: '中文转写首选。本地权重就绪时 available=true；显存门槛 2048MB。',
+    weights_key: 'paraformer-zh',
   },
   {
     id: 'sensevoice-small',
@@ -162,11 +213,13 @@ export const CAPABILITIES: CapabilitySpec[] = [
     ref: { voice_id_param: null, path_param: null },
     upstream: { path: '/v1/asr/transcribe', style: 'form' },
     audio_input_param: 'source',
-    fixed_params: { backend: 'funasr', size: 'large', model: 'iic/SenseVoiceSmall' },
+    // SenseVoice 没有 size 概念；留空，由服务端的模型解析决定。
+    fixed_params: { backend: 'funasr', model: 'iic/SenseVoiceSmall' },
     extra_params: ['use_cache'],
     arbiter_engine: 'asr',
-    vram_source: 'sovits GET /v1/engines → engines[name=asr].required_mb',
-    hint: '多语种轻量档；本机权重未下载时上游会报 WEIGHTS_MISSING（available 也会如实显示 false）。',
+    vram_source: 'sovits GET /v1/asr/readiness → resident_model_status[iic/SenseVoiceSmall].vram_required_mb',
+    hint: '多语种轻量档（日/英/韩/粤都走它，不挂 VAD，适合耳语）。权重未就绪时 available=false / weights_ready=false，调用返回 WEIGHTS_MISSING；按错误 hint 下载后重试。显存门槛 1536MB。',
+    weights_key: 'iic/SenseVoiceSmall',
   },
   {
     id: 'faster-whisper',
@@ -180,8 +233,8 @@ export const CAPABILITIES: CapabilitySpec[] = [
     fixed_params: { backend: 'fasterwhisper' },
     extra_params: ['size', 'precision', 'language', 'use_cache'],
     arbiter_engine: 'asr',
-    vram_source: 'sovits GET /v1/engines → engines[name=asr].required_mb',
-    hint: 'size ∈ medium/large-v3/large-v3-turbo（尺寸准入门槛按参数化表取，large-v3 fp16 需 ~4.6GB）。',
+    vram_source: 'sovits GET /v1/engines → engines[name=asr].required_mb（无固定 model；实际随 size/precision 变，调用前用 /v1/asr/plan）',
+    hint: 'size ∈ medium/large-v3/large-v3-turbo；本机已缓存 small 与 large-v3-turbo，medium/large 首次使用下载。门槛随 size/precision 变（turbo fp16 3072 / int8 2560；large-v3 fp32 8192）。',
   },
   {
     id: 'r2t2-offline',
