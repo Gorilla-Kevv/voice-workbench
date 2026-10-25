@@ -78,6 +78,9 @@ export interface AsrResidentModelStatus {
   weights_source: string;
   weights_path: string;
   weights_hint: string;
+  /** 专用运行时就绪（SenseVoice 需要独立 FunASR venv） */
+  runtime_ready: boolean | null;
+  runtime_hint: string;
   vram_required_mb: number | null;
 }
 
@@ -143,6 +146,8 @@ export interface AsrResolved {
   weights_source?: string;
   weights_path?: string;
   weights_hint?: string;
+  runtime_ready?: boolean | null;
+  runtime_hint?: string;
 }
 
 export interface AsrSegment {

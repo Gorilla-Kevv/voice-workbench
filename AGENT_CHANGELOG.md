@@ -6,6 +6,23 @@
 
 ---
 
+## [2026-10-25 11:41 BY Qoder] 阶段 44补2续：SenseVoice 权重落地 + 独立 venv/worker + GPU 画像
+
+- **文件改动**：
+  1. 新增 `trainer/app/asr/sensevoice_client.py`（常驻 worker 客户端：JSON-lines、stderr 日志、超时/退出）与 `trainer/app/asr/sensevoice_worker.py`（fd1 协议隔离、FunASR 1.3.30、本地快照、`use_itn=False`）；
+  2. `trainer/app/asr/pipeline.py`（SenseVoice 走 worker、`runtime_ready`/`SENSEVOICE_RUNTIME_MISSING`、worker key 去 language、`_funasr_generate` 传 language、unload 调 worker.shutdown、status 加 runtime 字段）；`trainer/app/asr/bootstrap.py`（`sensevoice_runtime()`、runtime_ready/hint、`resident_support` 改 find_spec 不 import 老 funasr）；`trainer/app/routers/asr.py`（acquire 前检查 runtime）；`trainer/app/asr/catalog.py`（SenseVoice 实测注释）；
+  3. `server/src/services/capabilityCatalog.ts` + `server/src/routes/open.ts`（`runtime_ready` 参与 available，响应加字段）；`app/src/types/asr.ts`（runtime 字段）；
+  4. `.gitignore`（`trainer/sensevoice-venv/`）；
+  5. 新建 **`trainer/sensevoice-venv/`**（py3.12.10 + torch 2.7.1+cu128 + funasr 1.3.30 + modelscope 1.40.2 + transformers 4.57.6 + tokenizers 0.22.2 + huggingface_hub 0.36.2，约 6.1GB，gitignore；用 gsv5 的 uv 缓存安装）；
+  6. 下载 **`GPT-SoVITS-v2pro-20250604/tools/asr/models/SenseVoiceSmall/`**（ModelScope `iic/SenseVoiceSmall`，897MB；model.pt + config.yaml + am.mvn + BPE + tokens；整合包目录 gitignore）；
+  7. 回归/冒烟：`.tmp/verify_asr_sensevoice.py`（权重就绪 12/12 + 2 SKIP）、`.tmp/smoke_sensevoice_worker.py`、`.tmp/smoke_sensevoice_http.py`、`.tmp/verify_open_gateway.mts`（30/30）；文档 `docs/ASR.md`、`docs/OPEN-API.md`、`PROGRESS.md`、`HANDOFF.md`（坑 100）。
+- **原因**：用户选择「方式 B（本地快照）+ 新建独立 SenseVoice venv」并授权 GPU 实测。真机发现整合包 FunASR **1.0.27** 只注册旧 `SenseVoice`（Whisper 架构），不支持当前 `SenseVoiceSmall`；`trust_remote_code` 在 1.0.27 无效。为避免升级整合包影响 GPT-SoVITS，新建独立 venv + 常驻 worker。
+- **验证**：GPU（RTX 4060 Laptop，free 6313MB 窗口）worker 加载后常驻增量 **+1050MB**、峰值 **+1099MB**、最低 free 5214MB；首载 23.5s，热态 zh/en 0.27~0.29s（ja 首条 warmup 约 6s）；真实 ja/zh/en 样例正确；CPU 加载 6.4s、RTF 0.17~0.26。HTTP `/v1/asr/models/load`→`transcribe`(ja)→`unload` 全 200；ASR 门槛 25/25、能力网关 30/30、typecheck/build 全绿。**llama-server 按用户选择测完未自动重启**；GPU 已释放回 free ~6001MB。
+- **对其他 Agent 的影响**：SenseVoice 现在可用（`available` 需 weights_ready+runtime_ready）；新增约 6.1GB venv + 897MB 权重；可用 `SENSEVOICE_PYTHON` 覆盖解释器；worker 是 trainer 按需拉起的常驻子进程，不是独立网络服务；不要升级整合包 funasr（会波及 GPT-SoVITS ASR 训练/官方脚本）。
+- **回滚方式**：删除 `trainer/sensevoice-venv/` 与 `SenseVoiceSmall/`（进回收站并留痕）、还原代码/文档/回归；无数据库迁移。
+
+---
+
 ## [2026-10-25 00:31 BY Qoder] 阶段 44补2：ASR SenseVoice 路由与权重就绪修复
 
 - **文件改动**：

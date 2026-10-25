@@ -45,6 +45,7 @@ __all__ = [
     "funasr_model_path",
     "model_weights_status",
     "resident_model_status",
+    "sensevoice_runtime",
 ]
 
 #: 后端 → 整合包里的脚本语义标签（对应 `discovery.TOOL_STEP_LAYOUT`）。
@@ -225,6 +226,28 @@ def funasr_local_models(settings: Any) -> Dict[str, str]:
     }
 
 
+def sensevoice_runtime() -> Tuple[Optional[Path], str]:
+    """SenseVoice 独立解释器（FunASR 1.3.30）的位置。
+
+    整合包 FunASR 1.0.27 不注册 `SenseVoiceSmall`，所以 SenseVoice 必须跑在
+    `trainer/sensevoice-venv`（或 SENSEVOICE_PYTHON 指定的兼容解释器）里。
+    这里只查文件存在性，不 import、不启动进程；真正拉起在 `pipeline._build_funasr`。
+    """
+    env = os.environ.get("SENSEVOICE_PYTHON", "").strip()
+    candidates: List[Path] = []
+    if env:
+        candidates.append(Path(env).expanduser())
+    # trainer/app/asr/bootstrap.py -> trainer/sensevoice-venv
+    candidates.append(Path(__file__).resolve().parents[2] / "sensevoice-venv" / "Scripts" / "python.exe")
+    for path in candidates:
+        if path.is_file():
+            return path, ""
+    return None, (
+        "未找到 SenseVoice 运行时：创建 trainer/sensevoice-venv（py3.12 + funasr 1.3.30 + "
+        "torch cu128），或设置 SENSEVOICE_PYTHON 指向兼容解释器。"
+    )
+
+
 def funasr_model_path(settings: Any, model_id: str, language: str = "") -> Tuple[Optional[Path], str]:
     """解析 FunASR 模型的本地路径。返回 `(path, source)`。
 
@@ -258,10 +281,32 @@ def model_weights_status(
 ) -> Dict[str, Any]:
     """某个常驻模型的权重就绪状态（不加载、不下载）。"""
     if (backend or "").strip() != "funasr":
-        return {"ready": None, "source": "remote", "path": "", "hint": ""}
+        return {
+            "ready": None,
+            "source": "remote",
+            "path": "",
+            "hint": "",
+            "runtime_ready": None,
+            "runtime_hint": "",
+        }
     path, source = funasr_model_path(settings, model_id, language)
     if source == "remote":
-        return {"ready": None, "source": source, "path": "", "hint": ""}
+        return {
+            "ready": None,
+            "source": source,
+            "path": "",
+            "hint": "",
+            "runtime_ready": None,
+            "runtime_hint": "",
+        }
+    runtime_ready: Optional[bool] = None
+    runtime_hint = ""
+    if model_id in {"iic/SenseVoiceSmall", "sensevoice-small"}:
+        python, runtime_hint = sensevoice_runtime()
+        runtime_ready = python is not None
+    elif model_id == "paraformer-zh":
+        # Paraformer 仍走整合包内 FunASR 1.0.27（已实测可加载）
+        runtime_ready = True
     hint = ""
     if path is None:
         if model_id in {"iic/SenseVoiceSmall", "sensevoice-small"}:
@@ -277,7 +322,14 @@ def model_weights_status(
                 "把 speech_paraformer-large / speech_fsmn_vad / punc_ct-transformer 放到 "
                 "<GPT-SoVITS>/tools/asr/models，或运行官方 tools/asr/funasr_asr.py 一次以下载。"
             )
-    return {"ready": path is not None, "source": source, "path": str(path) if path else "", "hint": hint}
+    return {
+        "ready": path is not None,
+        "source": source,
+        "path": str(path) if path else "",
+        "hint": hint,
+        "runtime_ready": runtime_ready,
+        "runtime_hint": runtime_hint,
+    }
 
 
 def resident_model_status(settings: Any) -> Dict[str, Dict[str, Any]]:
@@ -300,6 +352,8 @@ def resident_model_status(settings: Any) -> Dict[str, Dict[str, Any]]:
                 "weights_source": status["source"],
                 "weights_path": status["path"],
                 "weights_hint": status["hint"],
+                "runtime_ready": status.get("runtime_ready"),
+                "runtime_hint": status.get("runtime_hint") or "",
                 "vram_required_mb": vram,
             }
     return result
@@ -320,12 +374,19 @@ def module_present(module: str) -> bool:
 
 
 def resident_support(backend: str) -> Dict[str, Any]:
-    """常驻通道的可用性。"""
+    """常驻通道的可用性。
+
+    只查包在不在（`find_spec`），**不 import**：SenseVoice 的真正加载在新 venv 的
+    worker 里，老 funasr 的 import 要几十秒；`resolve()`/`/health` 不能被它拖慢。
+    包在但坏了的情况由真正加载时的结构化错误兜底。
+    """
     module = catalog.resident_channel_module(backend)
     if not module:
         return {"available": False, "module": "", "error": "该后端没有常驻通道"}
+    if module_present(module):
+        return {"available": True, "module": module, "error": ""}
     error = probe_module(module)
-    return {"available": error is None, "module": module, "error": error or ""}
+    return {"available": False, "module": module, "error": error or "未安装"}
 
 
 def _unavailable(backend: str, resident: Dict[str, Any]) -> EnvironmentError_:

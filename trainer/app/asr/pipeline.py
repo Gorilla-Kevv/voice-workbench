@@ -25,6 +25,7 @@ from ..audio.io import AUDIO_SUFFIXES, AudioError, probe, to_mono_wav
 from ..config import Settings
 from . import bootstrap, catalog
 from .bootstrap import AsrError
+from .sensevoice_client import SenseVoiceWorker, SenseVoiceWorkerError
 
 __all__ = ["AsrEngine", "TARGET_SR"]
 
@@ -207,7 +208,18 @@ class AsrEngine:
             "weights_source": weights.get("source") or "",
             "weights_path": weights.get("path") or "",
             "weights_hint": weights.get("hint") or "",
-            "key": (backend2, size2, language2, precision2, model_id, picked["channel"]),
+            "runtime_ready": weights.get("runtime_ready"),
+            "runtime_hint": weights.get("runtime_hint") or "",
+            # SenseVoice worker 的语言是逐请求参数，切换 ja/zh 不需要重载模型；
+            # key 里去掉 language，避免每个语种都重启一次 1GB 的 worker。
+            "key": (
+                backend2,
+                size2,
+                "" if model_id in {"iic/SenseVoiceSmall", "sensevoice-small"} else language2,
+                precision2,
+                model_id,
+                picked["channel"],
+            ),
         }
 
     @staticmethod
@@ -248,6 +260,12 @@ class AsrEngine:
         self._key = ()
         self._device = ""
         if model is not None:
+            shutdown = getattr(model, "shutdown", None)
+            if callable(shutdown):
+                try:
+                    shutdown()
+                except Exception:  # noqa: BLE001 - 卸载失败也要继续清缓存
+                    pass
             del model
         gc.collect()
         try:
@@ -276,6 +294,8 @@ class AsrEngine:
             "reason": self._config.get("reason", ""),
             "weights_ready": self._config.get("weights_ready"),
             "weights_source": self._config.get("weights_source"),
+            "runtime_ready": self._config.get("runtime_ready"),
+            "runtime_hint": self._config.get("runtime_hint", ""),
             "device": self._device or None,
             "funasr_source": self._funasr_source or None,
             "held_s": round(time.time() - self._loaded_at, 1) if self._loaded_at else 0.0,
@@ -297,6 +317,14 @@ class AsrEngine:
                 "模型权重未就绪：%s" % config.get("model"),
                 hint=str(config.get("weights_hint") or "先下载模型权重后重试。"),
                 code="WEIGHTS_MISSING",
+                status=503,
+                retryable=False,
+            )
+        if config.get("runtime_ready") is False:
+            raise AsrError(
+                "SenseVoice 运行时未就绪",
+                hint=str(config.get("runtime_hint") or "创建 trainer/sensevoice-venv 或设置 SENSEVOICE_PYTHON。"),
+                code="SENSEVOICE_RUNTIME_MISSING",
                 status=503,
                 retryable=False,
             )
@@ -328,11 +356,51 @@ class AsrEngine:
         ModelScope 缓存里的完整快照；两者都没有时抛 `WEIGHTS_MISSING`，
         不再靠官方别名静默联网下载（下载耗时不可控，且与「可用」语义冲突）。
         """
-        auto_model = bootstrap.import_funasr()
         local = bootstrap.funasr_local_models(self.settings)
-        kwargs: Dict[str, Any] = {}
         weights = bootstrap.model_weights_status(self.settings, model_id, language)
 
+        if model_id in {"iic/SenseVoiceSmall", "sensevoice-small"}:
+            target, source = bootstrap.funasr_model_path(self.settings, model_id)
+            if target is None:
+                raise AsrError(
+                    "SenseVoice-Small 权重未就绪",
+                    hint=str(weights.get("hint") or "先下载 SenseVoice-Small 权重。"),
+                    code="WEIGHTS_MISSING",
+                    status=503,
+                    retryable=False,
+                )
+            python, runtime_hint = bootstrap.sensevoice_runtime()
+            if python is None:
+                raise AsrError(
+                    "SenseVoice 运行时未就绪",
+                    hint=runtime_hint,
+                    code="SENSEVOICE_RUNTIME_MISSING",
+                    status=503,
+                    retryable=False,
+                )
+            # 耳语/ASMR 场景刻意不挂 VAD；worker 里 use_itn=False，保持逐字文本。
+            # 模型跑在新 venv（FunASR 1.3.30）里，避免污染整合包的 1.0.27。
+            try:
+                worker = SenseVoiceWorker(
+                    python=python,
+                    script=Path(__file__).with_name("sensevoice_worker.py"),
+                    model_dir=target,
+                    device=(self.settings.asr_device or "auto"),
+                )
+            except SenseVoiceWorkerError as exc:
+                raise AsrError(
+                    "SenseVoice worker 启动失败：%s" % exc,
+                    hint="检查 trainer/sensevoice-venv 是否完整，或设置 SENSEVOICE_PYTHON。",
+                    code="SENSEVOICE_WORKER_FAILED",
+                    status=503,
+                    retryable=False,
+                ) from exc
+            self._device = "sensevoice/%s" % (worker.device or "unknown")
+            self._funasr_source = "%s+worker" % (weights.get("source") or source)
+            return worker
+
+        auto_model = bootstrap.import_funasr()
+        kwargs: Dict[str, Any] = {}
         if model_id == "paraformer-zh":
             target, revision = bootstrap.funasr_model_path(self.settings, model_id, language)
             if target is None:
@@ -349,20 +417,6 @@ class AsrEngine:
                 kwargs.update(vad_model=local["vad"], vad_model_revision="v2.0.4")
             if local.get("punc"):
                 kwargs.update(punc_model=local["punc"], punc_model_revision="v2.0.4")
-            self._funasr_source = str(weights.get("source") or "local")
-        elif model_id in {"iic/SenseVoiceSmall", "sensevoice-small"}:
-            target, _ = bootstrap.funasr_model_path(self.settings, model_id)
-            if target is None:
-                raise AsrError(
-                    "SenseVoice-Small 权重未就绪",
-                    hint=str(weights.get("hint") or "先下载 SenseVoice-Small 权重。"),
-                    code="WEIGHTS_MISSING",
-                    status=503,
-                    retryable=False,
-                )
-            # 耳语/ASMR 场景刻意不挂 VAD：VAD 会把气声段落当静音切掉；
-            # 标点也未接，调用方需要时自行后处理。
-            kwargs.update(model=str(target))
             self._funasr_source = str(weights.get("source") or "local")
         else:
             kwargs.update(model=model_id)
@@ -537,11 +591,11 @@ class AsrEngine:
         """
         model = self._ensure_resident(config)
         if config["backend"] == "funasr":
-            return self._funasr_generate(model, wav), [], config["language"]
+            return self._funasr_generate(model, wav, config["language"]), [], config["language"]
         return self._whisper_generate(model, wav, config["language"])
 
     @staticmethod
-    def _funasr_generate(model: Any, wav: Path) -> str:
+    def _funasr_generate(model: Any, wav: Path, language: str = "auto") -> str:
         try:
             #: 与官方 `funasr_asr.py::only_asr()` 的调用形式保持一致 —— 不加任何额外参数。
             #:
@@ -549,7 +603,11 @@ class AsrEngine:
             #: 结果同一段音频只转写出前一段（0.12 秒就返回），而官方脚本跑出的文本更长
             #: 也更完整。另外 `use_itn` 会把「二零二四」改写成「2024」，
             #: 而参考文本要的是**逐字**文本 —— 改写出来的数字会被直接学进音色。
-            result = model.generate(input=str(wav))
+            #: SenseVoice worker 需要 language（模型多语种），且 worker 内部固定 use_itn=False。
+            if getattr(model, "is_sensevoice_worker", False):
+                result = model.generate(input=str(wav), language=language or "auto")
+            else:
+                result = model.generate(input=str(wav))
         except Exception as exc:  # noqa: BLE001
             raise AsrError(
                 "FunASR 转写失败：%s" % exc,

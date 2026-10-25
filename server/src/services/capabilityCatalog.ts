@@ -51,12 +51,16 @@ export interface CapabilitySpec {
 export interface ResidentModelStatus {
   weights_ready?: boolean | null;
   weights_source?: string;
+  /** 专用运行时就绪（SenseVoice 需要独立 FunASR venv） */
+  runtime_ready?: boolean | null;
+  runtime_hint?: string;
   vram_required_mb?: number | null;
 }
 
 export interface CapabilityAvailability {
   available: boolean;
   weights_ready: boolean | null;
+  runtime_ready: boolean | null;
   vram_required_mb: number | null;
   weights_source: string | null;
 }
@@ -81,15 +85,18 @@ export function capabilityAvailability(
     return {
       available: Boolean(mimoReady),
       weights_ready: null,
+      runtime_ready: null,
       vram_required_mb: fallbackVram ?? null,
       weights_source: null,
     };
   }
   const model = spec.weights_key ? models?.[spec.weights_key] : undefined;
   const weightsReady = typeof model?.weights_ready === 'boolean' ? model.weights_ready : null;
+  const runtimeReady = typeof model?.runtime_ready === 'boolean' ? model.runtime_ready : null;
   return {
-    available: reachable && (spec.weights_key ? weightsReady === true : true),
+    available: reachable && (spec.weights_key ? weightsReady === true && runtimeReady !== false : true),
     weights_ready: weightsReady,
+    runtime_ready: runtimeReady,
     vram_required_mb: model?.vram_required_mb ?? fallbackVram ?? null,
     weights_source: model?.weights_source ?? null,
   };
@@ -218,7 +225,7 @@ export const CAPABILITIES: CapabilitySpec[] = [
     extra_params: ['use_cache'],
     arbiter_engine: 'asr',
     vram_source: 'sovits GET /v1/asr/readiness → resident_model_status[iic/SenseVoiceSmall].vram_required_mb',
-    hint: '多语种轻量档（日/英/韩/粤都走它，不挂 VAD，适合耳语）。权重未就绪时 available=false / weights_ready=false，调用返回 WEIGHTS_MISSING；按错误 hint 下载后重试。显存门槛 1536MB。',
+    hint: '多语种轻量档（日/英/韩/粤都走它，不挂 VAD，适合耳语；worker 固定逐字、不做 ITN 标点）。权重未就绪 → available=false / WEIGHTS_MISSING；专用运行时缺失 → runtime_ready=false / SENSEVOICE_RUNTIME_MISSING（trainer/sensevoice-venv 或 SENSEVOICE_PYTHON）。显存门槛 1536MB（实测常驻约 1050MB）。',
     weights_key: 'iic/SenseVoiceSmall',
   },
   {

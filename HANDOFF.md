@@ -107,12 +107,16 @@
 - `hint` 是给**使用者**的下一步动作，前端必须展示而不只是展示 `message`
 - 主要端点：`/health`、`/v1/catalog`、`/v1/uvr/models`、`/v1/weights`、`/v1/voices`、`/v1/tts`、`/v1/tts/stream`、`/v1/tts/batch`、`/v1/train`、`/v1/train/plan`、`/v1/annotations/{job_id}`、`/v1/jobs`
 - **对外能力网关（阶段 43）**：`GET /api/capabilities`（13 项推理能力发现：id/kind/可用性/loaded/显存门槛指针/端点指引）与 `GET /api/open/v1/models`（OpenAI 形状）；统一调用 `POST /api/open/v1/audio/{speech,transcriptions,convert,singing-convert,separate}`——`{model: 能力id或别名, text|audio_path|voice_id, params(白名单透传), format, focus?, timeout_ms}`。**上游结构化错误原样透传**（引擎忙 409 vs 429 的差异是文档的一部分），网关只补 `OPEN_RUNTIME_UNREACHABLE`；撞显存默认不让位，`focus:true` 才仲裁。参考音频差异（谁原生认 voice_id / 谁只认路径）已被网关吸收——`confucius4-tts`/`indextts-2.5` 传 voice_id 时网关用 `voiceLibrary.getVoiceAudioPath()` 折算。契约全文 `docs/OPEN-API.md`；app 层错误体的 `hint` 自阶段 43 起进入全局契约（AppError.hint）
-- **ASR 权重就绪与 SenseVoice（阶段 44补2）**：trainer 新增轻量 `GET /v1/asr/readiness`
-  （`resident_model_status`：`weights_ready/weights_source/weights_path/weights_hint/vram_required_mb`），
-  `/v1/asr/catalog` 返回同一字段；固定模型缺权重时在 `engines.acquire()` **之前**返回
-  503 `WEIGHTS_MISSING`。`/api/capabilities` 的 ASR 项 `available = 运行时可达到 && weights_ready===true`
-  （状态缺失也 false），并新增 `weights_ready/weights_source`；SenseVoice 1536MB、无 size/VAD/punc，
-  显式 `model` 的 backend/语种优先于后端级语言清单（不再出现 backend/model 错配）。
+- **ASR 权重/运行时就绪与 SenseVoice（阶段 44补2）**：trainer 新增轻量 `GET /v1/asr/readiness`
+  （`resident_model_status`：`weights_ready/weights_source/weights_path/weights_hint/
+  runtime_ready/runtime_hint/vram_required_mb`），`/v1/asr/catalog` 返回同一字段；
+  固定模型缺权重或 SenseVoice venv 缺失时在 `engines.acquire()` **之前**返回
+  503 `WEIGHTS_MISSING` / `SENSEVOICE_RUNTIME_MISSING`。`/api/capabilities` 的 ASR 项
+  `available = 运行时可达到 && weights_ready===true && runtime_ready!==false`（状态缺失也 false），
+  并新增 `weights_ready/weights_source/runtime_ready`。SenseVoice 跑在
+  `trainer/sensevoice-venv` 常驻 worker（`SENSEVOICE_PYTHON` 可覆盖），权重 897MB、
+  门槛 1536MB、无 size/VAD、`use_itn=False` 逐字；显式 `model` 的 backend/语种优先于后端级
+  语言清单（不再出现 backend/model 错配）。
 - 网易服务端点（经网关 `/api/netease/*` 透传）：`/health`、`/v1/netease/catalog`、
   `/v1/netease/engines/{acquire,release}`、`/v1/confucius/{pipeline,warmup,unload,tts}`、`/v1/r2t2/*`
   —— `/health` **永远 200**，「服务活着」与「模型可用」是两件事（后者在 `engines.*.installed` 里）。
@@ -896,11 +900,12 @@
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]`（脚本幂等：已就位文件跳过，断点残件 .part 原子落盘——坑 83） |
 | R2T2 离线转写 | 回归 `python .tmp/verify_r2t2_offline.py --runtime`（26 项，R5 触发真 load 验导入路径）；真机冒烟 `python .tmp/smoke_r2t2_transcribe.py [audio.wav] [--device cpu]`（GPU 模式内置 6200MB 显存护栏，坑 78；`--device cpu` 走零显存排障通道 fp32——10.24 已双语实测通过，见坑 87/88）；环境建法见 `netease/README.md`「R2T2 离线转写」节 |
 | ASR 准入门槛回归 | `python .tmp/verify_asr_gate.py`（25 项，参数化表 + 引擎覆盖行为；trainer 真实口径用整合包 python 跑——阶段 42，坑 86） |
-| ASR SenseVoice 路由/权重回归 | 整合包 python `.tmp/verify_asr_sensevoice.py`（14 项：catalog/readiness、ja 路由、backend/model 冲突、显式模型保护、缺权重 503、伪造本地快照识别、引擎层安全网；不加载模型、不吃显存。阶段 44补2） |
+| ASR SenseVoice 路由/权重回归 | 整合包 python `.tmp/verify_asr_sensevoice.py`（catalog/readiness、ja 路由、backend/model 冲突、显式模型保护、缺权重 503、伪造本地快照识别、引擎层安全网；不加载模型、不吃显存。权重缺失时 14/14，权重就绪时 **12/12 + 2 SKIP**。阶段 44补2） |
+| SenseVoice worker/HTTP 冒烟 | 整合包 python `.tmp/smoke_sensevoice_worker.py`（AsrEngine→新 venv worker，GPU 显存采样）与 `.tmp/smoke_sensevoice_http.py`（load→transcribe→unload，全 200）。真机结果：常驻 +1050 / 峰值 +1099MB，热态 zh/en 0.27~0.29s；需 GPU 空闲，测完自动 unload |
 | DDSP-SVC 训练回归 | 整合包 python 跑：`.tmp/verify_svc_train.py`（13 项，真 CPU 训练 + 门槛参数化）/ `.tmp/verify_svc_train_http.py`（9）/ `.tmp/verify_svc_train_job.py`（8）/ `.tmp/verify_svc_train_cancel.py`（3）。脚本用 TestClient，**无需常驻服务**；夹具 `.tmp/svc_train_fixture.py` 自动生成 3/4 秒合成素材（阶段 44） |
 | DDSP-SVC GPU 画像 | 整合包 python 跑 `.tmp/smoke_svc_train_gpu.py`（12 条 3.2s 合成素材 / batch 8 / fp16；GPU 预处理+训练+产物加载/转换，旁路采样 nvidia-smi 峰值；需 ≥3GB 空闲，产物落 `trainer/.tmp/ddsp_gpu/` 并移出受管模型库）；调度路径另跑 `.tmp/verify_svc_train_gpu_job.py`（6 项，CUDA + 真实 runner/调度器） |
 
-| 能力网关回归 | `cd server && node_modules/.bin/tsx ../.tmp/verify_open_gateway.mts`（25 项，死端口+内置假上游，不吃显存——阶段 43；契约见 docs/OPEN-API.md） |
+| 能力网关回归 | `cd server && node_modules/.bin/tsx ../.tmp/verify_open_gateway.mts`（**30 项**，死端口+内置假上游，不吃显存——阶段 43 + 44补2 的 ASR 可用性；契约见 docs/OPEN-API.md） |
 | worker 隔离验证（5 个脚本，共 139 项） | 先起服务 `./GPT-SoVITS-v2pro-20250604/runtime/python.exe trainer/server.py --port 19881 --no-open --no-warmup`，然后：`python .tmp/worker_smoke.py`（32 项，任意 py）、`python .tmp/verify_http.py 19881`（51 项）、`python .tmp/verify_recovery.py 19881`（14 项）；另两个用整合包解释器：`.tmp/verify_isolation.py`（12 项）、`.tmp/verify_synthesis.py`（30 项）。**脚本里都清掉了 `http_proxy`**（本机系统代理会拦 127.0.0.1） |
 | 只起网关+前端 | `npm run dev:cloud` |
 | 只起本地模型服务 | `npm run dev:sovits` |
@@ -1067,15 +1072,22 @@
   的透传链路零改动，训练/批量不进同步 façade。回归 `.tmp/verify_open_gateway.mts` 25/25
   （死端口+内置假上游）+ typecheck/build 全绿。**真机联调待显存窗口**（与 R2T2 冒烟同批）。
   外部调用入口文档：`docs/OPEN-API.md`；AGENTS.md 外部共享约束已扩为四类（+④ 能力调用）。
-- **ASR SenseVoice 路由与权重就绪修复（阶段 44补2，10.24 BY Qoder）**：外部报告指出的
+- **ASR SenseVoice 路由与权重就绪修复（阶段 44补2，10.24~10.25 BY Qoder）**：外部报告指出的
   SenseVoice 不可用成立，但真实根因不是「ja 被 normalize 改回 zh」，而是 `resolve()` 先按
   backend 级语种清单把 ja 切成 fasterwhisper、显式 model 仍留在 SenseVoice，最后走错加载器。
   已改为显式 model 的 backend/语种为权威、funasr 的 en/ja/ko/yue 由 SenseVoice 承接、
   显式模型不匹配语种返回 400；新增 `funasr_local_models.sensevoice` 与 ModelScope 缓存探测、
-  `/v1/asr/readiness`、`resident_model_status`，缺权重在 acquire 之前返回 503 `WEIGHTS_MISSING`；
-  网关 `/api/capabilities`/`/api/open/v1/models` 的 ASR `available` 改为「可达 + weights_ready=true」。
-  新增坑 97~99。回归 `.tmp/verify_asr_sensevoice.py` **14/14**、ASR 门槛 25/25、能力网关 29/29；
-  typecheck/build 全绿。**SenseVoice 权重仍未下载**（真实加载待权重；GPU 当前被 llama-server 占用）。
+  `/v1/asr/readiness`、`resident_model_status`，缺权重/缺运行时在 acquire 之前返回 503
+  `WEIGHTS_MISSING` / `SENSEVOICE_RUNTIME_MISSING`；网关 `/api/capabilities`/`/api/open/v1/models`
+  的 ASR `available` 改为「可达 + weights_ready + runtime_ready」。
+  **权重与运行时已落地**：`tools/asr/models/SenseVoiceSmall` 897MB；新建
+  `trainer/sensevoice-venv`（py3.12 + torch2.7.1+cu128 + funasr1.3.30，约 6.1GB，gitignore）
+  与常驻 worker（funasr 1.0.27 不支持 SenseVoiceSmall，见坑 100）。**GPU 实测**：常驻增量
+  **+1050MB**、峰值 **+1099MB**、最低 free 5214MB；worker 首载 23.5s，热态 zh/en 0.27~0.29s；
+  真实 ja/zh/en 样例正确；HTTP load→transcribe→unload 全 200；CPU RTF 0.17~0.26。
+  新增坑 97~100。回归 `.tmp/verify_asr_sensevoice.py` **12/12 + 2 SKIP**（权重就绪后跳过缺权重
+  预检）、ASR 门槛 25/25、能力网关 30/30；typecheck/build 全绿。**llama-server 按用户选择
+  测完未自动重启**，GPU 已释放回 free ~6001MB。
 - **DDSP-SVC 训练入口已交付（阶段 44，10.24 BY Qoder）**：上游 `preprocess.py → train_reflow.py`
   两段式补齐编排层 —— 语料扫描/9:1 划分/`duration < 最短片段` 阻塞校验/绝对路径 config/
   预处理缓存计数守卫/自适应存档与日志/最终权重补存/`model_*.pt + config.yaml` 归位；
@@ -1125,7 +1137,7 @@
 
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
-| 高 | **SenseVoice 权重落地与真实转写验证** | 代码已修（阶段44补2）；本机仍无 `iic/SenseVoiceSmall` 权重，`/api/capabilities` 会如实报 `available=false`。下载（约 1GB）后放 `tools/asr/models/SenseVoiceSmall`（需 model.pt + config.yaml）或让 ModelScope 缓存命中 `MODELSCOPE_CACHE/models/iic/SenseVoiceSmall`；再跑 `.tmp/verify_asr_sensevoice.py` 14/14 + 8 段日/中耳语 CER。GPU 当前被 llama-server 占用，可先 CPU。 |
+| 高 | **SenseVoice 真实基准（8 段日/中耳语 CER）** | 权重 897MB 已落 `tools/asr/models/SenseVoiceSmall`；`trainer/sensevoice-venv` + worker 已接好，GPU 实测常驻 +1050 / 峰值 +1099MB、热态 zh/en 0.27~0.29s，真实 ja/zh/en 样例正确。剩：用报告方同一套 8 段素材做 CER / 最气声段落 / 热机延迟对比；llama-server 按用户选择未自动重启，GPU 空闲时可直接跑。 |
 | 高 | **阶段 44 的真实素材训练与浏览器走查** | GPU 画像已回填（12 条合成素材 / batch 8 / fp16 / workers 1：峰值增量 1417MB，门槛参数化 2048MB；10.24 22:12 窗口 free 6141MB）；回归 13/13 + 9/9 + 8/8 + 3/3 + GPU job 6/6。剩：① 用**真实歌声语料**跑一次（batch 8 起）并做耳朵验收；② 训练卡浏览器走查（起 dev 服务需用户点头，自动模式被拦） |
 | 高 | **产出记录页的浏览器人工走查（阶段 32 遗留验收）** | 跑一次 RVC 变声 + 一次翻唱 + 一次训练，三条记录都要出现在「产出记录」，且能内联播放、能复制本机路径。数据源已实测可用（`total=45`，音频地址加前缀 200），只差用户在浏览器点一遍 |
 | 高 | **RVC 训练前端入口的真机冒烟（阶段 29补2 遗留）** | 前端已落地（独立训练卡 + 全量表单 + 提交前预检），typecheck / eslint / vite build 全过。只差起服务后在浏览器走一遍：变声页 → 训练音色 → 全量微调，**故意把采样率改成 v2 + 40k 看预检报红并禁用提交** → 改回 32k 提交一次小 epochs 训练 |
@@ -1399,26 +1411,44 @@
     返回 400 `LANGUAGE_UNSUPPORTED`，不静默改写；显式 Whisper 模型也不会被 zh/yue 自动切走。
     回归 `.tmp/verify_asr_sensevoice.py` A4~A10。
 
-98. **权重就绪必须在 `engines.acquire()` 之前检查；`available` 也必须包含它（阶段 44补2）**
+98. **权重/专用运行时就绪必须在 `engines.acquire()` 之前检查；`available` 也必须包含它们（阶段 44补2）**
     ASR 路由原先先 `engines.acquire()` 再 `_ensure_resident()`；低显存窗口会先返回
-    429/`VRAM_INSUFFICIENT`，把「缺权重」误报成「显存不够」。同时 `/api/capabilities` 的
-    `available` 只看 runtime.reachable，SenseVoice 权重缺失也报 true。
+    429/`VRAM_INSUFFICIENT`，把「缺权重/缺运行时」误报成「显存不够」。同时
+    `/api/capabilities` 的 `available` 只看 runtime.reachable，SenseVoice 权重缺失也报 true。
     **修法**：新增 trainer `GET /v1/asr/readiness`（轻量、不扫数据集）与
-    `resident_model_status`（weights_ready/source/path/hint + 参数化 vram）；ASR 路由在
-    acquire 之前 `_raise_if_weights_missing()` → 503 `WEIGHTS_MISSING`（hint 带下载命令）；
-    网关固定 model 的 ASR 能力 `available = reachable && weights_ready===true`（状态缺失
-    也按 false），并新增 `weights_ready`/`weights_source`。faster-whisper 无固定 model，
+    `resident_model_status`（weights_ready/source/path/hint + runtime_ready/hint + 参数化 vram）；
+    ASR 路由在 acquire 之前 `_raise_if_weights_missing()` → 503 `WEIGHTS_MISSING` 或
+    `SENSEVOICE_RUNTIME_MISSING`（hint 带下载/建 venv 命令）；网关固定 model 的 ASR 能力
+    `available = reachable && weights_ready===true && runtime_ready!==false`（状态缺失按 false），
+    并新增 `weights_ready/weights_source/runtime_ready`。faster-whisper 无固定 model，
     仍按运行时可达（weights_ready=null）。
     **别把「已知模型缺权重」退回 remote 别名静默下载**：现在只允许未知自定义 model 走 remote。
 
-99. **SenseVoice 的能力元数据不能沿用 Paraformer：没有 size、不挂 VAD/标点、门槛 1536（阶段 44补2）**
+99. **SenseVoice 的能力元数据不能沿用 Paraformer：没有 size、不挂 VAD、逐字无 ITN、门槛 1536（阶段 44补2）**
     `capabilityCatalog` 原来给 SenseVoice 固定 `size:large`、vram 2048（引擎静态档），
     但 SenseVoice 没有尺寸概念，实际 ASR 参数化门槛是 1536；`_build_funasr()` 的
-    non-Paraformer 分支也只传 model，不挂 VAD/punc。**决定**：保留「不挂 VAD」——耳语/ASMR
-    的气声会被 VAD 当静音切掉；标点不接，需调用方后处理。元数据已改为
-    `size` 移除、vram_source 指向 `/v1/asr/readiness`、hint 写明 1536 与无 VAD。
+    non-Paraformer 分支也只传 model。**决定**：保留「不挂 VAD」——耳语/ASMR 的气声会被 VAD
+    当静音切掉；worker 固定 `use_itn=False`，保持逐字文本，不做标点/数字 ITN 改写；
+    字幕场景如需要标点，调用方后处理或后续加开关。元数据已改为 `size` 移除、
+    vram_source 指向 `/v1/asr/readiness`、hint 写明 1536/无 VAD。
     本地权重探测新增 `tools/asr/models/SenseVoiceSmall`、`iic/SenseVoiceSmall` 与
-    `MODELSCOPE_CACHE/models/iic/SenseVoiceSmall`；权重仍缺时按坑 98 报 `WEIGHTS_MISSING`。
+    `MODELSCOPE_CACHE/models/iic/SenseVoiceSmall`；权重已落地 897MB。
+
+100. **整合包 FunASR 1.0.27 不支持 SenseVoiceSmall，必须独立 venv + 常驻 worker（阶段 44补2 真机踩到）**
+    `iic/SenseVoiceSmall` 的 `config.yaml` 写 `model: SenseVoiceSmall`，但 FunASR 1.0.27 的
+    `tables.model_classes` 只有旧的 `SenseVoice`（Whisper 架构），加载直接
+    `TypeError: 'NoneType' object is not callable`（`model_class=None`）；`trust_remote_code`
+    在 1.0.27 里也没有实现。快照 README 明确要求先升级 funasr。**不要**升级整合包的 funasr
+    （会波及 GPT-SoVITS 的 ASR 训练/官方脚本）。
+    **已落地**：`trainer/sensevoice-venv`（py3.12.10 + torch 2.7.1+cu128 + funasr 1.3.30 +
+    modelscope 1.40.2 + transformers 4.57.6 + tokenizers 0.22.2 + huggingface_hub 0.36.2；
+    用 gsv5 的 uv 缓存安装，约 6.1GB，gitignore），`SENSEVOICE_PYTHON` 可覆盖；
+    `trainer/app/asr/sensevoice_worker.py` + `sensevoice_client.py` 走 JSON-lines，stdout 协议
+    与 FunASR 日志隔离，主进程不 import 新 funasr；worker 的 `key` 不含 language，切 ja/zh
+    不重载。**GPU 实测**（free 6313 窗口）：常驻增量 **+1050MB**、峰值 **+1099MB**、最低
+    free 5214MB；worker 首载约 **23.5s**，热态 zh/en **0.27~0.29s**（ja 首条含 warmup 约 6s）；
+    CPU 加载 6.4s、RTF 0.17~0.26。真实 ja/zh/en 样例全部正确；HTTP load→transcribe→unload
+    全 200。**没有自动重启 llama-server**（用户选择测完不重启）。
 
 > 本次文档更新时间：10.23 [BY ZCode]（阶段 42：ASR 显存准入参数化——坑 86；docs/ASR.md 与 HANDOFF 命令表/建议行同步）
 
@@ -1433,3 +1463,5 @@
 > 本次文档更新时间：10.24 22:14 [BY Qoder]（阶段 44 GPU 画像回填：12 条 3.2s 合成素材 / batch 8 / fp16 / workers 1，整链峰值增量 1417MB、GPU 训练 + 产物加载/转换闭环；静态 6144 门槛误挡 6GB 卡 → `required_vram_mb(batch, duration, workers)` 参数化为 2048MB，新增坑 96；回归升 13/13 + 9/9 + GPU job 6/6；`smoke_svc_train_gpu.py` / `verify_svc_train_gpu_job.py` 入命令表；浏览器走查与真实素材耳朵验收仍待做）
 
 > 本次文档更新时间：10.25 00:31 [BY Qoder]（阶段 44补2：ASR SenseVoice 路由与权重就绪修复——显式 model 的 backend/语种为权威（不再 backend/model 错配）、funasr 的 ja/en/ko/yue 由 SenseVoice 承接、不匹配语种 400；新增 `/v1/asr/readiness`/`resident_model_status`、acquire 前 503 `WEIGHTS_MISSING`；`/api/capabilities` ASR `available=可达 && weights_ready===true`，SenseVoice 1536/无 size/无 VAD；坑 97~99；回归 14/14 + 25/25 + 29/29；**真实 SenseVoice 权重仍缺，未做加载/CER**）
+
+> 本次文档更新时间：10.25 11:41 [BY Qoder]（阶段 44补2续：SenseVoice 落地——权重 897MB + 独立 `trainer/sensevoice-venv` 6.1GB + 常驻 worker；整合包 FunASR 1.0.27 不支持 SenseVoiceSmall（坑 100）；GPU 实测常驻 +1050 / 峰值 +1099MB、热态 zh/en 0.27~0.29s，真实 ja/zh/en 正确；HTTP load→transcribe→unload 全 200；`runtime_ready` 进入 capabilities，缺运行时 503 `SENSEVOICE_RUNTIME_MISSING`；回归 12/12+2 SKIP + 25/25 + 30/30；llama-server 按用户选择未自动重启）

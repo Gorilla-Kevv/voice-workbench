@@ -41,6 +41,8 @@ voicelib/
 netease/.venv/
 # R2T2 离线转写专用解释器（阶段 41）：qwen-asr 钉死 transformers==4.57.6，与 TTS venv 互斥
 netease/r2t2-venv/
+# SenseVoice 独立运行时（阶段 44补2）：py3.12 + torch cu128 + funasr 1.3.30
+trainer/sensevoice-venv/
 netease/.data/
 netease/models-src/
 netease/.tmp/

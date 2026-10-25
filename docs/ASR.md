@@ -120,14 +120,15 @@
 
 ### 3.2 已落地模型与显存画像（2026-10-24 实测）
 
-测试条件：RTX 4060 Laptop 8GB，单条 3 秒合成音频；每套模型单独加载、转写一次、
-卸载后再测下一套。**增量 = nvidia-smi used 相对加载前基线的差值**（基线约 1.8~2.0GB，
-含桌面与其它常驻程序）；整机 used = 基线 + 增量。合成音频的识别文本无意义，
-这里只用于测「加载 + 一次短推理」的显存与耗时。
+测试条件：RTX 4060 Laptop 8GB，单条 3 秒左右音频；每套模型单独加载、转写一次、
+卸载后再测下一套。**增量 = nvidia-smi used 相对加载前基线的差值**（基线约 1.6~2.0GB，
+含桌面与其它常驻程序）；整机 used = 基线 + 增量。Paraformer/Whisper 用合成音频，
+SenseVoice 用模型自带真实 ja/zh/en 样例；文本质量只看 SenseVoice 的样例。
 
 | 模型 | 入口 | 磁盘 | 实测常驻增量 | 实测峰值增量 | 项目准入门槛 | 状态 |
 | --- | --- | --- | --- | --- | --- | --- |
 | FunASR Paraformer-large（zh）+ FSMN-VAD + CT-Punc | ASR 板块 · 常驻（默认中文） | 848MB + 4MB + 283MB ≈ **1.1GB** | **+1213MB** | **+1257MB** | 2048MB | 已安装；`funasr_source=local`，3s 音频加载+推理 10.7s（RTF 0.068） |
+| FunASR SenseVoice-Small（中英日韩粤） | ASR 板块 · 常驻 worker（独立 venv） | **897MB** | **+1050MB** | **+1099MB** | 1536MB | 已安装（`tools/asr/models/SenseVoiceSmall`）；worker 首载约 23.5s、热态 zh/en 0.27~0.29s；真实 ja/zh/en 样例正确；CPU RTF 0.17~0.26 |
 | faster-whisper small | ASR 板块 · 常驻（HF 缓存） | **464MB** | **+260MB**（int8） | **+260MB** | int8 1024MB / default 1536MB | 已落地，但官方尺寸清单从 medium 起，UI 下拉不含 small；API 直传 `model=small` 可加载 |
 | faster-whisper large-v3-turbo · fp16 | ASR 板块 · 常驻 | **1.6GB** | **+1568MB** | **+1808MB** | 3072MB | 已安装；UI 可选 |
 | faster-whisper large-v3-turbo · int8 | 同上 | 1.6GB | **+800MB** | **+1072MB** | 2560MB | 已安装；UI 可选 |
@@ -138,7 +139,6 @@
 
 | 模型 | 准入门槛 | 说明 |
 | --- | --- | --- |
-| FunASR SenseVoice-Small（`iic/SenseVoiceSmall`） | 1536MB | 中英日韩粤，最省显存；当前缓存里没有，非中文走 FunASR 时会触发下载 |
 | FunASR UniASR yue（`speech_UniASR_yue`） | 2048MB | 粤语专用；`tools/asr/models` 下没有该目录 |
 | faster-whisper medium / medium.en / large / large-v2 / large-v3 | 4096MB / 8192MB | 仅有 small 与 large-v3-turbo 的 HF 缓存；其余尺寸首次使用下载 |
 
@@ -174,26 +174,54 @@
 | `backend=fasterwhisper, model=iic/SenseVoiceSmall` | 以 model 的 backend 为准 → funasr/SenseVoice，并给出 note |
 | `backend=fasterwhisper, model=large-v3-turbo` | 尊重显式 Whisper 模型，不自动切 FunASR |
 
-权重语义：
+权重与运行时语义：
 
-- `funasr_local_models()` 增加 `sensevoice` 探测（`tools/asr/models/SenseVoiceSmall`、
-  `iic/SenseVoiceSmall`、`*SenseVoice*` 完整快照），并兼容 `MODELSCOPE_CACHE`
-  下的 `models/iic/SenseVoiceSmall`；`funasr_model_path()` 返回 local/modelscope/missing。
-- 已知模型缺权重不再走官方别名静默下载：`_ensure_resident()` 与 ASR 路由在
-  `engines.acquire()` **之前**抛 **503 `WEIGHTS_MISSING`**，hint 给出
-  `snapshot_download('iic/SenseVoiceSmall')` 命令与本地放置路径。
-  这避免低显存窗口把「缺权重」误报成 429/`VRAM_INSUFFICIENT`。
-- `/v1/asr/catalog` 与轻量 `/v1/asr/readiness` 都返回
-  `resident_model_status`：`weights_ready/weights_source/weights_path/weights_hint/
+- **权重已落地**：`tools/asr/models/SenseVoiceSmall/`（897MB；`model.pt` + `config.yaml` +
+  `am.mvn` + BPE + tokens，来自 ModelScope `iic/SenseVoiceSmall`）。
+  `funasr_local_models()` 增加 `sensevoice` 探测（`SenseVoiceSmall`、`iic/SenseVoiceSmall`、
+  `*SenseVoice*` 完整快照），并兼容 `MODELSCOPE_CACHE/models/iic/SenseVoiceSmall`；
+  `funasr_model_path()` 返回 local/modelscope/missing。
+- **为什么需要独立 venv**：整合包 FunASR **1.0.27** 只注册旧的 `SenseVoice`（Whisper 架构），
+  没有当前快照需要的 `SenseVoiceSmall`；直接加载报 `TypeError: 'NoneType' object is not callable`
+  （`tables.model_classes['SenseVoiceSmall']` 为 None）。`trust_remote_code` 在 1.0.27 里
+  也不解决问题。**新 venv**：`trainer/sensevoice-venv`（py3.12.10 + torch 2.7.1+cu128 +
+  funasr 1.3.30 + modelscope 1.40.2 + transformers 4.57.6 + tokenizers 0.22.2 +
+  huggingface_hub 0.36.2）；可用 `SENSEVOICE_PYTHON` 覆盖解释器路径。
+
+  安装摘要（复用 gsv5 的 uv 缓存，避免重下 torch；`$UV` 指 `C:\Users\kevin\.local\bin\uv.exe`）：
+
+  ```bash
+  export UV_CACHE_DIR="<repo>/gsv5/.uvcache"
+  "$UV" venv --python "C:/Users/kevin/AppData/Local/Programs/Python/Python312/python.exe" trainer/sensevoice-venv
+  "$UV" pip install --python trainer/sensevoice-venv/Scripts/python.exe funasr==1.3.30 modelscope==1.40.2
+  "$UV" pip install --python trainer/sensevoice-venv/Scripts/python.exe \
+    --index-url https://download.pytorch.org/whl/cu128 torch==2.7.1+cu128 torchaudio==2.7.1+cu128
+  "$UV" pip install --python trainer/sensevoice-venv/Scripts/python.exe \
+    transformers==4.57.6 tokenizers==0.22.2 huggingface_hub==0.36.2
+  ```
+
+- **worker**：`trainer/app/asr/sensevoice_worker.py` 是常驻子进程（JSON-lines，fd1 重定向到
+  stderr），`sensevoice_client.py` 负责拉起/请求/关闭；主 trainer 进程不 import 新 funasr。
+  首次加载约 **23.5s**（进程启动 + 模型加载），之后一次转写 **0.27~0.29s**（zh/en）；
+  ja 首条含 warmup 约 6s。worker 的 key 不含 language，切换语种**不重载**模型。
+- **权重/运行时缺失都是结构化错误**：缺权重 → 503 `WEIGHTS_MISSING`（hint 带下载命令）；
+  缺 venv → 503 `SENSEVOICE_RUNTIME_MISSING`（hint 指向 `trainer/sensevoice-venv` /
+  `SENSEVOICE_PYTHON`）。检查都在 `engines.acquire()` **之前**，避免低显存把缺权重误报成
+  429/`VRAM_INSUFFICIENT`。
+- `/v1/asr/catalog` 与轻量 `/v1/asr/readiness` 返回 `resident_model_status`：
+  `weights_ready/weights_source/weights_path/weights_hint/runtime_ready/runtime_hint/
   vram_required_mb`（Paraformer 2048 / SenseVoice 1536）。
 - 网关 `/api/capabilities` 与 `/api/open/v1/models` 对固定模型 ASR 的 `available`
-  改为「运行时可达 **且** weights_ready=true」；`weights_ready=false/null` 一律不可用，
-  并新增 `weights_ready` / `weights_source` 字段。
-- SenseVoice 不挂 VAD/标点：不挂 VAD 是耳语 ASR 的刻意选择（避免气声被静音过滤），
-  标点需调用方后处理；capability hint 已写明。`size` 字段也移除（SenseVoice 无尺寸概念）。
-
-回归锁：`.tmp/verify_asr_sensevoice.py` **14/14**（catalog/readiness、ja 路由、backend/model
-冲突、显式模型保护、缺权重预检、伪造本地快照识别、引擎层安全网），不加载模型、不吃显存。
+  改为「运行时可达 **且** weights_ready=true **且** runtime_ready !== false」；
+  `weights_ready=false/null` 一律不可用；新增 `weights_ready/weights_source/runtime_ready`。
+- SenseVoice **不挂 VAD**（耳语/ASMR 气声不被静音过滤）；worker 固定 `use_itn=False`，
+  保持逐字文本，**不做标点/数字 ITN 改写**（与 Paraformer 参考文本口径一致）。
+  如果字幕场景需要标点，应在调用方后处理或后续增加开关。`size` 字段已移除（无尺寸概念）。
+- **真机实测**：GPU（RTX 4060 Laptop）worker 加载后常驻增量 **+1050MB**、峰值 **+1099MB**，
+  最低空闲 5214MB；真实 ja/zh/en 样例文本正确。CPU 下加载 6.4s、RTF 0.17~0.26。
+  回归锁 `.tmp/verify_asr_sensevoice.py` 在权重就绪时 **12/12 + 2 SKIP**
+  （跳过“缺权重”两条，worker/HTTP 冒烟另行覆盖）；HTTP 冒烟
+  `.tmp/smoke_sensevoice_http.py` 验证 load→transcribe(ja)→unload 全 200。
 
 ---
 

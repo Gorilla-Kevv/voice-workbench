@@ -18,7 +18,7 @@
 | tts | `gpt-sovits-v5` | gsv5 :9885 | v5turbo（快）/ v5dev（高质） |
 | tts | `mimo` | 云端 | 需服务端密钥；不占显存 |
 | asr | `paraformer-zh` | sovits | 中文逐字+标点首选 |
-| asr | `sensevoice-small` | sovits | 中英日韩粤；无 size 概念、不挂 VAD（耳语友好）；权重未就绪时 `available=false` / `weights_ready=false`，调用返回 `WEIGHTS_MISSING`（1536MB） |
+| asr | `sensevoice-small` | sovits | 中英日韩粤；无 size 概念、不挂 VAD（耳语友好）、逐字（不 ITN）；本地权重 + 独立 worker（`trainer/sensevoice-venv`，可 `SENSEVOICE_PYTHON` 覆盖）；`available` 需 weights_ready+runtime_ready（1536MB） |
 | asr | `faster-whisper` | sovits | `params.size` ∈ medium/large-v3/large-v3-turbo |
 | asr | `r2t2-offline` | netease | Qwen3-ASR 基座离线转写，长音频自动 240s 分段 |
 | vc | `rvc-convert` | sovits | RVC 变声，`params.model` = 引擎 key |
@@ -31,12 +31,13 @@
 
 ### GET /api/capabilities
 
-能力发现。每项：`id/label/kind/runtime/aliases/reference{voice_id_param,path_param}/audio_input_param/fixed_params/extra_params/endpoint/available/weights_ready/weights_source/loaded/vram_required_mb/vram_source/hint`，外加全局面 `vram_free_mb`（nvidia-smi 口径，来自活着的运行时）。
+能力发现。每项：`id/label/kind/runtime/aliases/reference{voice_id_param,path_param}/audio_input_param/fixed_params/extra_params/endpoint/available/weights_ready/weights_source/runtime_ready/loaded/vram_required_mb/vram_source/hint`，外加全局面 `vram_free_mb`（nvidia-smi 口径，来自活着的运行时）。
 
 `available` 的语义（阶段 44补2 起）：
 - 无固定模型的能力 = 运行时可达；
-- 固定了模型的 ASR 能力（`paraformer-zh` / `sensevoice-small`）= 运行时可达 **且** 服务端 `weights_ready=true`。权重缺失或状态未知一律 false，避免“看起来可用、调用才发现缺权重”；
-- `weights_ready`：`true/false/null`（null = 无固定模型或服务端未提供状态）；`weights_source`：`local/modelscope/missing/remote`。
+- 固定了模型的 ASR 能力（`paraformer-zh` / `sensevoice-small`）= 运行时可达 **且** 服务端 `weights_ready=true` **且** `runtime_ready !== false`。权重/专用运行时缺失或状态未知一律 false，避免“看起来可用、调用才发现缺依赖”；
+- `weights_ready`：`true/false/null`（null = 无固定模型或服务端未提供状态）；`weights_source`：`local/modelscope/missing/remote`；
+- `runtime_ready`：SenseVoice 专用 FunASR venv 是否就绪（null = 无专用运行时要求）。
 
 `loaded`=引擎当前是否常驻（取不到为 null）；**显存门槛数值一律转发自各服务端字段**（`vram_source` 标明出处），网关不硬编码。固定模型的 ASR 门槛来自 trainer `GET /v1/asr/readiness → resident_model_status[<model>].vram_required_mb`（Paraformer 2048 / SenseVoice 1536）；faster-whisper 无固定模型，`vram_required_mb` 是 `asr` 引擎的静态兜底，实际值随 `size/precision` 变，调用前用 `/v1/asr/plan`。
 
@@ -93,6 +94,7 @@ OpenAI 形状：`{object:'list', data:[{id, object:'model', owned_by, kind, labe
 - **上游结构化错误原样透传**：引擎忙 409（irodori/netease）与 429/403（trainer）、显存不足 503 `VRAM_INSUFFICIENT`、参考缺失 400……状态码与 hint 都是各服务的语义，**不翻译**。
 - 网关自有两类：`OPEN_RUNTIME_UNREACHABLE`（503，运行时没起/连不上，hint 指向设置页与 /api/capabilities）、`OPEN_UPSTREAM_ERROR`（上游响应形态异常）。
 - ASR 固定模型权重未就绪：上游 trainer 返回 **503 `WEIGHTS_MISSING`**（在显存准入之前检查），hint 带下载命令 / 本地放置路径；`/api/capabilities` 的 `available=false`、`weights_ready=false` 与它一致。
+- SenseVoice 专用运行时缺失：上游 trainer 返回 **503 `SENSEVOICE_RUNTIME_MISSING`**（同样在显存准入之前），hint 指向 `trainer/sensevoice-venv` / `SENSEVOICE_PYTHON`；capabilities 的 `runtime_ready=false` 与它一致。
 - 校验失败（未知 model / 缺参考 / kind 不匹配 / 缺 params.model）→ 400 `INVALID_REQUEST`，`details.supported` 带受支持清单。
 
 ## 显存与互斥（外部调用方必读）

@@ -806,6 +806,7 @@ export async function capabilitiesHandler(_req: import('express').Request, res: 
       loaded: loaded ?? null,
       weights_ready: availability.weights_ready,
       weights_source: availability.weights_source,
+      runtime_ready: availability.runtime_ready,
       vram_required_mb: availability.vram_required_mb,
       vram_source: spec.vram_source,
       hint: spec.hint,

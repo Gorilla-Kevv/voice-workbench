@@ -46,8 +46,8 @@ check('C5 每个本地能力都有 arbiter_engine，mimo 为 null',
 
 // ---- 能力可用性：运行时可达 + ASR 固定模型权重就绪（阶段 44补2）
 const asrModels = {
-  'paraformer-zh': { weights_ready: true, weights_source: 'local', vram_required_mb: 2048 },
-  'iic/SenseVoiceSmall': { weights_ready: false, weights_source: 'missing', vram_required_mb: 1536 },
+  'paraformer-zh': { weights_ready: true, weights_source: 'local', runtime_ready: true, vram_required_mb: 2048 },
+  'iic/SenseVoiceSmall': { weights_ready: false, weights_source: 'missing', runtime_ready: true, vram_required_mb: 1536 },
 };
 const senseSpec = CAPABILITIES.find((c) => c.id === 'sensevoice-small');
 const paraSpec = CAPABILITIES.find((c) => c.id === 'paraformer-zh');
@@ -66,6 +66,13 @@ check('C9 ASR 能力声明 weights_key / SenseVoice 不再固定 size',
   senseSpec?.weights_key === 'iic/SenseVoiceSmall'
     && paraSpec?.weights_key === 'paraformer-zh'
     && !('size' in (senseSpec?.fixed_params ?? {})));
+check('C10 权重就绪但专用运行时缺失 → available=false',
+  Boolean(senseSpec) && capabilityAvailability(
+    senseSpec!,
+    true,
+    { 'iic/SenseVoiceSmall': { weights_ready: true, runtime_ready: false, vram_required_mb: 1536 } },
+    2048,
+  ).available === false);
 
 // ---------------------------------------------------------------- 单元：上游客户端
 const fakeUpstream = http.createServer((req, res) => {
@@ -141,6 +148,7 @@ check('P2 实时状态字段齐（available/weights_ready/loaded/vram_required_m
   caps.json.capabilities.every((c: any) => typeof c.available === 'boolean'
     && (c.weights_ready === null || typeof c.weights_ready === 'boolean')
     && (c.weights_source === null || typeof c.weights_source === 'string')
+    && (c.runtime_ready === null || typeof c.runtime_ready === 'boolean')
     && (c.loaded === null || typeof c.loaded === 'boolean')
     && (c.vram_required_mb === null || typeof c.vram_required_mb === 'number')
     && typeof c.vram_source === 'string' && typeof c.hint === 'string'));

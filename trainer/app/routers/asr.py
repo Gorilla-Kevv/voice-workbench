@@ -51,6 +51,14 @@ def _raise_if_weights_missing(resolved: Dict[str, Any]) -> None:
             status=503,
             retryable=False,
         )
+    if resolved.get("channel") == "resident" and resolved.get("runtime_ready") is False:
+        raise AsrError(
+            "SenseVoice 运行时未就绪",
+            hint=str(resolved.get("runtime_hint") or "创建 trainer/sensevoice-venv 或设置 SENSEVOICE_PYTHON。"),
+            code="SENSEVOICE_RUNTIME_MISSING",
+            status=503,
+            retryable=False,
+        )
 
 
 def _request_from(data: Any) -> DatasetRequest:

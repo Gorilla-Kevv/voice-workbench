@@ -206,7 +206,9 @@ DEFAULTS: Dict[str, str] = {
 REQUIRED_VRAM_MB: Dict[str, Dict[str, int]] = {
     # ---- FunASR 常驻 ----
     "paraformer-zh": {"default": 2048},        # 权重「两三百 MB」×(模型+VAD+标点)，fp32 常驻 ~1.5-2 GB（bootstrap.py:136 注释量级）
-    "iic/SenseVoiceSmall": {"default": 1536},  # 多语种 small 底座 + fp32，比 paraformer 轻，余量给足
+    # 多语种 small 底座 + fp32；2026-10-25 实测（新 venv / FunASR 1.3.30 / GPU）：
+    # 常驻 +1050MB、峰值 +1099MB；门槛仍保持 1536（宁估高）
+    "iic/SenseVoiceSmall": {"default": 1536},
     "speech_UniASR_yue": {"default": 2048},    # 粤语 paraformer 同量级
     # ---- faster-whisper（CT2）----
     # tiny/base/small 一档：small 权重 ~0.5 GB（fp16），这正是「旧 2048 一刀切误拦」的主角，
