@@ -3,6 +3,7 @@
 > 本仓库经 `link_ttstool` Junction 被 `Mega-Scale AI Workflow Integration Project` 引用，**可能同时有多个 Agent 在此工作**。
 > 规范：任何 Agent 对本仓库的改动或服务操作，必须在本文档追加记录（**倒序，最新在上**），注明时间、Agent、改动内容、原因、验证、回滚方式与对其他 Agent 的影响。
 > 相关规范见本仓库 `AGENTS.md`「外部共享约束」节与主中枢 `AGENTS.md` 第二节核心红线「外部共享目录改动记录」。
+> **状态注（2026-11-09 BY Qoder）**：下文阶段 45~48 各条写的「本次未提交 git」已全部失效 —— 这些改动已在 2026-11-09 统一入库并推送：`9c9abbf`（阶段 45~48 实现）、`689a246`（文档与知识库）、`b42a60a`（`.tmp` 回归锁 31 份）；远端 `origin/feature/vc-svc` = `b42a60a`。
 
 ---
 
@@ -16,7 +17,7 @@
   4. **gsv5 `:9885`**：v5turbo 冷进程装载 52.7s、常驻 +2334 MB、首条 14.03s（RTF 3.47，进程级 CUDA 首跑）、次条 1.69s（**RTF 0.419**）；热进程重载 5.2s、次条 0.99s（**0.246**）；48kHz；峰值净占 ≈3400 MB。**发现 `/v1/unload` 不归还首次 CUDA 初始化的一次性成本 ~1.5GB（循环 load→unload 水位稳定，不是累积泄漏）** → 换引擎要停服务而不是只 unload。
   另补跑 `.tmp/verify_vram_estimate.py` 的真实 `/health` 段（9/9）；离线回归委派 teammate 跑完 15 项（typecheck/build 与 12 项脚本实质通过）。
 - **验证**：四份真机结果 JSON/日志在 `.tmp/gpu-verify-20261109/`（`netease_warmup_result.json`、`indextts_segments_result.json`、`gsv5_result.json`、`r2t2_gpu_smoke.log` + 三份 `*_vram.csv`）；离线回归日志 18 份在 `.tmp/regression-20261109/`；`npm run typecheck`、`npm run build`、`.tmp/verify_open_gateway.mts`（改后 30/30 待复跑）、`verify_asr_gate` 25/25、`verify_asr_sensevoice` 12/12+2SKIP、`verify_svc_train` 13/13（真 CPU 训练 107s）等。
-- **对其他 Agent 的影响**：**生产代码零改动**（app/ server/ trainer/ netease/ indextts/ gsv5/ irodori/ cosyvoice/ 与任何服务的路由契约都没变）；`.tmp` 里三份回归锁改动只影响「跑测试的人」。运行期没有留下任何服务（8787/9881~9886 全空）。**未提交 git**（工作区仍是阶段 45~49 的未提交状态）。新事实两条给后续 agent：① `gsv5` 只 unload 会占 1.5GB → 让位请停服务；② R2T2 GPU 实测峰值净增 ≈6.1GB（最低 free 82MB），6144 门槛不能下调、跑前要关占卡大户。
+- **对其他 Agent 的影响**：**生产代码零改动**（app/ server/ trainer/ netease/ indextts/ gsv5/ irodori/ cosyvoice/ 与任何服务的路由契约都没变）；`.tmp` 里三份回归锁改动只影响「跑测试的人」。运行期没有留下任何服务（8787/9881~9886 全空）。**本轮未动 git**；阶段 45~49 的全部改动随后按使用者要求于同一日入库并推送到 `origin/feature/vc-svc`（提交见上方的状态注）。新事实两条给后续 agent：① `gsv5` 只 unload 会占 1.5GB → 让位请停服务；② R2T2 GPU 实测峰值净增 ≈6.1GB（最低 free 82MB），6144 门槛不能下调、跑前要关占卡大户。
 - **回滚方式**：文档回滚上述四份 `.md` 即可；`.tmp` 三份锁直接 `git checkout --`（若被跟踪）或忽略；`.tmp/gpu-verify-20261109/`、`.tmp/regression-20261109/` 可整目录删除，无数据迁移。GPU 侧无残留（已验证）。
 
 ---

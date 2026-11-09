@@ -652,9 +652,10 @@
 - **既有 lint 债未清**：`cd app && npx eslint src` 有 **13 个错误**，全部落在本轮未改动的 11 个文件
   （`react-refresh/only-export-components` ×7、`useHistory` 渲染期读 ref、`useRecorder` 无用表达式等）；
   对本次未提交改动的 39 个 app 文件单独 lint 为 0 错。建议单开票处理。
-- **工作区现有 71 个未提交改动**：阶段 45~48 + 47补 系列的 68 个，加本轮文档（`docs/ASR.md` §8.5、
-  `PROGRESS`/`HANDOFF`/`AGENT_CHANGELOG`）与 `.tmp` 三份回归资产。本轮**未提交、未推送**；
-  要提交请先与使用者确认（工作区含其他会话的未提交改动）。
+- **阶段 45~49 已入库并推送**（2026-11-09，使用者要求）：`9c9abbf` 实现（92 文件）→ `689a246`
+  文档与知识库（14 文件）→ `b42a60a` `.tmp` 回归锁入库（31 份脚本）。`origin/feature/vc-svc`
+  已同步到 `b42a60a`；工作区只剩 `.tmp` 的本地数据（bench 音频、venv、日志、证据 JSON）与
+  `.zcode/` 未跟踪。此前各阶段写的「本次未提交 git」已失效。
 
 - 本次文档更新时间：11.09
 
