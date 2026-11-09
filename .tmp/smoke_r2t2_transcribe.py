@@ -65,7 +65,14 @@ def main():
     except Exception:
         pass
     if DEVICE != "cpu":
+        # 2026-11-09：桌面基线在 6188~6204 MB 之间抖动，阈值 6200 正好落在抖动带上，
+        # 在外部脚本里先采样再起 python（导入 soundfile/numpy 约 1.5s）会输掉这场竞速。
+        # 改成**在同一个进程里等窗口**（最多 3 分钟），采样后立刻 spawn —— 阈值不动。
+        deadline = time.monotonic() + 180
         free = free_vram_mb()
+        while free is not None and free < REQUIRED_FREE_MB and time.monotonic() < deadline:
+            time.sleep(2)
+            free = free_vram_mb()
         if free is None or free < REQUIRED_FREE_MB:
             print(f"[skip] 空闲显存 {free} MB < {REQUIRED_FREE_MB} MB（坑 78：硬跑会溢出共享内存假死），"
                   "关掉占显存的程序后重跑本脚本，或用 --device cpu 走零显存排障通道")
@@ -73,10 +80,15 @@ def main():
         print(f"[run] 空闲显存 {free} MB，启动 worker（transformers 后端，加载约 1~2 分钟，含静音预热）…")
     else:
         print("[run] --device cpu：零显存排障通道（fp32，RTF 慢——CPU 上 1.5B 模型转写可能要数分钟）…")
+    # 协议行的编码必须与生产客户端（`netease/app/r2t2.py`）完全一致：
+    # 子进程 Windows 默认按 locale(GBK) 写 stdout，而父进程按 utf-8 读 —— worker 第一条
+    # 中文日志（「加载 R2T2 模型…」）就会让父进程 UnicodeDecodeError。
+    # 2026-11-09 本脚本漏了这两个环境变量，真机冒烟直接死在 load 之前。
     proc = subprocess.Popen(
         [VENV_PY, WORKER, "--model", MODEL_DIR, "--backend", "transformers", "--device", DEVICE],
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None,
         text=True, encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"},
     )
 
     def send(payload):

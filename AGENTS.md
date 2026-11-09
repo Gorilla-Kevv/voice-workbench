@@ -1,8 +1,9 @@
 # AGENTS.md（voice-workbench 仓库级约定）
 
-本地语音工作台：前端（`app/` React 19）+ Node 网关（`server/`）+ 四个 Python 运行时（`trainer/` GPT-SoVITS、`netease/`、`indextts/`、`irodori/`）。纯本地部署，无线上产物。
+本地语音工作台：前端（`app/` React 19）+ Node 网关（`server/`）+ 六个 Python 运行时（`trainer/` GPT-SoVITS、`netease/`、`indextts/`、`irodori/`、`gsv5/`、`cosyvoice/`）。纯本地部署，无线上产物。
 
-接手开发前先读 `HANDOFF.md`（环境路径 / 分支 / 已知坑 77 条 / 命令）与 `PROGRESS.md`（阶段台账，按 `token-efficient-agent-workflow` 维护）；方案与评估文档在 `docs/`。
+接手开发前先读 `HANDOFF.md`（环境路径 / 分支 / 已知坑 / 命令）与 `PROGRESS.md`（阶段台账，按 `token-efficient-agent-workflow` 维护）；方案与评估文档在 `docs/`。
+**只借用本工作区模型能力（TTS/ASR/变声/分离）的 Agent，先读 `docs/AGENT-GUIDE.md`**：能力发现、Open API / CLI、显存互斥与共享工作区红线。
 
 ## Agent skills
 

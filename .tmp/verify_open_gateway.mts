@@ -23,10 +23,13 @@ function check(name: string, cond: boolean, detail = ''): void {
 }
 
 // ---------------------------------------------------------------- 单元：能力表
-check('C1 能力项数量 = 13', CAPABILITIES.length === 13, String(CAPABILITIES.length));
+// 新增能力（如阶段 48 的 cosyvoice3-tts）要同步这三个数：总数、tts 数、M1/P1 的数组长度。
+const EXPECTED_TOTAL = 14;
+const EXPECTED_TTS = 7;
+check(`C1 能力项数量 = ${EXPECTED_TOTAL}`, CAPABILITIES.length === EXPECTED_TOTAL, String(CAPABILITIES.length));
 const byKind = Object.groupBy(CAPABILITIES, (c) => c.kind) as Record<string, typeof CAPABILITIES>;
-check('C2 kind 覆盖 tts6/asr4/vc1/svc1/separation1',
-  byKind.tts?.length === 6 && byKind.asr?.length === 4 && byKind.vc?.length === 1 && byKind.svc?.length === 1 && byKind.separation?.length === 1);
+check(`C2 kind 覆盖 tts${EXPECTED_TTS}/asr4/vc1/svc1/separation1`,
+  byKind.tts?.length === EXPECTED_TTS && byKind.asr?.length === 4 && byKind.vc?.length === 1 && byKind.svc?.length === 1 && byKind.separation?.length === 1);
 const ids = new Set<string>();
 const aliases = new Set<string>();
 let collision = false;
@@ -137,13 +140,13 @@ async function call(method: string, path: string, body?: unknown): Promise<{ sta
 
 // 五个本地运行时全部死端口（真实 config 指向 9881~9885，未启动）
 const models = await call('GET', '/api/open/v1/models');
-check('M1 models 形状 = OpenAI list', models.json?.object === 'list' && Array.isArray(models.json?.data) && models.json.data.length === 13);
+check('M1 models 形状 = OpenAI list', models.json?.object === 'list' && Array.isArray(models.json?.data) && models.json.data.length === EXPECTED_TOTAL);
 check('M2 每项有 id/object/owned_by/kind/available',
   models.json.data.every((m: any) => m.id && m.object === 'model' && typeof m.owned_by === 'string' && m.kind && typeof m.available === 'boolean'));
 check('M3 本地运行时未启动 → available=false', models.json.data.filter((m: any) => m.owned_by !== 'voice-workbench/mimo').every((m: any) => m.available === false));
 
 const caps = await call('GET', '/api/capabilities');
-check('P1 capabilities 13 项 + 端点指引', caps.json?.ok === true && caps.json.capabilities.length === 13 && caps.json.capabilities.every((c: any) => typeof c.endpoint === 'string' && c.endpoint.startsWith('POST /api/open/')));
+check(`P1 capabilities ${EXPECTED_TOTAL} 项 + 端点指引`, caps.json?.ok === true && caps.json.capabilities.length === EXPECTED_TOTAL && caps.json.capabilities.every((c: any) => typeof c.endpoint === 'string' && c.endpoint.startsWith('POST /api/open/')));
 check('P2 实时状态字段齐（available/weights_ready/loaded/vram_required_mb/vram_source/hint）',
   caps.json.capabilities.every((c: any) => typeof c.available === 'boolean'
     && (c.weights_ready === null || typeof c.weights_ready === 'boolean')

@@ -2,12 +2,14 @@
 
 > 面向「别的任务 / Agent」的模型能力调用入口。**纯加法**：工作台 14 个页面继续走
 > `/api/sovits|netease|indextts|irodori|gsv5|voicelib|models` 各自的透传，本层不改它们任何行为。
+> 终端 / Agent 的现成封装见 `docs/CLI.md`（`node scripts/say.mjs`，单条 + 批量）；
+> 面向外部 Agent 的总览（含启动/显存/红线）见 `docs/AGENT-GUIDE.md`。
 >
 > - 地址：`http://127.0.0.1:8787`（网关默认只听回环，无鉴权——与全站「纯本地部署」一致）
 > - 风格：OpenAI 兼容路径 + 本仓错误契约
 > - 能力发现：`GET /api/capabilities`（全量描述）与 `GET /api/open/v1/models`（OpenAI 形状清单）
 
-## 能力清单（13 项）
+## 能力清单（14 项）
 
 | kind | id | 运行时 | 一句话 |
 | --- | --- | --- | --- |
@@ -16,6 +18,7 @@
 | tts | `indextts-2.5` | indextts :9883 | 8 维情感向量 / 语速 |
 | tts | `irodori-tts` | irodori :9884 | 仅日语 + emoji 情感 + 固化音色 |
 | tts | `gpt-sovits-v5` | gsv5 :9885 | v5turbo（快）/ v5dev（高质） |
+| tts | `cosyvoice3-tts` | cosyvoice :9886 | 9 语言 + 18 中文方言；`mode` ∈ zero_shot / cross_lingual / instruct2，24kHz |
 | tts | `mimo` | 云端 | 需服务端密钥；不占显存 |
 | asr | `paraformer-zh` | sovits | 中文逐字+标点首选 |
 | asr | `sensevoice-small` | sovits | 中英日韩粤；无 size 概念、不挂 VAD（耳语友好）、逐字（不 ITN）；本地权重 + 独立 worker（`trainer/sensevoice-venv`，可 `SENSEVOICE_PYTHON` 覆盖）；`available` 需 weights_ready+runtime_ready（1536MB） |

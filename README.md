@@ -283,6 +283,30 @@ bash scripts/start.sh --mode local
 
 ---
 
+### 命令行合成（给 Agent / 自动化）
+
+网关与对应运行时启动后，可以用薄 CLI 直接合成，不用开页面：
+
+```bash
+# 单条：走 Open API，stdout 只有一段 JSON
+node scripts/say.mjs --model gpt-sovits-v2proplus --voice <音色库id> --text "你好" --out out.wav
+
+# 批量：走 GPT-SoVITS 批量接口，异步轮询并下载
+node scripts/say.mjs batch --voice <音色库id> --file lines.txt --out-dir out/batch1 --zip
+
+# 只展开条目，不合成
+node scripts/say.mjs batch --plan --voice <音色库id> --file lines.txt
+```
+
+用 `npm run say -- ...` 时请加 `--silent`（`npm run --silent say -- ...`），否则 npm 的
+启动 banner 会混进 stdout。完整参数、JSON 字段、退出码与错误码见
+[docs/CLI.md](docs/CLI.md)。CLI 不负责启动服务或下载权重，GPU 互斥规则与页面一致。
+
+> 面向外部 Agent 的总入口（能力发现、Open API、CLI、显存互斥与共享红线）：
+> [docs/AGENT-GUIDE.md](docs/AGENT-GUIDE.md)。
+
+---
+
 ## 验证安装
 
 一条命令做完环境体检：

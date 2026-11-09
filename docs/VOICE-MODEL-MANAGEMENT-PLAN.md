@@ -135,7 +135,7 @@ models/                          ← 唯一的模型根（已有，现在几乎�
   而不是以目录层级为准。这样扁平放和建子目录放都能识别。
   - RVC 主权重：`*.pth`（排除 `trained_*`、`*_g.pth`、`*_d.pth` 等训练中间件）
   - DDSP-SVC 主权重：`*.pt`（**必须**同目录有 `config.yaml`，否则标为「不完整」而不是隐藏）
-  - GPT-SoVITS：`*.ckpt` + `*.pth` 成对
+  - GPT-SoVITS：`*.ckpt` + `*.pth` 成对；**也可只放 `*.pth`**（SoVITS 单权重，配同版本预训练 GPT）
 - **配套文件靠「同目录 + 同 basename」配对**，不再用「路径含模型名」的启发式
   （现有 `find_index_for()` 的写法在嵌套目录下会误配）。
 
@@ -292,7 +292,11 @@ export interface ModelCategorySpec {
 | --- | --- | --- | --- | --- |
 | `rvc` | `rvc/` | `/^(?!trained_).+\.pth$/i` | — | `.index` |
 | `ddsp-svc` | `ddsp-svc/` | `/\.pt$/i` | `config.yaml` | `config.yaml` |
-| `gpt-sovits` | `gpt-sovits/` | `/\.ckpt$/i` | — | `.pth` |
+| `gpt-sovits` | `gpt-sovits/` | `/\.(ckpt|pth)$/i` | — | `.pth` |
+
+> GPT-SoVITS：同目录只有一个 `.ckpt` 时，目录内 `.pth` 全算配套（一个音色）；
+> 没有 `.ckpt` 时每个 `.pth` 各自成为一个模型（下载的纯 SoVITS 权重）。
+> 合成侧只给 `.pth` 会自动配同版本预训练 GPT（阶段 45，见 HANDOFF 坑 102）。
 
 > RVC 的 `trained_*` 排除规则来自官方约定（`vc/models.py` 里已有同样判断）。
 

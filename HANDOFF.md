@@ -8,6 +8,7 @@
 - **路径**：`F:\schoolCompWorks\clone\ttstool`
 - **名称**：本地语音工作台（voice-workbench）
 - **定位**：**纯本地部署**。线上旧版本在独立仓库维护，本仓库不涉及任何线上部署配置。
+- **外部 Agent 使用指南**：`docs/AGENT-GUIDE.md`（能力发现 / Open API / CLI / 显存互斥 / 共享红线；只借用模型能力时先读它）。
 
 ### 技术栈
 
@@ -21,7 +22,8 @@
 | IndexTTS `indextts/` | 第四个运行时之一：独立 venv + FastAPI；端口 9883 |
 | GPT-SoVITS v5 `gsv5/` | **第五个运行时**（阶段 36）：`gsv5/.venv`（**py3.12 + torch 2.7.1+cu128**）+ FastAPI；端口 **9885**，`npm run dev:gsv5` 拉起。上游 main 只读 clone 在 `gsv5/upstream/`；v5 权重 `gsv5/upstream/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/`（s2Gv5dev/s2Gv5turbo/vocoder）+ s1v3.ckpt hardlink 共享整合包；端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；`GSV5_DEVICE=cpu` 可显式 CPU。**纯推理底模**（上游无 v5 训练配置，训练仍走整合包 v2ProPlus） |
 | Irodori-TTS `irodori/` | **日语特化**（阶段 30 接入中：30-1 环境 + 30-2 推理链路 + 30-3 长尾护栏 + 30-4 长参考 + **30-5 训练 S1+S2 已完成**，剩 30-6 训练编排 / 30-7 前端）：独立 venv（**py3.12 + torch 2.10.0+cu128**）+ FastAPI；端口 9884 |
-| 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重）、Irodori v4.1-Small（日语，int4 推理档 + bf16 训练基座） |
+| CosyVoice3 `cosyvoice/` | **第六个运行时**（阶段 48）：`cosyvoice/.venv`（**py3.10 + torch 2.3.1+cu121**）+ FastAPI；端口 **9886**，`npm run dev:cosyvoice` 拉起。上游只读 clone 在 `cosyvoice/upstream/CosyVoice`；权重 `cosyvoice/models/Fun-CosyVoice3-0.5B/`（约 5.4GB，ModelScope）；端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；Windows 加载补丁（`torch.load`→cpu / ONNX provider 回落）在 `app/engine.py`。**只接推理，不接训练**（0.5B 全量微调显存账 >13GB + Linux DeepSpeed）。**权重未下载**（2026-11-05 用户叫停下载，3.6GB 分片已入回收站）；恢复下载前必须征得同意 |
+| 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重）、Irodori v4.1-Small（日语，int4 推理档 + bf16 训练基座）、CosyVoice3-0.5B（方言/多语种，24kHz） |
 
 ### 运行环境路径（新会话直接照抄，别重新找）
 
@@ -33,6 +35,7 @@
 | IndexTTS | `indextts/.venv/`（`scripts/indextts.mjs` 会自己找） |
 | **Irodori** | `irodori/.venv/Scripts/python.exe`；权重在 `irodori/models/`、上游代码在 `irodori/upstream/`（都在 gitignore 里）；清单 `irodori/weights.manifest.json` **进版本库** |
 | **GPT-SoVITS v5** | `gsv5/.venv/Scripts/python.exe`（py3.12+cu128）；入口 `scripts/gsv5.mjs`（:9885）；体检 `npm run gsv5:check` |
+| **CosyVoice3** | `cosyvoice/.venv/Scripts/python.exe`（py3.10+cu121）；入口 `scripts/cosyvoice.mjs`（:9886）；体检 `npm run cosyvoice:check`；权重 `npm run cosyvoice:weights` |
 | uv（建 venv 用） | `C:\Users\kevin\.local\bin\uv`；⚠️ **缓存默认在 `D:\AI_Cache\uv`，沙箱里写不进去** → 先 `export UV_CACHE_DIR=<工作区内>` |
 
 ### 分支
@@ -53,8 +56,12 @@
 6. 网易模块（Confucius4-TTS / R2T2）：第二个 Python 运行时 `netease/` + 前端「网易模块」两个页面，与现有链路完全共存
 7. Irodori-TTS：第四个 Python 运行时 `irodori/`，日语特化克隆与 Speaker Inversion 固化训练，长尾护栏与多片段长参考
 8. GPT-SoVITS v5：第五个 Python 运行时 `gsv5/`，上游 main 核心源码与双变体（v5turbo / v5dev）零样本推理底模接入，SettingsPage 服务卡与侧栏状态卡全链路贯通
+9. CosyVoice3：第六个 Python 运行时 `cosyvoice/`，Fun-CosyVoice3-0.5B 推理接入（9 语言 + 18 中文方言 / 自然语言 instruct），含 Windows 加载补丁与独立 py3.10 venv
 9. AI 声音知识图谱与规范导出包：`knowledge-atlas/` Linear 风格交互门户与 `knowledge-export/` 规范手册包，知识收集整合工作流 `knowledge-inbox/`
 10. DDSP-SVC 训练入口（阶段 44）：两段式 `preprocess → train_reflow` 编排、数据/时长约束、最终权重补存、产物 `.pt + config.yaml` 归位、前端训练卡与共用训练结果卡
+11. GPT-SoVITS 本地合成迁移与 `.pth` 单权重（阶段 45）：通用合成固定 MiMo，本地合成与权重选择（零样本 / 只选 `.pth` / 成对）迁到批量合成页；音色库与 `/v1/weights` 接受纯 `.pth`，worker 缺一侧时显式配同版本预训练底模；设置页只保留 MiMo API Key
+12. Irodori 语气提示 + IndexTTS 分段情感（阶段 46）：Irodori 日语页明示 emoji 语气标记（🤭/😮‍💨/😆/😭/🥱）并改为插入光标；IndexTTS 新增 `/v1/synth/segments` 与「单段 / 分段情感」编辑器，每段独立预设情感 + 强度，服务端逐段生成并拼接（段间停顿 + 5ms 淡入淡出）；设置页 GPT-SoVITS 卡新增「包含能力」列表（RVC/DDSP-SVC/ASR/UVR5 状态 + 单独卸载/全部卸载）
+13. UVR5 保持生产、PyMSS 试迁移已否决（阶段 47 / 47补1）：曾完成独立 py3.12 runtime + bridge/check/train_cli + 9 模型清单与 `PymssEngine` 全套适配；**用户耳听确认 4_HP-Vocal 杂声多，且 8GB 显存下 UVR5 更优**，生产代码已回滚为纯 UVR5（无 `UVR_BACKEND`/`pymss_*`），`pymss/` 仅保留未接入的实验记录；`engine.unload_all` 的真 bug 修复保留
 
 ### 非目标
 
@@ -88,6 +95,7 @@
 | `indextts/` | **第三个 Python 运行时**（uv 环境在 `upstream/.venv`，py3.11 + torch 2.8 cu128）：`server.py`、`app/{config,hardware,errors,indextts_engine,api}.py`。上游 `upstream/` 是 `git clone --depth 1` 的官方仓库（不改一行），权重在 `upstream/checkpoints/`（5.11 GB，ModelScope 下载）。端点：`/health`、`/v1/catalog`、`/v1/pipeline|warmup|unload`、`/v1/synth`（multipart：text/lang/file 或 ref_path/duration_factor/emo_vector/emo_file/emo_alpha）。上游 API 漂移只改 `indextts_engine.py` 一个薄文件 |
 | `irodori/` | **第四个 Python 运行时**（venv 在 `irodori/.venv`，py3.12 + torch 2.10 cu128）：`server.py`、`app/{config,hardware,errors,inventory,windecode,api,engine,catalog,synth}.py`。`engine.py` 懒加载（上游 `get_cached_runtime` 单实例缓存）+ 显存准入（已加载跳过）+ 合成互斥；`catalog.py` 的 emoji 表**从上游源码 ast 解析**（不 import torch/gradio）；`synth.py` 收口日语校验 / 服务端切句 ≤25 字/段 / 参考三形态互斥。上游 `upstream/{Irodori-TTS,dacvae}/` 只读（tarball 来源锁定）；权重 `models/`、清单 `weights.manifest.json` 进版本库。端点：`/health`、`/v1/catalog|warmup|unload|synth|speakers`。上游 API 漂移只改 `engine.py`（RuntimeKey/SamplingRequest 映射）一个薄文件 |
 | `gsv5/` | **第五个 Python 运行时**（阶段 36）：venv 在 `gsv5/.venv`（py3.12 + torch 2.7.1 cu128），FastAPI 端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；纯推理底模（v5turbo 4 步 / v5dev 32 步）；`scripts/gsv5.mjs` launcher |
+| `cosyvoice/` | **第六个 Python 运行时**（阶段 48）：venv 在 `cosyvoice/.venv`（py3.10 + torch 2.3.1 cu121），FastAPI 端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；`engine.py` 懒加载 + 显存准入 + 合成互斥 + **Windows 两个补丁**（`torch.load` 强制 CPU 再逐张量上卡 / ONNX provider 回落）；`synth.py` 收口三模式（zero_shot / cross_lingual / instruct2）与音色库解析；`scripts/cosyvoice.mjs` launcher；权重清单 `weights.manifest.json` 进版本库 |
 | `knowledge-atlas/` | **AI 声音知识图谱 Web 交互门户**（阶段 37 建，**阶段 39 视觉重构为「知识总簿 · 年鉴体」**：纸面双色印刷、墨蓝卷首横幅、卷次总目 + 双栏密排 + 连续条号 apparatus、无阴影 hairline 深度；规范见其 `DESIGN.md`）；三大一等视图（篇目 / 术语速查 / 工具资源）、全局搜索（逐卷计数徽章）、hash 路由；核心数据源 `js/data.js` |
 | `knowledge-export/` | **Markdown 规范手册包**（阶段 37）：`build.js` 编译脚本从 `data.js` 导出 10 份规范手册，对齐 `aiPaintingKownledge` 体系 |
 | `knowledge-inbox/` | **知识收集缓存与整合流程**（阶段 37）：手动收集物放此目录（gitignore），五步整合流程（分析文件→产出报告→验证可行性→横向对比→整合进 data.js→重新编译） |
@@ -898,7 +906,8 @@
 | 启动预加载 | `GET /api/preload/catalog`（各模型显存代价 + 当前余量）、`POST /api/preload`（执行）、`PUT /api/preload/preference`；偏好存 `server/.data/preload.json` |
 | 网易模块体检 | `npm run netease:check`（或 `python scripts/preflight_netease.py [--allow-missing-asr]`；R2T2 段按后端分口径，子进程探 r2t2-venv 真实导入性） |
 | 网易权重下载 | `npm run netease:weights [-- --proxy http://127.0.0.1:7890] [-- --include-r2t2]`（脚本幂等：已就位文件跳过，断点残件 .part 原子落盘——坑 83） |
-| R2T2 离线转写 | 回归 `python .tmp/verify_r2t2_offline.py --runtime`（26 项，R5 触发真 load 验导入路径）；真机冒烟 `python .tmp/smoke_r2t2_transcribe.py [audio.wav] [--device cpu]`（GPU 模式内置 6200MB 显存护栏，坑 78；`--device cpu` 走零显存排障通道 fp32——10.24 已双语实测通过，见坑 87/88）；环境建法见 `netease/README.md`「R2T2 离线转写」节 |
+| R2T2 离线转写 | 回归 `python .tmp/verify_r2t2_offline.py --runtime`（26 项，R5 触发真 load 验导入路径）；真机冒烟 `python .tmp/smoke_r2t2_transcribe.py [audio.wav] [--device cpu]`（GPU 模式内置 6200MB 显存护栏**且在进程内等窗口**，坑 78/114；`--device cpu` 走零显存排障通道 fp32——10.24 已双语实测通过，见坑 87/88）。**GPU bf16 已于 11.09 实测**：load 60s、8.4s 中文轻语 1.5s（RTF 0.18）、峰值净增 ≈6134MB、最低 free 82MB（坑 113） |
+| 阶段 49 真机验证四件套 | `.tmp/gpu-verify-20261109/`：`verify_netease_warmup.py`（netease venv，验 `warmup_real` 与首条合成耗时）、`verify_indextts_segments_live.py`（indextts venv，验 5500 门槛 + `/v1/synth/segments`）、`verify_gsv5_live.py`（gsv5 venv，验 v5turbo GPU + unload 一次性成本）、`.tmp/smoke_r2t2_transcribe.py`（整合包 python）。前三者先用 `node scripts/{netease,indextts,gsv5}.mjs` 起服务，跑完脚本内会 unload；**服务要手动停**（gsv5 只 unload 会留 1.5GB，坑 112） |
 | ASR 准入门槛回归 | `python .tmp/verify_asr_gate.py`（25 项，参数化表 + 引擎覆盖行为；trainer 真实口径用整合包 python 跑——阶段 42，坑 86） |
 | ASR SenseVoice 路由/权重回归 | 整合包 python `.tmp/verify_asr_sensevoice.py`（catalog/readiness、ja 路由、backend/model 冲突、显式模型保护、缺权重 503、伪造本地快照识别、引擎层安全网；不加载模型、不吃显存。权重缺失时 14/14，权重就绪时 **12/12 + 2 SKIP**。阶段 44补2） |
 | SenseVoice worker/HTTP 冒烟 | 整合包 python `.tmp/smoke_sensevoice_worker.py`（AsrEngine→新 venv worker，GPU 显存采样）与 `.tmp/smoke_sensevoice_http.py`（load→transcribe→unload，全 200）。真机结果：常驻 +1050 / 峰值 +1099MB，热态 zh/en 0.27~0.29s；需 GPU 空闲，测完自动 unload |
@@ -908,6 +917,8 @@
 | 能力网关回归 | `cd server && node_modules/.bin/tsx ../.tmp/verify_open_gateway.mts`（**30 项**，死端口+内置假上游，不吃显存——阶段 43 + 44补2 的 ASR 可用性；契约见 docs/OPEN-API.md） |
 | worker 隔离验证（5 个脚本，共 139 项） | 先起服务 `./GPT-SoVITS-v2pro-20250604/runtime/python.exe trainer/server.py --port 19881 --no-open --no-warmup`，然后：`python .tmp/worker_smoke.py`（32 项，任意 py）、`python .tmp/verify_http.py 19881`（51 项）、`python .tmp/verify_recovery.py 19881`（14 项）；另两个用整合包解释器：`.tmp/verify_isolation.py`（12 项）、`.tmp/verify_synthesis.py`（30 项）。**脚本里都清掉了 `http_proxy`**（本机系统代理会拦 127.0.0.1） |
 | 只起网关+前端 | `npm run dev:cloud` |
+| CLI 单条合成 | `node scripts/say.mjs --model gpt-sovits-v2proplus --voice <id> --text "..." --out out.wav`（stdout 只有 JSON；用 npm 时加 `--silent`；见 `docs/CLI.md`） |
+| CLI 批量合成 | `node scripts/say.mjs batch --voice <id> --file lines.txt --out-dir out/batch [--zip]`；`--plan` 只展开，`--sync` 同步等待 |
 | 只起本地模型服务 | `npm run dev:sovits` |
 | 环境体检 | `npm run sovits:check`（退出码 0 表示就绪） |
 | 类型检查 | `npm run typecheck` |
@@ -920,8 +931,16 @@
 
 ### 当前状态
 
-- `feature/vc-svc` 分支；阶段 40~44 已在本地提交（未推送远端，按约定只在用户要求时 push）
+- `feature/vc-svc` 分支；阶段 40~44 已在本地提交（未推送远端，按约定只在用户要求时 push）；
+  **阶段 45~49 的改动仍在工作区未提交**（含 68 个已改文件 + 新增运行时 `cosyvoice/`，本轮不动 git）
 - `main` 分支停在 `f83d51b`（未包含 vc-svc 功能）
+- **阶段 49（11.09）把四条「等显存」的遗留真机验证一次跑完，零生产代码改动**：
+  R2T2 GPU bf16（load 60s / RTF 0.18 / 峰值净增 ≈6134MB，最低 free 82MB）、netease `warmup_real`（首条合成 9.64s，
+  修前 378s）、IndexTTS 5500 门槛 + `/v1/synth/segments`（逐段和 + gap 与总时长差 0.5ms）、
+  gsv5 v5turbo GPU（稳态 RTF 0.246 / 48kHz）；并归档了中文轻语 8 段 CER 基准
+  （SenseVoice 29.5% / Paraformer 44.6% / R2T2 23.0%，`docs/ASR.md` §8.5）。
+  新增坑 112~116（gsv5 unload 一次性成本 / R2T2 画像口径 / worker 协议编码 / 夹具漂移 / fp16 余量）；
+  真机峰值净增（nvidia-smi 采样）：R2T2 **6134MB**、netease 6039MB、IndexTTS 5541MB、gsv5 4039MB。
 - 功能可用；本地服务、网关、前端三进程由 `start.bat` 统一拉起
 - 术语表 100 条 + 页面接入 74 处
 - 官方流程指引（8 步）已接入训练页与合成页
@@ -1137,6 +1156,8 @@
 
 | 优先级 | 事项 | 备注 |
 | --- | --- | --- |
+| 低 | **清理 PyMSS 实验 runtime（待用户确认）** | 生产已恢复 UVR5；`pymss/.venv` + `pymss/models`（模型约 2.2GB）不再接任何生产代码。用户确认后走回收站并留痕；**不要删 UVR5 权重/代码**。 |
+| 高 | **IndexTTS 分段情感真机验证（阶段 46）** | 后端 `/v1/synth/segments` + 前端「单段 / 分段情感」编辑器已落地，离线解析/拼接 10/10；需腾 ≥5.5GB 显存并重启 IndexTTS，跑 2~3 段情绪转折，验收拼接处是否自然、情感是否按段生效 |
 | 高 | **SenseVoice 真实基准（8 段日/中耳语 CER）** | 权重 897MB 已落 `tools/asr/models/SenseVoiceSmall`；`trainer/sensevoice-venv` + worker 已接好，GPU 实测常驻 +1050 / 峰值 +1099MB、热态 zh/en 0.27~0.29s，真实 ja/zh/en 样例正确。剩：用报告方同一套 8 段素材做 CER / 最气声段落 / 热机延迟对比；llama-server 按用户选择未自动重启，GPU 空闲时可直接跑。 |
 | 高 | **阶段 44 的真实素材训练与浏览器走查** | GPU 画像已回填（12 条合成素材 / batch 8 / fp16 / workers 1：峰值增量 1417MB，门槛参数化 2048MB；10.24 22:12 窗口 free 6141MB）；回归 13/13 + 9/9 + 8/8 + 3/3 + GPU job 6/6。剩：① 用**真实歌声语料**跑一次（batch 8 起）并做耳朵验收；② 训练卡浏览器走查（起 dev 服务需用户点头，自动模式被拦） |
 | 高 | **产出记录页的浏览器人工走查（阶段 32 遗留验收）** | 跑一次 RVC 变声 + 一次翻唱 + 一次训练，三条记录都要出现在「产出记录」，且能内联播放、能复制本机路径。数据源已实测可用（`total=45`，音频地址加前缀 200），只差用户在浏览器点一遍 |
@@ -1180,6 +1201,21 @@
   `interval_log` / `SvcError+VcError` 处理器与调度器成功语义
 - 动 ASR / 能力网关前必看坑 97~99：模型级语种优先于 backend 级清单、权重就绪检查
   必须在 `engines.acquire()` 之前、`available` 不能只看 runtime.reachable
+- 动批量合成 / 显存预估前必看坑 101（引擎锁 ≠ 模型已加载；trainer 任务页不能建议关服务）；
+  动 GPT-SoVITS 权重（尤其下载的纯 `.pth`）前必看坑 102（单侧配预训练底模 / 版本匹配 / 仍需参考音频）；
+  动结果下载 / 音频 URL 前必看坑 103（已解析的 `/api/...` 不能再拼一次）；
+  动受控 Dialog 的程序化关闭前看坑 104（Radix exit 动画可能不卸载，用 key 强制）；
+  动语种下拉 / catalog 字段前看坑 105（后端 `code` vs 前端 `id`，value 全空会全选）；
+  动 IndexTTS 分段情感前看坑 106（服务端拼接/重启/5.5GB 门槛）；
+  动资源卡 / RVC 让位前看坑 107（同属 :9881 的引擎只能靠 trainer `/v1/engines/unload` 释放）；
+  动 UVR5/PyMSS 前看坑 108（PyMSS 已否决；UVR5 是唯一生产路径，pymss/ 仅实验记录）；
+  动 gsv5 加载前看坑 109（cwd 必须在 upstream、TTS_Config 只收 dict、sv 权重需补）；
+  动音频播放器或新增音频路由前看坑 110（统一 SlimAudioPlayer；路由必须支持 Range）；
+  动产出记录解析 / trainer 静态文件前看坑 111（results[] 才是批量音频；/files 已换 Range 路由）；
+  **动 gsv5 的 unload / 资源让位前看坑 112（gsv5 只 unload 会留 ~1.5GB，要停服务）**；
+  **要改 R2T2 / gsv5 / netease 的显存门槛前看坑 113/116（真机画像：R2T2 ≈4.2GB、netease fp16 峰值余量 <100MB）**；
+  **写会 spawn worker 的测试脚本前看坑 114（PYTHONIOENCODING 要跟着复制）**；
+  **回归锁跑红先看坑 115（夹具会随数据目录/能力表漂移）**
 - 每阶段结束更新 `PROGRESS.md`（六要素：已完成 / 未完成 / 改动文件 / 测试结果 / 风险 / 下一阶段入口）
 - 聊天中只传：路径、摘要、diff、失败日志
 
@@ -1236,6 +1272,10 @@
     - gsv5 v5turbo `3072`（注释自称「待实测的保守值」），坑 78 实测 2776 MB 就假死，说明 3072 不可信。
     **已校准**：IndexTTS → **5500**（净占 + ~230 MB 峰值余量）、gsv5 turbo → **3584**（对齐 dev 档），
     preload 账本与前端兜底常量三处同步（真源在服务端，坑 19）。
+    **阶段 49 补充（11.09 实测）**：gsv5 冷进程全链峰值净增 **4039 MB**（used 1301→5340，
+    最短一行文本），**已高于 3584 的门槛约 450MB** —— 按本条原则应回填 4096，并同步
+    `server/src/services/preload.ts` / `app/src/lib/resources.ts` / `.tmp/verify_vram_gates.py` V3；
+    本轮只记录不改常量。
     **推论**：门槛不是「模型文件大小」，是「实测净占 + 峰值余量」；写 `待实测` 的常量要留
     TODO 直到真测过——6 GB 卡上估低的代价不是报错，是 20 分钟假死。另：**unload 必须
     先 `gc.collect()` 再 `empty_cache()`**（transformers 系模型普遍有循环引用，不清引用图
@@ -1450,6 +1490,151 @@
     CPU 加载 6.4s、RTF 0.17~0.26。真实 ja/zh/en 样例全部正确；HTTP load→transcribe→unload
     全 200。**没有自动重启 llama-server**（用户选择测完不重启）。
 
+101. **批量页显存预估不能只看引擎锁；也不能让 GPT-SoVITS 任务页建议「关闭 GPT-SoVITS」**
+    （阶段 45 用户实测）。`/v1/engines` 的 `active` 只是任务期间的互斥锁，模型可能在两次任务
+    之间仍然常驻；「是否已加载」的真值是 `/health.pipeline.loaded`。只按 `active` 判断会让
+    已常驻的 3GB 再被扣一次，得出「还差 1.8GB」。另外 `ResourceBudget` 的
+    「关闭 GPT-SoVITS 服务」只应在任务**不使用** :9881 时出现 —— 批量 / 训练 / RVC / SVC /
+    ASR / UVR5 全在这条服务里，关掉等于关自己。判定已改为 `sovits_loaded` + `TRAINER_TASKS` 排除。
+
+102. **纯 `.pth` 是 SoVITS 权重，不是完整音色；必须配同版本预训练 GPT**（阶段 45）
+    网上下载的 GPT-SoVITS 模型常常只有 `.pth`（SoVITS），没有 `.ckpt`（GPT）。可用，但：
+    ① 只给 SoVITS 时另一侧必须**显式落到同版本预训练 GPT**，不能沿用「最新训练产物」；
+    ② 版本必须匹配（v2/v2ProPlus/v3/v4 不能混），版本不符应在加载前 400；
+    ③ 仍然需要参考音频（3~10 秒，最好同角色），`.pth` 只解决音色模型；
+    ④ `.pth` 也是 RVC 的扩展名，别把 RVC 模型放进 GPT-SoVITS；
+    ⑤ 音色库注册表已允许 `.pth` 作主权重，但同目录只有一个 `.ckpt` 时 `.pth` 仍按配套收；
+    ⑥ 版本识别读文件头（官方 `head2version`：00~06），`PK` 旧权重按体积回退。
+    ⑦ **`s1v3.ckpt` 是 GPT（s1）底模的版本号，不是 SoVITS v3**：官方 `v2Pro` / `v2ProPlus`
+    的 `t2s_weights_path` 都指向它（`TTS.py` default_configs），配的是 `s2Gv2ProPlus.pth`。
+    看到 `s1v3.ckpt` 不要以为模型被切到了 v3。
+    ⑧ **参考音频的 `prompt_lang` 必须与音频真实语种一致**（用 ASR 核对）：2026-10-28 实测
+    仁菜参考（日语）被存成 `zh`，配中文文本时模型提前 EOS，只出 **0.74s** 短音频；
+    同权重换中性中文参考「男」后中文 3.78s / 日文 4.22s 正常。长（6.7s）、表达性强的动漫台词
+    本身也容易让 GPT 提示过强；优先用 3~5s 干净、中性、同语种的参考。批量页已加跨语种警告。
+
+103. **前端已解析的 `/api/...` 地址不能再交给 `resolveAudioUrl`**（阶段 45 批量页下载踩到）
+    批量结果把 `audio_url` 先存成解析后的 `/api/sovits/files/...`，下载按钮又调用一次
+    `resolveAudioUrl`，拼成 `/api/sovits/api/sovits/files/...` → 404；播放器用已解析地址所以能播。
+    修法：状态里存服务端原始 `/files/...`，渲染/下载各解析一次；并让 `resolveAudioUrl` 对
+    `/api/` 前缀幂等，兼容旧持久化结果。
+
+104. **Radix Dialog 程序化关闭偶发收不到 `animationend`，已关闭的弹窗会留在 DOM 里**
+    （阶段 45 批量页「导入参考音频」保存成功后实测：`data-state=closed` 但 `display:grid`、
+    `opacity:1`，计算出的 `animationName=exit` 已结束但元素没卸载）。给受控 Dialog 加
+    `key={open ? 'open' : 'closed'}` 强制卸载即可；不要只依赖 `open=false` 的 exit 动画。
+
+105. **`/v1/catalog` 的 `languages` 历史上用 `code`，前端 `SovitsCatalogEntry` 契约用 `id`**
+    （阶段 45 用户实测：音色库「参考音频语种」下拉全部打勾、选不中别的语种）。直接
+    `SelectItem value={item.id}` 会让所有 value 都是 `undefined`，Radix 把它们当成同一个值。
+    已在 `sovitsApi.catalog()` 里把 `code` 归一成 `id`，并在后端 `LANGUAGE_PRESETS` 补 `id`
+    （保留 `code`）；新加任何 Select 选项都要保证 value 唯一且非空。
+
+106. **IndexTTS 分段情感是「服务端逐段生成 + 拼接」**（阶段 46）
+    `POST /v1/synth/segments` 的 `segments` 是 multipart 里的 JSON 字符串；每段支持
+    `emo_vector`（8 维或 null）+ `emo_alpha`，参考音频/语言/时长系数全局。段间 `gap_ms`
+    0~1000（默认 120），每段首尾 5ms 淡入淡出，**采样率不一致会 400**
+    `SAMPLE_RATE_MISMATCH`。每段预设是 one-hot 8 维；精细 8 维仍用单段模式；`emo_file`
+    不分段。新增端点必须重启 IndexTTS 服务；真机测试需约 5.5GB 空闲（GPT-SoVITS 常驻时不够）。
+
+107. **RVC/SVC 与 GPT-SoVITS 同属 :9881，网关 arbiter 按服务让位释放不了同进程引擎**
+    （阶段 46 用户实测：RVC 页 free 0.6GB / 需 2.5GB，GPT-SoVITS 常驻占着）。RVC/SVC 的
+    加载态真值是 `/v1/vc|svc/pipeline.loaded`，不是 `/v1/engines.active`（后者只是任务锁）；
+    资源卡的「只跑这一个模型」/「释放常驻显存」在目标模型未加载时还要调 trainer
+    `/v1/engines/unload` 清掉同进程引擎，否则 GPT-SoVITS 一直不放。目标模型已加载时不要卸，
+    避免把用户要用的模型误伤。设置页 GPT-SoVITS 卡已加「包含能力」列表（状态 + 单独卸载 + 全部卸载），
+    加载仍回各功能页；这是模型级控制，不是进程级。
+
+108. **PyMSS 试迁移已否决（2026-10-28 用户裁决）**：用户耳听 4_HP-Vocal 杂声多，明确
+    「有限显存下 UVR5 才是最优解」。生产代码已恢复纯 UVR5，`pymss/` 仅保留未接入的实验记录；
+    以下为 A/B 与技术记录，**不要再把 PyMSS 接回生产**。
+    - PyMSS 需要 py3.12 + **cu128 torch**；PyPI 默认 torch 是 CPU，`torch.cuda.is_available()` 必须显式验证。
+    - 25s ASMR 片段：HP2 UVR5 12.7s/+1041MB vs PyMSS 48.5s/+3210MB；HP5 UVR5 10.7s/+1197MB
+      vs 3HP 66.9s/+3274MB；DeReverb UVR5 10.9s/+1019MB vs PyMSS 57.5s/+2833MB。
+      PyMSS VR 基本按 fp32 跑；`use_amp=True+batch_size=1` 实测 39.2s/+3313MB，没有解决。
+    - BS-RoFormer 例外：PyMSS 9.2s/+1.9GB，UVR5 CLI 因整合包缺 `.yaml` 失败（引擎走内置配置可跑）。
+    - DeEcho/DeReverb 的干净 stem 是 `No Reverb` / `No Echo`，不是 `vocals`；`PymssEngine` 已映射。
+    - 训练旧模型 ID 走 `PYMSS_TRAIN_ALIASES`；`onnx_dereverb_By_FoxJoy` 无映射，明确报错。
+    - PyMSS 的门槛用专用 `vram_mb`（HP2 3400 / vocal_main 3500 / hifi 2100 / dereverb 3000），
+      不能沿用 UVR5 的 2048/4096。
+    - 默认保持 `uvr5`；P6 前需耳听、许可核对、BS 同口径基线和 P5 全量回归。
+    - `unload_all()` 已修为遍历所有注册 unloader（loaded 但 active 为空的管线也能卸）。
+
+109. **gsv5（v5）加载依赖 cwd = `gsv5/upstream`，且上游 `TTS_Config` 只收 dict**（阶段 47补2）
+    报错 `加载 v5 变体 v5turbo 失败：No module named 'ERes2NetV2'` 的根因不是缺包，而是 cwd：
+    `scripts/gsv5.mjs` 以 `gsv5/` 起服务，而上游 `TTS.py` 的 `now_dir = os.getcwd()` 和
+    `sv.py` 的 `os.getcwd()/GPT_SoVITS/eres2net` 都按 cwd 拼相对路径（vocoder/SV 权重同理）。
+    `gsv5_engine.ensure_upstream_on_path()` 现在会 `os.chdir(upstream)` 并注入
+    `upstream`、`upstream/GPT_SoVITS`、`upstream/GPT_SoVITS/eres2net` 三个路径。
+    另两处易踩：① 上游 `TTS_Config(configs: dict|str)`，旧 kwargs 调用必 TypeError，且 `version`
+    必须是 `v5turbo`/`v5dev` 等具体变体名、放在 `custom` 键下（否则回落 v2 默认）；
+    ② `pretrained_models/sv/pretrained_eres2netv2w24s4ep4.ckpt` 不在上游 git 里，需从
+    v2pro 安装包补（gsv5 的 `pretrained_models` 只链了 hubert/roberta）。
+    改完先做 CPU 冒烟（`GSV5_DEVICE=cpu`，不占显存）：v5turbo 预加载约 26s，48k 合成可用。
+
+110. **全局音频播放条统一用 `SlimAudioPlayer`；音频路由必须支持 Range**（阶段 47补3）
+    原生 `<audio controls>` 在窄容器里进度条只有几十像素，长音频无法拖动；全项目已替换为
+    `app/src/components/features/SlimAudioPlayer.tsx`（单行、全宽细进度条、拖动/键盘、音量、下载）。
+    新增页面播放音频不要再写原生 `<audio controls>`。后端返回音频时也不能裸
+    `createReadStream().pipe(res)`——没有 `Content-Length`/`Accept-Ranges` 时 Chrome 拿不到时长、
+    seek 无效；网关 `/api/voicelib/*/audio` 已改 `res.sendFile`（自带 Length/Range/ETag）。
+    批量页结果行现在是「信息一行 + 播放条整行」，别再把播放器塞回 220px 的固定宽度里。
+
+111. **产出记录页的音频在 `artifacts.results[]`；trainer `/files` 必须支持 Range**（阶段 47补6）
+    - 批量 `infer` 任务的顶层只有 `zip_url`/`manifest_url`/`workdir`，音频逐条在 `results[]` 的
+      `audio_url` 里；`collectTracks()` 现在会展开成逐条 audio 轨道（标签带序号/时长/文本），
+      ZIP/清单/权重等非音频标为 `kind:'file'`，不要塞进播放器。
+    - 只有本机路径没有 URL 的 trainer 输出，前端按 `trainer/.data/outputs/<rel>` 推导 `/files/<rel>`；
+      如果自定义了 `OUTPUTS_DIR`，推导会失效，应让后端补 URL。
+    - trainer 的 `/files` 在 Starlette 0.38 的 `StaticFiles` 下不支持 Range（浏览器 `seekable=[0,0]`），
+      已改为 `trainer/app/file_serve.py` 的单区间 Range 路由；`/v1/voices/:id/audio` 与
+      `/v1/annotations/audio` 同步。**改后必须重启 :9881** 才会对运行中的进程生效。
+    - 网关的 `sendFile`、trainer 的自定义 Range 路由都只服务本地回环；新增文件路由务必做根目录
+      `resolve()` + `relative_to()` 校验，别把任意路径读出去。
+
+112. **gsv5 的 `/v1/unload` 不归还「首次 CUDA 初始化」的一次性成本（约 1.5GB，阶段 49 实测）**
+     进程还没加载过任何模型时 free = 6619 MB；`v5turbo` 装载 → 合成 → `/v1/unload` 后只回到
+     **5021 MB**，再调一次 unload 不动。**但这不是每次循环的泄漏**：再走一轮 load(4.7s, 2570MB)→unload
+     后水位仍在 4637 MB（与 4619 同量级）。残留来自 CUDA context + cuBLAS/cuDNN workspace +
+     上游模块级缓存，属于**进程级**开销，`gc.collect()+empty_cache()` 拿不回来。
+     **后果**：出 gsv5 后 free 只剩 5021 MB < netease fp16 门槛 5120 —— 界面显示已卸载却仍开不了下一套模型。
+     **正确动作是停服务进程（`GET/POST /api/gsv5/service` 或杀端口），不是只 unload。**
+     同族提醒：`ResourceBudget` 的「释放常驻显存」对 gsv5 只做 unload 是不够的。
+     另：gsv5 **没有 `warmup_real` 等价物**，进程启动后第一条合成要 14s（RTF 3.47，算子首跑），
+     稳态 0.246 —— 和 netease 修前 378s 同源，量级上还能接受，暂不改。
+
+113. **R2T2 的 GPU 峰值不吃素：6144 门槛是准的，6200 护栏没有余量（阶段 49 实测）**
+     文档（坑 12/41）写「净占 ~5.5GB、GPU 模式约 5.9GB」。11.09 真机（RTX 4060 Laptop 8GB、
+     transformers 后端、bf16、batch=1、8.4s 中文轻语输入，nvidia-smi 0.5s 采样）：桌面基线 used 1742 MB、
+     峰值 used **7876 MB** → **峰值净增 ≈6134 MB**，**采样最低 free 只剩 82 MB**；
+     load 60s（含 2.8s 静音预热）、转写 1.5s（RTF 0.18）、文本正确。
+     结论：**`REQUIRED_VRAM_MB = 6144` 是正确的**（别被「8 秒样例只要 4GB」的直觉带偏）；
+     冒烟护栏 6200 只是刚好够，**跑 R2T2 GPU 前必须关掉占卡大户**，否则就是坑 78 的溢出假死。
+     长音频（240s 外层分段）峰值仍未测 —— 要动门槛先补那组画像。
+
+114. **`.tmp` 冒烟脚本自己 spawn worker 时，必须给子进程 `PYTHONIOENCODING=utf-8`（阶段 49 踩到）**
+     生产客户端 `netease/app/r2t2.py` 的 Popen 带了 `PYTHONIOENCODING=utf-8` + `PYTHONUNBUFFERED=1`，
+     而 `.tmp/smoke_r2t2_transcribe.py` 只写了 `encoding="utf-8"` —— Windows 下子进程按 locale(GBK)
+     写 stdout，父进程按 utf-8 读，**worker 第一条中文日志（「加载 R2T2 模型…」）就 `UnicodeDecodeError`**，
+     表现为「load 还没开始就崩」。同理，脚本内的显存护栏（6200 MB）在桌面 free 6188~6215 抖动时
+     会跟启动耗时输掉竞速 —— **护栏要在同一个进程里「等窗口」再 spawn**，别在外部脚本里先采样再起 python。
+     推论：**所有「复制生产 spawn 参数」的测试脚本，环境变量也要一起复制**。
+
+115. **测试夹具会随「数据目录重组 / 能力表扩容」漂移，锁要按内容找而不是按路径找（阶段 49）**
+     本轮离线回归里 3 处红项全是资产漂移、不是代码回归：
+     ① `verify_open_gateway.mts` 硬编码「13 项能力」，阶段 48 加了 `cosyvoice3-tts` → 应变 14（tts 6→7）；
+     ② `verify_sovits_pair.py` 写死 `models/gpt-sovits/SoVITS_weights_v2ProPlus/…`，而权重已按角色重组到
+     `models/gpt-sovits/<角色>/` → 改成 `rglob` 按文件名找；
+     ③ `cd app && npx eslint src` 的 13 个错全在**本轮没碰过的文件**（既有 lint 债，另票处理）。
+     **判据**：锁跑红先问「是我改坏的，还是数据/规模变了」，别急着改产品代码。
+
+116. **netease 的 fp16 峰值在这台桌面上几乎没有余量（阶段 49 实测，坑 78 的补充）**
+     `warmup`（加载 + `warmup_real`）期间采样最低 free **79 MB**（桌面 used 1.7GB 时模型侧峰值约 6.3GB）。
+     5120 的门槛允许进入，但真正跑起来余量只剩几十 MB —— 再开浏览器/IDE 这类占卡程序就会溢出共享内存
+     变成「GPU 100% 但 20 分钟不出结果」（坑 78）。**预热/合成前先关占卡程序**，不要把这个余量当常态。
+
+> 本次文档更新时间：10.28 [BY Qoder]（阶段 45：GPT-SoVITS 本地合成迁到批量页 + `.pth` 单权重；通用合成固定 MiMo；设置页只留 MiMo Key；修批量页显存预估重复扣账与「关闭 GPT-SoVITS 服务」自关建议；真实 1 条 `.pth` 批量合成成功；坑 101/102）
+
 > 本次文档更新时间：10.23 [BY ZCode]（阶段 42：ASR 显存准入参数化——坑 86；docs/ASR.md 与 HANDOFF 命令表/建议行同步）
 
 > 本次文档更新时间：10.21~10.23 [BY ZCode]（阶段 40：6GB 极限显存校准 + warmup_real + serviceCatalog，坑 79~81；阶段 41：R2T2 离线转写接入——worker transformers 分支 + r2t2-venv 独立解释器 + 权重 4.1GB + 三个真 bug（warmup 挂死坑 82 / 下载残件坑 83 / shlex 反斜杠坑 84），回归 25/25，真机转写待显存窗口）
@@ -1465,3 +1650,5 @@
 > 本次文档更新时间：10.25 00:31 [BY Qoder]（阶段 44补2：ASR SenseVoice 路由与权重就绪修复——显式 model 的 backend/语种为权威（不再 backend/model 错配）、funasr 的 ja/en/ko/yue 由 SenseVoice 承接、不匹配语种 400；新增 `/v1/asr/readiness`/`resident_model_status`、acquire 前 503 `WEIGHTS_MISSING`；`/api/capabilities` ASR `available=可达 && weights_ready===true`，SenseVoice 1536/无 size/无 VAD；坑 97~99；回归 14/14 + 25/25 + 29/29；**真实 SenseVoice 权重仍缺，未做加载/CER**）
 
 > 本次文档更新时间：10.25 11:41 [BY Qoder]（阶段 44补2续：SenseVoice 落地——权重 897MB + 独立 `trainer/sensevoice-venv` 6.1GB + 常驻 worker；整合包 FunASR 1.0.27 不支持 SenseVoiceSmall（坑 100）；GPU 实测常驻 +1050 / 峰值 +1099MB、热态 zh/en 0.27~0.29s，真实 ja/zh/en 正确；HTTP load→transcribe→unload 全 200；`runtime_ready` 进入 capabilities，缺运行时 503 `SENSEVOICE_RUNTIME_MISSING`；回归 12/12+2 SKIP + 25/25 + 30/30；llama-server 按用户选择未自动重启）
+
+> 本次文档更新时间：11.09 [BY Qoder]（阶段 49：遗留项真机验证窗口 —— R2T2 GPU bf16（load 60s / 8.4s 输入 RTF 0.18 / 峰值增量 ≈4162MB）、netease `warmup_real` 生效实证（首条真实合成 9.64s，修前 378s）、IndexTTS 5500 门槛 + `/v1/synth/segments` 两段情感拼接（逐段和+gap 与总时长差 0.5ms）、gsv5 v5turbo GPU（稳态 RTF 0.246 / 48kHz）；中文轻语 8 段 CER 基准归档 `docs/ASR.md` §8.5；回归资产修正（能力数 13→14 / sovits 夹具 rglob / R2T2 冒烟编码与等窗口）；新增坑 112~116。零生产代码改动）
