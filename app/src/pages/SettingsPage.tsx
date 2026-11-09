@@ -10,6 +10,7 @@ import {
   Gauge,
   Loader2,
   Layers,
+  RefreshCw,
   RotateCcw,
   Save,
   Server,
@@ -30,7 +31,9 @@ import { Separator } from '@/components/ui/separator';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
 import { api } from '@/lib/api';
+import { asrApi } from '@/lib/asr';
 import { RequestError } from '@/lib/errors';
+import { svcApi, vcApi } from '@/lib/vc';
 import {
   localServiceApi,
   notifyServiceEnabledChanged,
@@ -41,8 +44,6 @@ import {
 } from '@/lib/localService';
 import { preloadApi, type PreloadCatalog, type PreloadPreference } from '@/lib/preload';
 import { DEFAULT_SETTINGS } from '@/lib/constants';
-import { PROVIDERS, getProvider, languageLabel, resolveLanguages } from '@/lib/providers/registry';
-import { SELFHOSTED_PRESETS } from '@/lib/providers/selfhosted';
 import {
   DEFAULT_SOVITS_BASE,
   DIRECT_SOVITS_BASE,
@@ -67,6 +68,15 @@ interface SettingsPageProps {
   /** 锚点消费完毕（避免重复滚动） */
   onFocusHandled?: () => void;
 }
+
+/** :9881 进程内可以单独卸载的能力 */
+type ChildCapabilityId = 'sovits' | 'rvc' | 'svc' | 'asr';
+const CHILD_CAPABILITY_LABELS: Record<ChildCapabilityId, string> = {
+  sovits: 'GPT-SoVITS 模型',
+  rvc: 'RVC 模型',
+  svc: 'DDSP-SVC 模型',
+  asr: 'ASR 模型',
+};
 
 /** 设置页：两套链路的服务地址、密钥、合成偏好与运行环境 */
 export function SettingsPage({ settings, update, reset, health, onKeyChange, focusSection, onFocusHandled }: SettingsPageProps) {
@@ -138,16 +148,6 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
     toast.success('已恢复默认设置');
   };
 
-  const provider = getProvider(settings.providerId);
-
-  /** 更新当前 Provider 的自定义字段 */
-  const updateField = (key: string, value: string) => {
-    update('providerFields', {
-      ...settings.providerFields,
-      [provider.id]: { ...(settings.providerFields[provider.id] ?? {}), [key]: value },
-    });
-  };
-
   // ------------------------------------------------------------------
   // GPT-SoVITS 本地服务
   // ------------------------------------------------------------------
@@ -158,6 +158,15 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
   const [sovitsHealth, setSovitsHealth] = useState<SovitsHealth | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
   const [weights, setWeights] = useState<SovitsWeightList | null>(null);
+
+  // :9881 进程内的子能力状态（RVC / DDSP-SVC / ASR）；GPT-SoVITS 直接读 health.pipeline
+  const [childCaps, setChildCaps] = useState<{
+    vc: boolean | null;
+    svc: boolean | null;
+    asr: boolean | null;
+  }>({ vc: null, svc: null, asr: null });
+  const [capsLoading, setCapsLoading] = useState(false);
+  const [capsBusy, setCapsBusy] = useState<string | null>(null);
 
   const probeSovits = useCallback(
     async (url: string) => {
@@ -183,9 +192,66 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
     [],
   );
 
+  const refreshChildCaps = useCallback(async () => {
+    const base = normalizeBaseUrl(sovitsUrl);
+    setCapsLoading(true);
+    try {
+      const [vc, svc, asr] = await Promise.all([
+        vcApi.pipeline(base).catch(() => null),
+        svcApi.pipeline(base).catch(() => null),
+        asrApi.pipeline(base).catch(() => null),
+      ]);
+      setChildCaps({ vc: vc?.loaded ?? null, svc: svc?.loaded ?? null, asr: asr?.loaded ?? null });
+    } finally {
+      setCapsLoading(false);
+    }
+  }, [sovitsUrl]);
+
+  const unloadChild = useCallback(
+    async (kind: ChildCapabilityId) => {
+      setCapsBusy(kind);
+      const base = normalizeBaseUrl(sovitsUrl);
+      try {
+        if (kind === 'sovits') await sovitsApi.unload(base);
+        else if (kind === 'rvc') await vcApi.unloadModel(base);
+        else if (kind === 'svc') await svcApi.unloadModel(base);
+        else await asrApi.unloadModel(base);
+        toast.success('已卸载', { description: CHILD_CAPABILITY_LABELS[kind] });
+        await refreshChildCaps();
+        if (kind === 'sovits') void probeSovits(sovitsUrl);
+      } catch (error) {
+        toast.error('卸载失败', { description: error instanceof Error ? error.message : String(error) });
+      } finally {
+        setCapsBusy(null);
+      }
+    },
+    [sovitsUrl, refreshChildCaps, probeSovits],
+  );
+
+  const unloadAllChildren = useCallback(async () => {
+    setCapsBusy('all');
+    try {
+      await sovitsApi.unloadEngines(normalizeBaseUrl(sovitsUrl));
+      toast.success('已卸载本地推理引擎', {
+        description: 'GPT-SoVITS / RVC / DDSP-SVC / ASR 的模型与显存已释放',
+      });
+      await refreshChildCaps();
+      void probeSovits(sovitsUrl);
+    } catch (error) {
+      toast.error('卸载失败', { description: error instanceof Error ? error.message : String(error) });
+    } finally {
+      setCapsBusy(null);
+    }
+  }, [sovitsUrl, refreshChildCaps, probeSovits]);
+
   useEffect(() => {
     void probeSovits(readBaseUrl());
   }, [probeSovits]);
+
+  useEffect(() => {
+    if (sovitsHealth?.ok) void refreshChildCaps();
+    else setChildCaps({ vc: null, svc: null, asr: null });
+  }, [sovitsHealth?.ok, refreshChildCaps]);
 
   // ------------------------------------------------------------------
   // GPT-SoVITS 服务的启停（默认关闭以释放显存）
@@ -255,7 +321,8 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
     indextts: RuntimeServiceState | null;
     irodori: RuntimeServiceState | null;
     gsv5: RuntimeServiceState | null;
-  }>({ netease: null, indextts: null, irodori: null, gsv5: null });
+    cosyvoice: RuntimeServiceState | null;
+  }>({ netease: null, indextts: null, irodori: null, gsv5: null, cosyvoice: null });
   const [runtimeToggling, setRuntimeToggling] = useState<RuntimeServiceId | null>(null);
   /** GPT-SoVITS 高级配置（推理权重 / 默认值 / 批量）在行内是否展开 */
   const [sovitsAdvanced, setSovitsAdvanced] = useState(false);
@@ -276,6 +343,10 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
     runtimeServiceApi
       .state('gsv5')
       .then((next) => setRuntimeStates((prev) => ({ ...prev, gsv5: next })))
+      .catch(() => undefined);
+    runtimeServiceApi
+      .state('cosyvoice')
+      .then((next) => setRuntimeStates((prev) => ({ ...prev, cosyvoice: next })))
       .catch(() => undefined);
   }, []);
 
@@ -363,6 +434,52 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
       'gpt-sovits': { ...sovitsFields, [key]: value },
     });
   };
+
+  const capabilityRows: Array<{
+    id: ChildCapabilityId | 'uvr5';
+    label: string;
+    hint: string;
+    loaded: boolean | null;
+    canUnload: boolean;
+    statusLabel?: string;
+  }> = [
+    {
+      id: 'sovits',
+      label: 'GPT-SoVITS 合成 / 训练',
+      hint: '推理、批量、微调权重',
+      loaded: sovitsHealth?.pipeline.loaded ?? null,
+      canUnload: true,
+    },
+    {
+      id: 'rvc',
+      label: 'RVC 变声',
+      hint: '一个 .pth + 可选 .index',
+      loaded: childCaps.vc,
+      canUnload: true,
+    },
+    {
+      id: 'svc',
+      label: 'DDSP-SVC 歌声转换',
+      hint: '.pt + config.yaml',
+      loaded: childCaps.svc,
+      canUnload: true,
+    },
+    {
+      id: 'asr',
+      label: 'ASR 语音转文本',
+      hint: 'FunASR / Whisper / SenseVoice',
+      loaded: childCaps.asr,
+      canUnload: true,
+    },
+    {
+      id: 'uvr5',
+      label: 'UVR5 人声分离',
+      hint: '按需调用，无长期常驻模型',
+      loaded: null,
+      canUnload: false,
+      statusLabel: '按需',
+    },
+  ];
 
   return (
     <div className="grid gap-5 lg:grid-cols-2">
@@ -455,7 +572,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
         </CardContent>
       </Card>
 
-      {/* ============ ② 本地服务：三个 Python 运行时一屏看全，都有开关 ============ */}
+      {/* ============ ② 本地服务：五个 Python 运行时一屏看全，都有开关；:9881 内含能力可单独卸载 ============ */}
       <Card className="lg:col-span-2">
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
@@ -463,8 +580,9 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
             本地服务
           </CardTitle>
           <CardDescription>
-            本项目的三个本地模型服务，各有一个连接开关。注意区分两层占用：
-            <strong>服务进程</strong>本身约占几百 MB 显存（torch 上下文），<strong>模型常驻</strong>（数 GB）
+            本项目的五个本地模型服务，各有一个连接开关。GPT-SoVITS（:9881）还托管
+            RVC / DDSP-SVC / ASR / UVR5，可在下面的「包含能力」里单独卸载模型。
+            注意区分两层占用：<strong>服务进程</strong>本身约占几百 MB 显存（torch 上下文），<strong>模型常驻</strong>（数 GB）
             要进页面点「预热」或开机预加载才会发生。不用的服务关掉，进程和显存一起归还。
           </CardDescription>
         </CardHeader>
@@ -666,6 +784,56 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
             </div>
           </div>
 
+          {/* CosyVoice3（方言/多语种，:9886） */}
+          <div id="settings-service-cosyvoice" className={cn('flex flex-wrap items-start gap-x-4 gap-y-2 rounded-lg border p-3', flashRing('settings-service-cosyvoice'))}>
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="text-sm font-medium">
+                CosyVoice3
+                <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9886</span>
+              </p>
+              <p className="text-xs text-muted-foreground">
+                Fun-CosyVoice3-0.5B：9 语言 + 18 中文方言、零样本克隆与自然语言 instruct。
+                默认<strong>关闭</strong>按需启动；环境体检：
+                <code className="mx-1 rounded bg-muted px-1">npm run cosyvoice:check</code>
+                ，权重 <code className="mx-1 rounded bg-muted px-1">npm run cosyvoice:weights</code>。
+              </p>
+              {runtimeStates.cosyvoice && !runtimeStates.cosyvoice.enabled && runtimeStates.cosyvoice.reachable ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">
+                  检测到未托管的进程仍在 :9886 上运行（多为终端手动启动）。打开右侧开关可由网关接管；
+                  关闭开关则会把它收掉并归还显存。
+                </p>
+              ) : null}
+              {runtimeStates.cosyvoice && !runtimeStates.cosyvoice.reachable && runtimeStates.cosyvoice.lastError ? (
+                <p className="text-xs text-amber-600 dark:text-amber-400">{runtimeStates.cosyvoice.lastError}</p>
+              ) : null}
+            </div>
+            <div className="flex shrink-0 items-center gap-3 pt-1">
+              <Badge
+                variant={runtimeStates.cosyvoice?.enabled && runtimeStates.cosyvoice?.reachable ? 'default' : 'secondary'}
+                className={cn(
+                  'h-6 text-[11px]',
+                  runtimeStates.cosyvoice?.enabled &&
+                    runtimeStates.cosyvoice?.reachable &&
+                    'bg-emerald-600 hover:bg-emerald-600',
+                )}
+              >
+                {runtimeStates.cosyvoice?.starting
+                  ? '启动中…'
+                  : runtimeStates.cosyvoice?.enabled && runtimeStates.cosyvoice?.reachable
+                    ? '运行中'
+                    : runtimeStates.cosyvoice?.enabled
+                      ? '未就绪'
+                      : '未启动'}
+              </Badge>
+              <Switch
+                aria-label="启用 CosyVoice3 服务"
+                checked={runtimeStates.cosyvoice?.enabled ?? false}
+                disabled={runtimeToggling === 'cosyvoice' || runtimeStates.cosyvoice == null}
+                onCheckedChange={(checked) => void toggleRuntimeService('cosyvoice', checked === true)}
+              />
+            </div>
+          </div>
+
           {/* GPT-SoVITS：配置项最多的一条，高级设置收进行内展开 */}
           <div id="settings-service-sovits" className={cn('rounded-lg border', flashRing('settings-service-sovits'))}>
             <div className="flex flex-wrap items-start gap-x-4 gap-y-2 p-3">
@@ -675,7 +843,7 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
                   <span className="ml-2 font-mono text-[11px] text-muted-foreground">:9881</span>
                 </p>
                 <p className="text-xs leading-relaxed text-muted-foreground">
-                  训练 / 批量合成 / 语音变声 / 歌声转换都跑在这条链路。默认<strong>关闭</strong>，
+                  训练 / 批量合成（含微调权重）/ 语音变声 / 歌声转换 / 语音转文本 / 人声分离都跑在这条链路。默认<strong>关闭</strong>，
                   显存留给主服务；关掉后显存立刻归还。
                 </p>
                 <p className="text-xs text-muted-foreground">
@@ -714,6 +882,83 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
                 />
               </div>
             </div>
+
+            <div className="border-t px-3 py-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-medium">包含能力（共用 :9881 进程）</p>
+                <div className="flex items-center gap-1">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => void refreshChildCaps()}
+                    disabled={capsLoading}
+                  >
+                    <RefreshCw className={cn('mr-1 size-3', capsLoading && 'animate-spin')} />
+                    刷新
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={() => void unloadAllChildren()}
+                    disabled={capsBusy !== null || !sovitsHealth?.ok}
+                  >
+                    全部卸载
+                  </Button>
+                </div>
+              </div>
+
+              <div className="mt-2 space-y-1.5">
+                {capabilityRows.map((row) => {
+                  const status =
+                    row.statusLabel ??
+                    (row.loaded === true ? '已加载' : row.loaded === false ? '未加载' : '未知');
+                  return (
+                    <div
+                      key={row.id}
+                      className="flex flex-wrap items-center justify-between gap-2 rounded-lg border p-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="text-xs font-medium">{row.label}</p>
+                        <p className="text-[11px] text-muted-foreground">{row.hint}</p>
+                      </div>
+                      <div className="flex shrink-0 items-center gap-1.5">
+                        <Badge
+                          variant={row.loaded === true ? 'default' : 'secondary'}
+                          className={cn(
+                            'h-5 text-[10px]',
+                            row.loaded === true && 'bg-emerald-600 hover:bg-emerald-600',
+                          )}
+                        >
+                          {status}
+                        </Badge>
+                        {row.canUnload ? (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 px-2 text-[11px]"
+                            disabled={row.loaded !== true || capsBusy !== null}
+                            onClick={() => void unloadChild(row.id as ChildCapabilityId)}
+                          >
+                            {capsBusy === row.id ? (
+                              <Loader2 className="mr-1 size-3 animate-spin" />
+                            ) : null}
+                            卸载
+                          </Button>
+                        ) : null}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              <p className="mt-2 text-[11px] leading-snug text-muted-foreground">
+                这些能力共用同一个 Python 进程：卸载只释放模型和显存，不会停掉服务；
+                加载仍在各功能页选择模型/权重（变声 / 翻唱 / 转写 / 批量合成）。
+              </p>
+            </div>
+
             <button
               type="button"
               onClick={() => setSovitsAdvanced((prev) => !prev)}
@@ -915,119 +1160,16 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-base">
             <Layers className="size-4 text-violet-600 dark:text-violet-400" />
-            云端合成 · MiMo 与接口密钥
+            云端合成 · MiMo 接口密钥
           </CardTitle>
           <CardDescription>
-            侧栏「MiMo 云端」组（通用合成 / 音色设计 / 声音克隆）三个页面的后端与密钥。
+            侧栏「MiMo 云端」组（通用合成 / 音色设计 / 声音克隆）三个页面共用这一份密钥。
             本地模型（网易 / IndexTTS / GPT-SoVITS）不经过这里，也不依赖密钥。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-2 sm:grid-cols-2">
-            {PROVIDERS.map((item) => {
-              const selected = item.id === provider.id;
-              const languages = resolveLanguages(item, settings.providerFields[item.id]);
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => update('providerId', item.id)}
-                  className={cn(
-                    'flex flex-col gap-1.5 rounded-xl border p-3 text-left transition',
-                    selected
-                      ? 'border-violet-500 bg-violet-500/5 shadow-sm ring-1 ring-violet-500/30'
-                      : 'hover:border-violet-300 hover:bg-muted/60',
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium">{item.name}</span>
-                    {selected ? <Badge className="ml-auto h-5 text-[10px]">当前</Badge> : null}
-                  </div>
-                  <p className="text-xs text-muted-foreground">{item.summary}</p>
-                  <div className="flex flex-wrap gap-1">
-                    {(languages.length > 0 ? languages : ['—']).slice(0, 8).map((code) => (
-                      <Badge key={code} variant="secondary" className="h-5 px-1.5 text-[10px] font-normal">
-                        {code === '—' ? '未声明' : languageLabel(code)}
-                      </Badge>
-                    ))}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-
-          {/* 自托管模型的快捷预设：点击即填入模型名与语言范围 */}
-          {provider.id === 'selfhosted' ? (
-            <div className="space-y-2 rounded-lg border border-dashed bg-muted/40 p-3">
-              <p className="text-xs font-medium">常用开源模型（点击填入模型名与语言范围）</p>
-              <div className="flex flex-wrap gap-1.5">
-                {SELFHOSTED_PRESETS.map((preset) => (
-                  <Button
-                    key={preset.id}
-                    type="button"
-                    size="sm"
-                    variant="outline"
-                    title={preset.note}
-                    className="h-7 rounded-full px-3 text-xs font-normal"
-                    onClick={() => {
-                      updateField('model', preset.id);
-                      updateField('languages', preset.languages.join(', '));
-                    }}
-                  >
-                    {preset.label}
-                  </Button>
-                ))}
-              </div>
-              <p className="text-xs text-muted-foreground">
-                这些模型需自行部署推理服务并开放 CORS，接入契约见
-                <code className="mx-1 rounded bg-muted px-1">docs/TRAINING.md</code>
-              </p>
-            </div>
-          ) : null}
-
-          {/* 按所选后端条件渲染配置区：选谁才露谁的设置，不叠三层 */}
-          {provider.id === 'gpt-sovits' ? (
-            <div className="rounded-lg border border-dashed bg-muted/40 p-3 text-xs leading-relaxed text-muted-foreground">
-              这个后端<strong>不需要密钥</strong>。它的服务地址、默认音色、模型版本与批量默认值
-              统一在上方「本地服务 → GPT-SoVITS · 高级配置」里维护 —— 那里把服务打开，云端三页就能直接用它。
-            </div>
-          ) : (
-            <>
-              {/* Provider 自定义字段（如自托管服务地址） */}
-              {provider.fields?.map((field) => (
-                <div key={field.key} className="space-y-2">
-                  <Label htmlFor={`field-${field.key}`}>
-                    {field.label}
-                    {field.required ? <span className="ml-1 text-destructive">*</span> : null}
-                  </Label>
-                  <Input
-                    id={`field-${field.key}`}
-                    value={settings.providerFields[provider.id]?.[field.key] ?? ''}
-                    onChange={(event) => updateField(field.key, event.target.value)}
-                    placeholder={field.placeholder}
-                    spellCheck={false}
-                    className="font-mono text-sm"
-                  />
-                  {field.hint ? <p className="text-xs text-muted-foreground">{field.hint}</p> : null}
-                </div>
-              ))}
-
-              {provider.notes?.length ? (
-                <div className="space-y-1 rounded-lg bg-muted/50 p-3">
-                  {provider.notes.map((note) => (
-                    <p key={note} className="flex gap-1.5 text-xs text-muted-foreground">
-                      <span className="text-violet-500">·</span>
-                      {note}
-                    </p>
-                  ))}
-                </div>
-              ) : null}
-            </>
-          )}
-
-          {/* 密钥与接口地址只在选了 MiMo 云端后出现 */}
-          {provider.id === 'mimo' ? (
-            <>
+          {/* 密钥与接口地址（MiMo 是唯一云端后端） */}
+          <>
               <Separator />
 
               <Alert variant={hasServerKey ? 'default' : 'destructive'}>
@@ -1157,7 +1299,6 @@ export function SettingsPage({ settings, update, reset, health, onKeyChange, foc
             </p>
           </div>
             </>
-          ) : null}
         </CardContent>
       </Card>
 

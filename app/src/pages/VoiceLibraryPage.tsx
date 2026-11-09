@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { TermTip } from '@/components/features/TermTip';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { ResourceHubList } from '@/components/features/ResourceHub';
 import { VoiceLongReference } from '@/components/features/VoiceLongReference';
 import { Label } from '@/components/ui/label';
@@ -827,7 +828,7 @@ function ReferenceAudioPanel() {
                     {expanded ? (
                       <div className="space-y-2 px-3 pb-3 pl-10">
                         {voice.exists ? (
-                          <audio controls preload="none" className="h-8 w-full" src={voiceApi.voiceAudioUrl(voice.id)} />
+                          <SlimAudioPlayer src={voiceApi.voiceAudioUrl(voice.id)} preload="none" />
                         ) : (
                           <p className="text-xs text-destructive">音频文件已丢失，请重新上传（编辑弹窗里可直接拖入替换）</p>
                         )}

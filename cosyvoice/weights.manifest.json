@@ -1,0 +1,137 @@
+{
+  "note": "Fun-CosyVoice3-0.5B-2512 推理清单。唯一事实源：server.py --check 与 scripts/cosyvoice-weights.mjs 共读这一份。sizeBytes 来自 ModelScope/HF 的文件元数据（2026-11-04），下载后逐文件校验；对不上就是截断。可选文件（llm.rl.pt / fp32 ONNX / batch tokenizer）不下载，推理不需要。",
+  "totalBytes": {
+    "inference": 5427029103
+  },
+  "entries": [
+    {
+      "id": "config-yaml",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/cosyvoice3.yaml",
+      "sizeBytes": 6934,
+      "purpose": "模型结构配置（AutoModel 靠它判断 CosyVoice3）",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "cosyvoice3.yaml" }
+    },
+    {
+      "id": "llm",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/llm.pt",
+      "sizeBytes": 2024669519,
+      "purpose": "LLM 主干（0.5B，fp32 权重，fp16 加载）",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "llm.pt" }
+    },
+    {
+      "id": "flow",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/flow.pt",
+      "sizeBytes": 1329116148,
+      "purpose": "Flow Matching DiT 声学模型",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "flow.pt" }
+    },
+    {
+      "id": "hift",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/hift.pt",
+      "sizeBytes": 83202622,
+      "purpose": "CausalHiFT 声码器",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "hift.pt" }
+    },
+    {
+      "id": "campplus",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/campplus.onnx",
+      "sizeBytes": 28303423,
+      "purpose": "说话人 embedding 提取（ONNX，CPU）",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "campplus.onnx" }
+    },
+    {
+      "id": "speech-tokenizer",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/speech_tokenizer_v3.onnx",
+      "sizeBytes": 969451503,
+      "purpose": "离散语音 tokenizer（ONNX；Windows 默认 CPU EP）",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "speech_tokenizer_v3.onnx" }
+    },
+    {
+      "id": "blanken-weights",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/CosyVoice-BlankEN/model.safetensors",
+      "sizeBytes": 988097824,
+      "purpose": "Qwen2.5-0.5B 文本/结构基座（qwen_pretrain_path）",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "CosyVoice-BlankEN/model.safetensors" }
+    },
+    {
+      "id": "blanken-config",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/CosyVoice-BlankEN/config.json",
+      "sizeBytes": 659,
+      "purpose": "Qwen2.5 配置",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "CosyVoice-BlankEN/config.json" }
+    },
+    {
+      "id": "blanken-generation",
+      "group": "inference",
+      "required": false,
+      "target": "models/Fun-CosyVoice3-0.5B/CosyVoice-BlankEN/generation_config.json",
+      "sizeBytes": 242,
+      "purpose": "生成配置（上游不强制读）",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "CosyVoice-BlankEN/generation_config.json" }
+    },
+    {
+      "id": "blanken-merges",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/CosyVoice-BlankEN/merges.txt",
+      "sizeBytes": 1402109,
+      "purpose": "Qwen BPE merges",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "CosyVoice-BlankEN/merges.txt" }
+    },
+    {
+      "id": "blanken-tokenizer-config",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/CosyVoice-BlankEN/tokenizer_config.json",
+      "sizeBytes": 1287,
+      "purpose": "Qwen tokenizer 配置",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "CosyVoice-BlankEN/tokenizer_config.json" }
+    },
+    {
+      "id": "blanken-vocab",
+      "group": "inference",
+      "required": true,
+      "target": "models/Fun-CosyVoice3-0.5B/CosyVoice-BlankEN/vocab.json",
+      "sizeBytes": 2776833,
+      "purpose": "Qwen vocab",
+      "source": { "type": "modelscope", "repo": "FunAudioLLM/Fun-CosyVoice3-0.5B-2512", "path": "CosyVoice-BlankEN/vocab.json" }
+    }
+  ],
+  "code": [
+    {
+      "id": "upstream-cosyvoice",
+      "target": "upstream/CosyVoice",
+      "marker": "cosyvoice/cli/cosyvoice.py",
+      "purpose": "上游本体（官方代码零改动；git clone --depth 1）",
+      "source": { "type": "git", "url": "https://github.com/FunAudioLLM/CosyVoice.git" }
+    },
+    {
+      "id": "upstream-matcha",
+      "target": "upstream/CosyVoice/third_party/Matcha-TTS",
+      "marker": "matcha/__init__.py",
+      "purpose": "Matcha-TTS 子模块（flow matching 依赖，官方 example 用 sys.path 注入）",
+      "source": { "type": "git-submodule", "url": "https://github.com/shivammehta25/Matcha-TTS.git" }
+    }
+  ],
+  "downloadNotes": [
+    "huggingface.co 本机直连不通；走 ModelScope（FunAudioLLM/Fun-CosyVoice3-0.5B-2512）单连接约 3MB/s。",
+    "ModelScope 的 resolve 端点对已完整的小文件不兼容 curl -C -，下载脚本按期望大小先校验再下，不用断点续传。",
+    "llm.rl.pt、flow.decoder.estimator.fp32.onnx、speech_tokenizer_v3.batch.onnx 是可选冗余，不下载（省约 4.3GB）。"
+  ]
+}

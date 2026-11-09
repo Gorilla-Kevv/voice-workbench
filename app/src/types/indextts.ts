@@ -38,6 +38,11 @@ export interface IndexttsCatalog {
   emo_alpha: { min: number; max: number; default: number };
   /** 文本描述控制情感（需额外 0.6B 模型，暂不接） */
   emo_text_control: boolean;
+  /** 分段情感编排（阶段 46）：每段独立向量/强度，服务端拼接 */
+  segment_synthesis?: {
+    max_segments: number;
+    gap_ms: { min: number; max: number; default: number };
+  };
   required_vram_mb: number;
 }
 
@@ -49,4 +54,17 @@ export interface IndexttsSynthResult {
   elapsed_sec: number;
   path: string;
   language: string;
+}
+
+export interface IndexttsSegmentResult {
+  index: number;
+  text: string;
+  duration_sec: number;
+  elapsed_sec: number;
+  emo_vector: number[] | null;
+  emo_alpha: number;
+}
+
+export interface IndexttsSegmentsResult extends IndexttsSynthResult {
+  segments: IndexttsSegmentResult[];
 }

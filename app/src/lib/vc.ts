@@ -38,6 +38,9 @@ export const vcApi = {
   catalog: (baseUrl?: string): Promise<VcCatalog> =>
     localRequest('/v1/vc/catalog', { method: 'GET', timeoutMs: 30_000 }, baseUrl),
 
+  pipeline: (baseUrl?: string): Promise<VcPipelineStatus & { ok: boolean }> =>
+    localRequest('/v1/vc/pipeline', { method: 'GET', timeoutMs: 20_000 }, baseUrl),
+
   loadModel: (model: string, baseUrl?: string): Promise<VcPipelineStatus & { ok: boolean }> => {
     const form = new FormData();
     appendForm(form, { model });
@@ -116,6 +119,9 @@ export const svcApi = {
     appendForm(form, { path, model_key: modelKey ?? '' });
     return localRequest('/v1/svc/models/load', { method: 'POST', body: form, timeoutMs: 0 }, baseUrl);
   },
+
+  unloadModel: (baseUrl?: string) =>
+    localRequest<{ ok: boolean; message: string }>('/v1/svc/models/unload', { method: 'POST' }, baseUrl),
 
   uploadModel: (model: File, config: File | null, name: string, baseUrl?: string): Promise<SvcModelUploadResponse> => {
     const form = new FormData();

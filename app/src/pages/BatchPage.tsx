@@ -10,6 +10,7 @@ import {
   Play,
   RefreshCw,
   Server,
+  Sparkles,
   Square,
   Upload,
   Wand2,
@@ -21,6 +22,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
@@ -30,8 +32,14 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
+import {
+  SovitsWeightPicker,
+  type SovitsWeightSelection,
+} from '@/components/features/SovitsWeightPicker';
 import { focusBeforeRun } from '@/lib/arbiter';
+import { asrApi } from '@/lib/asr';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { formatBytes, formatDuration } from '@/lib/audio';
@@ -186,6 +194,9 @@ const LANGUAGES: { id: string; label: string }[] = [
 ];
 const LANG_IDS = LANGUAGES.map((item) => item.id);
 
+/** 与网关 voiceLibrary 的 ALLOWED_SUFFIXES 同表：客户端先拦一道，报错更友好 */
+const AUDIO_ACCEPT = '.wav,.mp3,.flac,.ogg,.m4a,.webm,.aac,.wma';
+
 /** 兜底语种：用户没选、音色语种又不可用时用它 */
 const FALLBACK_LANG = 'zh';
 
@@ -197,6 +208,10 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
 
   const [text, setText] = useState(retained.text);
   const [voiceId, setVoiceId] = useState(retained.voiceId);
+  const [weights, setWeights] = useState<SovitsWeightSelection>({
+    version: 'v2ProPlus',
+    weightMode: 'zero-shot',
+  });
   const [filenameTemplate, setFilenameTemplate] = useState(
     retained.filenameTemplate || settings.batchFilenameTemplate,
   );
@@ -209,6 +224,17 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
   const [temperature, setTemperature] = useState(retained.temperature);
   const [repetitionPenalty, setRepetitionPenalty] = useState(retained.repetitionPenalty);
   const [showAdvanced, setShowAdvanced] = useState(retained.showAdvanced);
+
+  // 参考音频就地导入（不跳音色库管理；保存后自动选中）
+  const [importOpen, setImportOpen] = useState(false);
+  const [importName, setImportName] = useState('');
+  const [importPrompt, setImportPrompt] = useState('');
+  const [importLang, setImportLang] = useState('zh');
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importPath, setImportPath] = useState('');
+  const [importing, setImporting] = useState(false);
+  const [transcribingImport, setTranscribingImport] = useState(false);
+  const importFileRef = useRef<HTMLInputElement | null>(null);
 
   // 每一批结果独立保留：新一批追加到最前，旧批次仍可展开下载/回听
   const rounds = useResultStack<BatchRound>({
@@ -331,6 +357,103 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
     ? selectedVoice?.prompt_lang
     : undefined;
 
+  /** 粗判文本语种：跨语种时给一条可执行提示（不硬拦截，GPT-SoVITS 允许跨语种） */
+  const textScript = useMemo<'zh' | 'ja' | null>(() => {
+    if (!text.trim()) return null;
+    if (/[\u3040-\u30ff]/.test(text)) return 'ja';
+    if (/[\u4e00-\u9fff]/.test(text)) return 'zh';
+    return null;
+  }, [text]);
+  const crossLingual =
+    textScript !== null && safePromptLang !== undefined && textScript !== safePromptLang;
+  const langLabel = (id?: string) => LANGUAGES.find((item) => item.id === id)?.label ?? id ?? '未知';
+
+  // ------------------------------------------------------------------
+  // 参考音频就地导入（与音色库管理写同一份 voicelib）
+  // ------------------------------------------------------------------
+
+  const { dragging: importDragging, rootProps: importDropProps } = useFileDrop({
+    accept: AUDIO_ACCEPT,
+    onFiles: (files) => {
+      const next = files[0];
+      if (!next) return;
+      setImportFile(next);
+      setImportPath('');
+      setImportName((prev) => prev || next.name.replace(/\.[^.]+$/, ''));
+    },
+    inputRef: importFileRef,
+  });
+
+  const openImport = useCallback(() => {
+    setImportName('');
+    setImportPrompt('');
+    setImportLang(textScript ?? 'zh');
+    setImportFile(null);
+    setImportPath('');
+    setImportOpen(true);
+  }, [textScript]);
+
+  const handleImportTranscribe = useCallback(async () => {
+    if (!importFile && !importPath.trim()) {
+      toast.warning('请先选择参考音频，或填写一个本机路径');
+      return;
+    }
+    setTranscribingImport(true);
+    try {
+      const result = await asrApi.transcribe({
+        file: importFile ?? undefined,
+        source: importFile ? undefined : importPath.trim(),
+        language: importLang || 'zh',
+      });
+      if (!result.text) {
+        toast.warning('未识别到文本', { description: '试着手动填写，或换一段更干净、更清晰的人声。' });
+        return;
+      }
+      setImportPrompt(result.text);
+      toast.success('已转写并填入参考文本');
+    } catch (err) {
+      toast.error('转写失败', { description: (err as RequestError).fullMessage });
+    } finally {
+      setTranscribingImport(false);
+    }
+  }, [importFile, importPath, importLang]);
+
+  const handleImportVoice = useCallback(async () => {
+    if (!importFile && !importPath.trim()) {
+      toast.warning('请先选择参考音频，或填写一个本机路径');
+      return;
+    }
+    const fallbackName = importFile?.name ?? importPath.trim().split(/[\\/]/).pop() ?? '';
+    const name = importName.trim() || fallbackName.replace(/\.[^.]+$/, '');
+    if (!name) {
+      toast.warning('请填写音色名称');
+      return;
+    }
+    setImporting(true);
+    try {
+      const draft = { name, prompt_text: importPrompt.trim(), prompt_lang: importLang || 'zh' };
+      const result = importFile
+        ? await voiceApi.createVoice(draft, importFile)
+        : await voiceApi.createVoiceFromPath({ ...draft, audio_path: importPath.trim() });
+      toast.success('参考音频已导入并选中', {
+        description:
+          result.voice.warnings?.[0] ??
+          `${result.voice.name}${result.voice.duration_s != null ? ` · ${result.voice.duration_s.toFixed(1)} 秒` : ''}`,
+      });
+      setImportOpen(false);
+      setImportName('');
+      setImportPrompt('');
+      setImportFile(null);
+      setImportPath('');
+      await loadVoices();
+      setVoiceId(result.voice.id);
+    } catch (err) {
+      toast.error('导入失败', { description: (err as RequestError).fullMessage });
+    } finally {
+      setImporting(false);
+    }
+  }, [importFile, importPath, importName, importPrompt, importLang, loadVoices]);
+
   // ------------------------------------------------------------------
   // 文本导入
   // ------------------------------------------------------------------
@@ -383,6 +506,9 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
         filename_template: filenameTemplate || '{index:03d}',
         make_zip: makeZip,
         continue_on_error: continueOnError,
+        version: weights.version,
+        ...(weights.weightMode === 'finetuned' && weights.gpt ? { gpt: weights.gpt } : {}),
+        ...(weights.weightMode === 'finetuned' && weights.sovits ? { sovits: weights.sovits } : {}),
         params: {
           text_split_method: splitMethod,
           speed_factor: speed,
@@ -403,6 +529,7 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
       speed,
       temperature,
       repetitionPenalty,
+      weights,
     ],
   );
 
@@ -483,8 +610,8 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
           text: item.text,
           ok: item.ok,
           filename: item.filename,
-          // 服务端给的是服务内相对路径（/files/...），这里补成浏览器可用的地址
-          audioUrl: resolveAudioUrl(item.audio_url),
+          // 存服务端原始相对路径；渲染/下载时各自解析一次，避免二次拼接
+          audioUrl: item.audio_url,
           bytes: item.bytes,
           durationSec: item.duration_s,
           elapsedMs: item.elapsed_ms,
@@ -626,46 +753,53 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
   }, []);
 
   /** 单条结果的渲染（批次内共用） */
-  const renderRow = (row: BatchRow) => (
+  const renderRow = (row: BatchRow) => {
+    const audioHref = row.audioUrl ? resolveAudioUrl(row.audioUrl) : null;
+    return (
     <div
       key={`${row.index}-${row.filename ?? 'failed'}`}
       className={cn(
-        'flex flex-wrap items-center gap-3 rounded-lg border p-3 text-sm',
+        'space-y-2 rounded-lg border p-3 text-sm',
         row.ok ? 'bg-card' : 'border-destructive/40 bg-destructive/5',
       )}
     >
-      <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">
-        #{String(row.index + 1).padStart(3, '0')}
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="truncate">{row.text}</p>
-        {row.ok ? (
-          <p className="mt-0.5 text-[11px] text-muted-foreground">
-            {row.filename} · {formatDuration(row.durationSec)} · {formatBytes(row.bytes)}
-          </p>
-        ) : (
-          <p className="mt-0.5 text-[11px] text-destructive">
-            {row.error}
-            {row.hint ? <span className="ml-1 opacity-80">（{row.hint}）</span> : null}
-          </p>
-        )}
-      </div>
-      {row.ok && row.audioUrl ? (
-        <div className="flex items-center gap-2">
-          <audio controls preload="none" src={row.audioUrl} className="h-8 max-w-[220px]" />
+      <div className="flex items-start gap-3">
+        <span className="w-10 shrink-0 font-mono text-xs text-muted-foreground">
+          #{String(row.index + 1).padStart(3, '0')}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate">{row.text}</p>
+          {row.ok ? (
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              {row.filename} · {formatDuration(row.durationSec)} · {formatBytes(row.bytes)}
+            </p>
+          ) : (
+            <p className="mt-0.5 text-[11px] text-destructive">
+              {row.error}
+              {row.hint ? <span className="ml-1 opacity-80">（{row.hint}）</span> : null}
+            </p>
+          )}
+        </div>
+        {row.ok && audioHref ? (
           <Button
             size="sm"
             variant="ghost"
+            title="下载这条音频"
+            aria-label="下载这条音频"
             onClick={() => downloadFrom(row.audioUrl as string, row.filename ?? undefined)}
           >
             <Download className="size-3.5" />
           </Button>
-        </div>
-      ) : (
-        <AlertTriangle className="size-4 text-destructive" />
-      )}
+        ) : (
+          <AlertTriangle className="size-4 shrink-0 text-destructive" />
+        )}
+      </div>
+      {row.ok && audioHref ? (
+        <SlimAudioPlayer src={audioHref} preload="metadata" hideDownload className="w-full" />
+      ) : null}
     </div>
-  );
+    );
+  };
 
   /** 所有批次的汇总统计（卡片头部用） */
   const allRows = useMemo(() => rounds.entries.flatMap((entry) => entry.item.rows), [rounds.entries]);
@@ -797,9 +931,21 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label>
-                  <TermTip term="参考音色" />
-                </Label>
+                <div className="flex items-center justify-between gap-2">
+                  <Label>
+                    <TermTip term="参考音色" />
+                  </Label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 px-2 text-xs"
+                    onClick={openImport}
+                  >
+                    <Upload className="mr-1 size-3.5" />
+                    导入参考音频
+                  </Button>
+                </div>
                 <Select value={voiceId} onValueChange={setVoiceId} disabled={loadingVoices}>
                   <SelectTrigger>
                     <SelectValue placeholder={loadingVoices ? '正在加载音色库…' : '请选择音色'} />
@@ -827,6 +973,12 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
                     {selectedVoice.warnings[0]}
                   </p>
                 ) : null}
+                {voices.length > 0 ? (
+                  <p className="text-[11px] text-muted-foreground">
+                    参考音频（含转写）来自音色库（{voices.length} 条）—— 换音色到「音色库管理」导入。
+                    GPT-SoVITS 合成 = 参考音频 + GPT 权重 + SoVITS 权重；下载的 .pth 权重在下方选。
+                  </p>
+                ) : null}
               </div>
 
               <div className="space-y-2">
@@ -852,6 +1004,16 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
                 <p className="text-[11px] text-muted-foreground">
                   默认跟随音色的语种；改成别的可以做跨语言合成 —— 例如用中文音色去读日语文本。
                 </p>
+                {crossLingual ? (
+                  <p className="flex items-start gap-1.5 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-700 dark:text-amber-300">
+                    <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
+                    <span>
+                      参考音频是「{langLabel(safePromptLang)}」，文本看起来是「{langLabel(textScript ?? undefined)}」——跨语种。
+                      部分微调模型跨语种会提前截断（实测可能只有 0.7s）；建议换同语种参考音频，
+                      或在「合成语种」里显式选对文本语种。
+                    </span>
+                  </p>
+                ) : null}
               </div>
 
               <Separator />
@@ -883,6 +1045,18 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
                 <Switch id="batch-continue" checked={continueOnError} onCheckedChange={setContinueOnError} />
               </div>
             </div>
+          </div>
+
+          <Separator />
+
+          <div className="space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <Label>GPT-SoVITS 权重</Label>
+              <span className="text-[11px] text-muted-foreground">
+                零样本 = 官方底模；微调 = 下载 / 自训权重（可只选 .pth）
+              </span>
+            </div>
+            <SovitsWeightPicker value={weights} onChange={setWeights} />
           </div>
 
           <Separator />
@@ -1037,6 +1211,142 @@ export function BatchPage({ settings, onGoSettings }: BatchPageProps & { onGoSet
           </CardContent>
         </Card>
       ) : null}
+
+      {/* ---------------- 参考音频就地导入 ---------------- */}
+      {/* key 让关闭时直接卸载：Radix 的 exit 动画在程序化关闭时偶发收不到 animationend，
+          会把已关闭的弹窗留在 DOM 里（保存成功后看起来像没关） */}
+      <Dialog key={importOpen ? 'open' : 'closed'} open={importOpen} onOpenChange={setImportOpen}>
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>导入参考音频</DialogTitle>
+            <DialogDescription>
+              3~10 秒干净人声 + 逐字转写；保存后自动选中。数据写入共享音色库，音色库管理页也能看到。
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="batch-voice-name">音色名称</Label>
+              <Input
+                id="batch-voice-name"
+                value={importName}
+                onChange={(event) => setImportName(event.target.value)}
+                placeholder="例如：仁菜-旁白"
+              />
+            </div>
+
+            <div
+              className={cn('space-y-2 rounded-lg border border-dashed p-3', dropHighlight(importDragging))}
+              {...importDropProps}
+            >
+              <Label>参考音频（可拖文件进来）</Label>
+              <input
+                ref={importFileRef}
+                type="file"
+                accept={AUDIO_ACCEPT}
+                className="hidden"
+                onChange={(event) => {
+                  const next = event.target.files?.[0] ?? null;
+                  setImportFile(next);
+                  if (next) {
+                    setImportPath('');
+                    setImportName((prev) => prev || next.name.replace(/\.[^.]+$/, ''));
+                  }
+                  event.target.value = '';
+                }}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button type="button" size="sm" variant="outline" onClick={() => importFileRef.current?.click()}>
+                  <Upload className="mr-1.5 size-3.5" />
+                  选择音频文件
+                </Button>
+                {importFile ? (
+                  <span className="text-xs text-muted-foreground">
+                    {importFile.name} · {formatBytes(importFile.size)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground">未选择</span>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">支持 wav / mp3 / flac 等；建议 3~10 秒、干净、无 BGM。</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="batch-voice-path">或引用磁盘上已有的文件（不复制）</Label>
+              <Input
+                id="batch-voice-path"
+                value={importPath}
+                onChange={(event) => {
+                  setImportPath(event.target.value);
+                  if (event.target.value) setImportFile(null);
+                }}
+                placeholder="例如 D:\\素材\\仁菜.wav"
+                disabled={Boolean(importFile)}
+              />
+              <p className="text-[11px] text-muted-foreground">本机绝对路径；与上传二选一</p>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <Label htmlFor="batch-voice-prompt">参考文本（逐字转写）</Label>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="h-7 px-2 text-xs"
+                  disabled={(!importFile && !importPath.trim()) || transcribingImport}
+                  onClick={() => void handleImportTranscribe()}
+                >
+                  {transcribingImport ? (
+                    <Loader2 className="mr-1 size-3 animate-spin" />
+                  ) : (
+                    <Sparkles className="mr-1 size-3" />
+                  )}
+                  智能转写
+                </Button>
+              </div>
+              <Textarea
+                id="batch-voice-prompt"
+                value={importPrompt}
+                onChange={(event) => setImportPrompt(event.target.value)}
+                placeholder="这段音频里实际说了什么，就写什么"
+                className="min-h-[72px]"
+              />
+              <p className="text-[11px] text-muted-foreground">必须与音频逐字一致；语言选错会导致合成提前截断。</p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>参考音频语种</Label>
+              <Select value={importLang} onValueChange={setImportLang}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LANGUAGES.filter((item) => item.id !== 'auto').map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      {item.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setImportOpen(false)} disabled={importing}>
+              取消
+            </Button>
+            <Button onClick={() => void handleImportVoice()} disabled={importing || (!importFile && !importPath.trim())}>
+              {importing ? (
+                <Loader2 className="mr-1.5 size-4 animate-spin" />
+              ) : (
+                <Upload className="mr-1.5 size-4" />
+              )}
+              保存并选用
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

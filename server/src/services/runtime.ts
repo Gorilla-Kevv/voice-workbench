@@ -25,7 +25,7 @@ const PROJECT_ROOT = path.resolve(HERE, '..', '..', '..');
 
 export interface RuntimeSpec {
   /** 服务标识，同时决定 flag 文件名 */
-  id: 'netease' | 'indextts' | 'irodori' | 'gsv5';
+  id: 'netease' | 'indextts' | 'irodori' | 'gsv5' | 'cosyvoice';
   label: string;
   /** 网关侧读取的服务地址（config 里可被环境变量覆盖） */
   baseUrl: () => string;
@@ -372,10 +372,23 @@ export const gsv5Supervisor = new RuntimeSupervisor({
   readyTimeoutMs: 300_000,
 });
 
+export const cosyvoiceSupervisor = new RuntimeSupervisor({
+  id: 'cosyvoice',
+  label: 'CosyVoice3（方言/多语种）',
+  baseUrl: () => config.cosyvoice.baseUrl,
+  script: 'scripts/cosyvoice.mjs',
+  unloadEndpoints: ['/v1/unload'],
+  // `cosyvoice` 是本项目目录名/脚本名，足够特异；不要加入 `python` 这类泛词
+  hints: ['cosyvoice'],
+  defaultEnabled: false,
+  readyTimeoutMs: 300_000,
+});
+
 /** 网关自己的启动/退出钩子按这张表遍历，新增运行时只加实例 */
 export const runtimeSupervisors: RuntimeSupervisor[] = [
   neteaseSupervisor,
   indexttsSupervisor,
   irodoriSupervisor,
   gsv5Supervisor,
+  cosyvoiceSupervisor,
 ];

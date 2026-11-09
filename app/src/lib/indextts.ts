@@ -13,6 +13,7 @@ import type {
   IndexttsCatalog,
   IndexttsEngineStatus,
   IndexttsHealth,
+  IndexttsSegmentsResult,
   IndexttsSynthResult,
 } from '@/types';
 
@@ -113,6 +114,24 @@ export interface IndexttsSynthPayload {
   emoAlpha?: number;
 }
 
+export interface IndexttsSegmentPayload {
+  text: string;
+  /** null/不传 = 跟随参考音频 */
+  emoVector?: number[] | null;
+  emoAlpha?: number;
+}
+
+export interface IndexttsSegmentsPayload {
+  segments: IndexttsSegmentPayload[];
+  /** ZH / EN / JA / AR / ES */
+  lang: string;
+  file?: File | null;
+  refPath?: string;
+  durationFactor?: number;
+  /** 段间停顿（ms，默认 120） */
+  gapMs?: number;
+}
+
 export const indexttsApi = {
   health: (baseUrl?: string): Promise<IndexttsHealth> =>
     indexttsRequest('/health', { method: 'GET', timeoutMs: 15_000 }, baseUrl),
@@ -143,5 +162,28 @@ export const indexttsApi = {
       emo_alpha: payload.emoAlpha,
     });
     return indexttsRequest('/v1/synth', { method: 'POST', body: form, timeoutMs: 0 }, baseUrl);
+  },
+
+  /** 分段情感合成：每段独立向量/强度，服务端逐段生成并拼接。 */
+  synthesizeSegments: (
+    payload: IndexttsSegmentsPayload,
+    baseUrl?: string,
+  ): Promise<IndexttsSegmentsResult> => {
+    const form = new FormData();
+    if (payload.file) form.append('file', payload.file, payload.file.name);
+    appendForm(form, {
+      segments: JSON.stringify(
+        payload.segments.map((segment) => ({
+          text: segment.text,
+          emo_vector: segment.emoVector ?? null,
+          emo_alpha: segment.emoAlpha,
+        })),
+      ),
+      lang: payload.lang,
+      ref_path: payload.refPath,
+      duration_factor: payload.durationFactor,
+      gap_ms: payload.gapMs,
+    });
+    return indexttsRequest('/v1/synth/segments', { method: 'POST', body: form, timeoutMs: 0 }, baseUrl);
   },
 };

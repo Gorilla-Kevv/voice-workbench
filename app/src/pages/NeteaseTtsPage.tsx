@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { markGuideEvent } from '@/hooks/useGuideProgress';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -275,7 +276,7 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
     summary: entry.item.text,
     content: (
       <div className="space-y-3 pt-1">
-        <audio controls src={entry.item.audioUrl} className="w-full" autoPlay={false} />
+        <SlimAudioPlayer src={entry.item.audioUrl} />
         <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
           <div className="rounded-lg bg-muted/50 p-2.5">
             <p className="opacity-70">时长</p>
@@ -419,7 +420,7 @@ export function NeteaseTtsPage({ onFallback }: { onFallback?: () => void } = {})
                       ? '松手即可作为参考音频'
                       : '点击选择，或把音频 / 音频文件夹拖到这里（3 秒以上）'}
                 </Label>
-                {previewUrl ? <audio controls src={previewUrl} className="w-full" /> : null}
+                {previewUrl ? <SlimAudioPlayer src={previewUrl} compact /> : null}
               </div>
             ) : (
               <div className="space-y-2">

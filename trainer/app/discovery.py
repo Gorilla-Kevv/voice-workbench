@@ -92,6 +92,7 @@ class WeightEntry:
     size_mb: float
     mtime: float
     trained: bool  # 是否为用户训练产物（位于 *_weights* 目录）
+    origin: str = "install"  # "install" 官方整合包目录 / "library" models/gpt-sovits
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -103,6 +104,7 @@ class WeightEntry:
             "size_mb": round(self.size_mb, 1),
             "mtime": self.mtime,
             "trained": self.trained,
+            "origin": self.origin,
         }
 
 

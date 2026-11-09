@@ -61,7 +61,9 @@ export type NavKey =
   /** Irodori 音色固化训练：数据 → 整备 → SI 训练 */
   | 'irodori-training'
   /** GPT-SoVITS v5：新一代推理底模（v5turbo / v5dev） */
-  | 'gpt-sovits-v5';
+  | 'gpt-sovits-v5'
+  /** CosyVoice3：9 语言 + 18 中文方言 / 自然语言 instruct */
+  | 'cosyvoice-tts';
 
 /**
  * 本地模型服务的连接状态。
@@ -74,6 +76,9 @@ export type SovitsLinkState = 'checking' | 'ready' | 'offline';
 
 /** GPT-SoVITS 本地服务的契约类型 */
 export * from './sovits';
+
+/** CosyVoice3 本地服务的契约类型 */
+export * from './cosyvoice';
 
 export type AudioFormat = 'wav' | 'pcm16';
 

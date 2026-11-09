@@ -3,6 +3,7 @@ import { AlertTriangle, Loader2, Music2, Scissors, Upload, Waves } from 'lucide-
 import { toast } from 'sonner';
 import { RequestError } from '@/lib/errors';
 import { ABPlayer } from '@/components/features/ABPlayer';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { JobPanel } from '@/components/features/JobPanel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -945,7 +946,7 @@ function CoverWizard({
                 dropHighlight(songDragging),
               )}
             />
-            {sourceUrl ? <audio src={sourceUrl} controls preload="metadata" className="mt-1 w-full" /> : null}
+            {sourceUrl ? <SlimAudioPlayer src={sourceUrl} preload="metadata" compact className="mt-1" /> : null}
 
             <div className="space-y-1.5 pt-2">
               <Label>

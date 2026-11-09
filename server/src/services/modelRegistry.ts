@@ -127,8 +127,8 @@ export const MODEL_CATEGORIES: ModelCategorySpec[] = [
     key: 'gpt-sovits',
     label: 'GPT-SoVITS 微调',
     dir: 'gpt-sovits',
-    hint: '一个音色 = .ckpt（GPT）+ .pth（SoVITS）成对；零样本用法不需要这里的文件',
-    primary: /\.ckpt$/i,
+    hint: '一个音色 = .ckpt（GPT）+ .pth（SoVITS）成对；也可只放 .pth（自动配同版本预训练 GPT）；零样本用法不需要这里的文件',
+    primary: /\.(ckpt|pth)$/i,
     required: [],
     companions: [/\.pth$/i],
     allowed: ['.ckpt', '.pth'],
@@ -459,10 +459,24 @@ function scanDir(spec: ModelCategorySpec, dir: string, root: ScanRoot): ModelEnt
   const primaries = filesInDir.filter((abs) => spec.primary!.test(path.basename(abs)));
   if (primaries.length === 0) return [];
 
-  const relDir = toRel(root.dir, dir);
-  const singleModelDir = primaries.length === 1;
+  // GPT-SoVITS：.ckpt 与 .pth 都可能是主权重。同目录只有一个 .ckpt 时按「一个音色」
+  // 处理（.pth 全算配套）；没有 .ckpt 时每个 .pth 各自成为一个音色（下载的纯 .pth 模型）。
+  const ckptPrimaries = primaries.filter((abs) => /\.ckpt$/i.test(abs));
+  const ckptStems = new Set(
+    ckptPrimaries.map((abs) => path.basename(abs, path.extname(abs)).toLowerCase()),
+  );
+  const effectivePrimaries =
+    ckptPrimaries.length === 1
+      ? ckptPrimaries
+      : primaries.filter((abs) => {
+          if (!/\.pth$/i.test(abs)) return true;
+          return !ckptStems.has(path.basename(abs, path.extname(abs)).toLowerCase());
+        });
 
-  return primaries.map((primaryAbs) => {
+  const relDir = toRel(root.dir, dir);
+  const singleModelDir = effectivePrimaries.length === 1;
+
+  return effectivePrimaries.map((primaryAbs) => {
     const stem = path.basename(primaryAbs, path.extname(primaryAbs));
 
     // 显示名优先取子目录名（DDSP-SVC 官方导出几乎都叫 model.pt，用 stem 会全变成「model」）

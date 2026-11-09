@@ -16,13 +16,15 @@ import type { HistoryRecord } from './index';
 /** 展示分组 */
 export type OutputGroup = 'infer' | 'train' | 'model' | 'cloud';
 
-/** 一条产物：能给 `url` 就内联播放，能给 `path` 就让用户复制去资源管理器定位 */
+/** 一条产物：音频给内联播放器，普通文件给下载链接；`path` 让用户复制去资源管理器定位 */
 export interface OutputArtifact {
   key: string;
   label: string;
   url?: string;
   path?: string;
   bytes?: number;
+  /** audio = 内联播放器；file = 下载/打开链接（ZIP、清单、权重等） */
+  kind?: 'audio' | 'file';
 }
 
 export interface OutputRecord {

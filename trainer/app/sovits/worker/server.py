@@ -153,8 +153,12 @@ class Holder:
     # ------------------------------------------------------------------
 
     def _pair(self, version: str) -> Tuple[Path, Path]:
-        """权重对：显式指定的优先，否则扫官方目录取最新产物，再否则用预训练底模。"""
-        from .. import bootstrap, catalog  # noqa: PLC0415
+        """权重对：显式指定的优先，否则扫官方目录取最新产物，再否则用预训练底模。
+
+        只给一侧（典型是网上下载的纯 .pth）时，另一侧**显式落到同版本预训练底模**，
+        不再去猜「最新训练产物」——否则会悄悄配上另一个音色的 GPT。
+        """
+        from .. import bootstrap, catalog, weight_meta  # noqa: PLC0415
         from ...errors import EnvironmentError_  # noqa: PLC0415
 
         installation = bootstrap.require()
@@ -166,15 +170,26 @@ class Holder:
             return max(hits, key=lambda path: path.stat().st_mtime) if hits else None
 
         gpt = self._target_gpt
-        if gpt is None:
+        sovits = self._target_sovits
+        if gpt is None and sovits is None:
             gpt = newest(installation.path(catalog.GPT_WEIGHT_DIRS[version]), "*.ckpt") or installation.path(
                 catalog.PRETRAINED_GPT[version]
             )
-        sovits = self._target_sovits
-        if sovits is None:
             sovits = newest(
                 installation.path(catalog.SOVITS_WEIGHT_DIRS[version]), "*.pth"
             ) or installation.path(catalog.PRETRAINED_SOVITS_G[version])
+        elif sovits is not None and gpt is None:
+            detected = weight_meta.detect_sovits_version(sovits)
+            if detected is not None and detected != version:
+                raise EnvironmentError_(
+                    "SoVITS 权重版本与所选模型版本不一致",
+                    hint="该文件是 %s 权重；请把「模型版本」切到 %s 再加载。" % (detected, detected),
+                    code="WEIGHT_VERSION_MISMATCH",
+                    status=400,
+                )
+            gpt = installation.path(catalog.PRETRAINED_GPT[version])
+        elif gpt is not None and sovits is None:
+            sovits = installation.path(catalog.PRETRAINED_SOVITS_G[version])
 
         if not gpt.is_file() or not sovits.is_file():
             missing: List[str] = []

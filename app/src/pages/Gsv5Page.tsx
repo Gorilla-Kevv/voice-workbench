@@ -10,6 +10,7 @@ import { Slider } from '@/components/ui/slider';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { ErrorAlert } from '@/components/features/ErrorAlert';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { focusBeforeRun } from '@/lib/arbiter';
@@ -162,7 +163,7 @@ export function Gsv5Page() {
     summary: entry.item.text.slice(0, 60),
     content: (
       <div className="space-y-2">
-        <audio controls src={entry.item.audioUrl} className="w-full" />
+        <SlimAudioPlayer src={entry.item.audioUrl} hideDownload />
         <p className="text-[11px] text-muted-foreground">{entry.item.text}</p>
         <a
           href={entry.item.audioUrl}

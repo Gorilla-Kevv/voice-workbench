@@ -11,7 +11,16 @@ import { preloadService, type PreloadModel } from '../services/preload.js';
  */
 export const preloadRouter = Router();
 
-const MODELS: (PreloadModel | 'ask')[] = ['netease-tts', 'sovits', 'none', 'ask'];
+const MODELS: (PreloadModel | 'ask')[] = [
+  'netease-tts',
+  'indextts-tts',
+  'irodori-tts',
+  'gpt-sovits-v5',
+  'cosyvoice-tts',
+  'sovits',
+  'none',
+  'ask',
+];
 
 /** 可选模型 + 各自显存需求 + 当前显存（界面据此给数字） */
 preloadRouter.get('/catalog', async (_req, res) => {
@@ -52,7 +61,7 @@ preloadRouter.post('/', async (req, res) => {
   if (!MODELS.includes(model) || model === 'ask') {
     res.status(400).json({
       ok: false,
-      error: { code: 'BAD_MODEL', message: `未知选项：${model}`, retryable: false, hint: '可选：netease-tts / sovits / none' },
+      error: { code: 'BAD_MODEL', message: `未知选项：${model}`, retryable: false, hint: `可选：${MODELS.join(' / ')}` },
     });
     return;
   }

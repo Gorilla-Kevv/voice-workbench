@@ -6,6 +6,7 @@ import { ACCEPTED_SAMPLE_TYPES, MAX_SAMPLE_BYTES } from '@/lib/constants';
 import { blobToDataUri, formatBytes, formatDuration } from '@/lib/audio';
 import { useRecorder } from '@/hooks/useRecorder';
 import { useFileDrop } from '@/hooks/useFileDrop';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { cn } from '@/lib/utils';
 import type { VoiceSample } from '@/types';
 
@@ -160,11 +161,9 @@ export function SamplePicker({ value, onChange, onError }: SamplePickerProps) {
         </div>
 
         {previewUrl ? (
-          <audio
+          <SlimAudioPlayer
             src={previewUrl}
-            controls
-            className="h-9 w-full"
-            onLoadedMetadata={(event) => setPreviewDuration(event.currentTarget.duration || 0)}
+            onDurationChange={setPreviewDuration}
           />
         ) : null}
 

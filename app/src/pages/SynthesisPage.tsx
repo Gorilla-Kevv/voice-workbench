@@ -34,7 +34,9 @@ interface SynthesisPageProps {
  * 混在一起会让用户以为标签对本地模型也生效。
  */
 export function SynthesisPage({ presets, settings, controller, maxTextLength }: SynthesisPageProps) {
-  const isSovits = settings.providerId === 'gpt-sovits';
+  // GPT-SoVITS 本地合成已迁到「批量合成」页；通用合成固定 MiMo，
+  // 不再受设置里遗留的 providerId 影响（2026-10-28 用户裁决：两套模型独立）。
+  const isSovits = false;
 
   const [voiceId, setVoiceId] = useState(presets[0]?.id ?? 'mimo_default');
   const [styles, setStyles] = useState<string[]>([]);
@@ -166,8 +168,8 @@ export function SynthesisPage({ presets, settings, controller, maxTextLength }: 
       {
         voiceLabel: voice?.label ?? voiceId,
         instruction: instruction.trim() || undefined,
-        providerId: settings.providerId,
-        providerFields: settings.providerFields[settings.providerId],
+        providerId: 'mimo',
+        providerFields: settings.providerFields['mimo'],
         apiKey: settings.apiKey || undefined,
         baseUrl: settings.baseUrl || undefined,
       },

@@ -17,6 +17,7 @@ import { neteaseApi } from '@/lib/netease';
 import { indexttsApi } from '@/lib/indextts';
 import { irodoriApi } from '@/lib/irodori';
 import { gsv5Api } from '@/lib/gsv5';
+import { cosyvoiceApi } from '@/lib/cosyvoice';
 import { sovitsApi } from '@/lib/sovits';
 import { localServiceApi, runtimeServiceApi } from '@/lib/localService';
 import { AsrPage } from '@/pages/AsrPage';
@@ -24,6 +25,7 @@ import { BatchPage } from '@/pages/BatchPage';
 import { IndexttsTtsPage } from '@/pages/IndexttsTtsPage';
 import { IrodoriTtsPage } from '@/pages/IrodoriTtsPage';
 import { Gsv5Page } from '@/pages/Gsv5Page';
+import { CosyvoiceTtsPage } from '@/pages/CosyvoiceTtsPage';
 import { IrodoriTrainingPage } from '@/pages/IrodoriTrainingPage';
 import { NeteaseAsrPage } from '@/pages/NeteaseAsrPage';
 import { NeteaseTtsPage } from '@/pages/NeteaseTtsPage';
@@ -63,7 +65,7 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
   },
   batch: {
     title: '批量合成',
-    description: '用一份文本清单一次生成一批音频（本地 GPT-SoVITS），支持打包导出',
+    description: '本地 GPT-SoVITS：零样本或微调权重（支持纯 .pth），一份清单批量生成并打包导出',
   },
   design: {
     title: '音色设计',
@@ -122,7 +124,11 @@ const PAGE_META: Record<NavKey, { title: string; description: string }> = {
     title: 'GPT-SoVITS v5 合成',
     description: 'GPT-SoVITS v5turbo / v5dev 新一代底模：免 SoVITS 微调、音色相似度显著提升、新 vocoder 减少高频伪影',
   },
-  settings: { title: '设置', description: '本地四套服务（GPT-SoVITS / 网易 / IndexTTS / Irodori）与云端 MiMo 的开关、密钥、开机预加载与合成偏好' },
+  'cosyvoice-tts': {
+    title: 'CosyVoice · 方言合成',
+    description: 'CosyVoice3 · 9 语言 + 18 中文方言：零样本克隆、跨语种与自然语言 instruct（方言/情感/语速）',
+  },
+  settings: { title: '设置', description: '本地六套服务（GPT-SoVITS / 网易 / IndexTTS / Irodori / GSV5 / CosyVoice3）与云端 MiMo 的开关、密钥、开机预加载与合成偏好' },
 };
 
 /** 不依赖云端密钥的页面（走本地服务或纯客户端） */
@@ -133,6 +139,8 @@ const LOCAL_PAGES: NavKey[] = [
   'irodori-tts', 'irodori-training',
   // GPT-SoVITS v5 是第五个本地运行时（:9885，py3.12 独立 venv）
   'gpt-sovits-v5',
+  // CosyVoice3 是第六个本地运行时（:9886，py3.10 + torch 2.3.1 cu121）
+  'cosyvoice-tts',
 ];
 
 /**
@@ -215,6 +223,8 @@ function App() {
     irodoriTts: 'checking',
     // GPT-SoVITS v5 是第五个独立服务（按需启动，:9885），探活单独一轮
     gsv5Tts: 'checking',
+    // CosyVoice3 是第六个独立服务（按需启动，:9886），探活单独一轮
+    cosyvoiceTts: 'checking',
   });
 
   const history = useHistory(settings.historyLimit);
@@ -276,7 +286,7 @@ function App() {
       let nextModules: ModuleStates = {
         rvc: 'offline', svc: 'offline', asr: 'offline',
         neteaseTts: 'offline', neteaseAsr: 'offline', indexttsTts: 'offline', irodoriTts: 'offline',
-        gsv5Tts: 'offline',
+        gsv5Tts: 'offline', cosyvoiceTts: 'offline',
       };
       try {
         // 1. 先问 supervisor：用户到底要不要这个服务（这里三块卡 rvc/svc/asr 共享）
@@ -308,6 +318,7 @@ function App() {
               indexttsTts: 'checking',
               irodoriTts: 'checking',
               gsv5Tts: 'checking',
+              cosyvoiceTts: 'checking',
             };
           }
         }
@@ -323,6 +334,7 @@ function App() {
         indexttsTts: prev.indexttsTts,
         irodoriTts: prev.irodoriTts,
         gsv5Tts: prev.gsv5Tts,
+        cosyvoiceTts: prev.cosyvoiceTts,
       }));
 
       if (healthy) {
@@ -530,7 +542,45 @@ function App() {
     };
   }, [serviceChangedTick]);
 
-  // 设置页 toggle 任何本地服务（GPT-SoVITS / 网易 / IndexTTS / Irodori / GSV5）→ 广播 service-enabled-changed。
+  // CosyVoice3 的探活：第六个独立运行时（按需启动，:9886），策略与其它独立服务相同。
+  // 只有 supervisor 同意（enabled=true）且健康探针通过（cuda + 权重就绪）才报 ready。
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number | undefined;
+    const startedAt = Date.now();
+
+    const probe = async () => {
+      let nextState: ModuleState = 'offline';
+      try {
+        const supervisor = await runtimeServiceApi.state('cosyvoice');
+        if (cancelled) return;
+        if (supervisor.enabled) {
+          const cosyvoiceHealth = await cosyvoiceApi.health();
+          if (cancelled) return;
+          nextState = cosyvoiceHealth.cuda && cosyvoiceHealth.weights.ready ? 'ready' : 'incomplete';
+        }
+      } catch {
+        // supervisor 也拿不到：保持 offline
+      }
+      if (cancelled) return;
+      setModuleStates((prev) => ({ ...prev, cosyvoiceTts: nextState }));
+
+      if (nextState === 'ready') {
+        timer = window.setTimeout(probe, SOVITS_READY_POLL_MS);
+        return;
+      }
+      const wait = Date.now() - startedAt < SOVITS_FAST_WINDOW_MS ? SOVITS_FAST_RETRY_MS : SOVITS_SLOW_RETRY_MS;
+      timer = window.setTimeout(probe, wait);
+    };
+
+    void probe();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+    };
+  }, [serviceChangedTick]);
+
+  // 设置页 toggle 任何本地服务（GPT-SoVITS / 网易 / IndexTTS / Irodori / GSV5 / CosyVoice3）→ 广播 service-enabled-changed。
   // 上面两个探活 effect 都通过 serviceChangedTick 订阅，看到值变了立刻重启、不必等定时器窗。
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -586,7 +636,9 @@ function App() {
                         ? 'Irodori SI 训练 · irodori 本地'
                         : active === 'gpt-sovits-v5'
                           ? 'GPT-SoVITS v5 · gsv5 本地'
-                          : '客户端配置';
+                          : active === 'cosyvoice-tts'
+                            ? 'CosyVoice3 · cosyvoice 本地'
+                            : '客户端配置';
     return { ...meta, model };
   }, [active, settings.providerId]);
 
@@ -685,6 +737,7 @@ function App() {
           <IrodoriTrainingPage onGoSynth={() => setActive('irodori-tts')} />
         ) : null}
         {active === 'gpt-sovits-v5' ? <Gsv5Page /> : null}
+        {active === 'cosyvoice-tts' ? <CosyvoiceTtsPage /> : null}
 
         {active === 'settings' ? (
           <SettingsPage

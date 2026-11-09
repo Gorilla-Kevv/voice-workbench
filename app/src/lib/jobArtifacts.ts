@@ -21,14 +21,74 @@ const TRACK_LABELS: Record<string, string> = {
   vocal: '新人声',
   instrumental: '伴奏',
   mix: '混音',
+  zip_url: 'ZIP 包',
+  manifest_url: '清单 JSON',
+  workdir: '实验目录',
+  sovits_model: 'SoVITS 权重',
+  sovits_model_dir: 'SoVITS 权重目录',
 };
 
-/** 单条产物：`url` 给播放器，`path` 给用户去资源管理器里定位 */
+const AUDIO_EXTENSIONS = new Set([
+  '.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac', '.webm', '.wma', '.opus', '.aif', '.aiff',
+]);
+
+/** 产物是音频还是普通文件：决定前端给播放器还是下载链接 */
+export type JobTrackKind = 'audio' | 'file';
+
+/** 单条产物：`url` 给播放器（或下载），`path` 给用户去资源管理器里定位 */
 export interface JobTrack {
   key: string;
   label: string;
   url: string | null;
   path: string | null;
+  kind: JobTrackKind;
+  bytes?: number;
+}
+
+function extensionOf(value: string | null | undefined): string {
+  if (!value) return '';
+  const clean = value.split(/[?#]/)[0];
+  const match = clean.match(/\.[a-zA-Z0-9]+$/);
+  return match ? match[0].toLowerCase() : '';
+}
+
+const AUDIO_KEYS = new Set(['output', 'vocal', 'instrumental', 'mix', 'audio']);
+
+function isAudioKey(key: string): boolean {
+  return AUDIO_KEYS.has(key);
+}
+
+function trackKind(key: string, path: string | null, url: string | null): JobTrackKind {
+  if (isAudioKey(key)) return 'audio';
+  const value = path ?? url ?? '';
+  return AUDIO_EXTENSIONS.has(extensionOf(value)) ? 'audio' : 'file';
+}
+
+/**
+ * 服务端只给了绝对路径、没给 URL 时，尽量从 trainer 的输出根推导静态地址。
+ * 只对 `trainer/.data/outputs/<rel>` 这一种稳定布局生效，其余保持不可播放。
+ */
+function guessOutputUrl(path: string | null): string | null {
+  if (!path) return null;
+  const normalized = path.replace(/\\/g, '/');
+  const match = normalized.match(/\/trainer\/\.data\/outputs\/(.+)$/i);
+  if (!match) return null;
+  const encoded = match[1]
+    .split('/')
+    .filter(Boolean)
+    .map((part) => encodeURIComponent(part))
+    .join('/');
+  return encoded ? `/files/${encoded}` : null;
+}
+
+interface BatchResultItem {
+  index?: unknown;
+  ok?: unknown;
+  filename?: unknown;
+  text?: unknown;
+  audio_url?: unknown;
+  bytes?: unknown;
+  duration_s?: unknown;
 }
 
 /** 盘符路径（`F:\...` / `C:/...`）在浏览器里必然取不到，不能当 URL 用 */
@@ -52,7 +112,7 @@ interface ArtifactBag {
   [key: string]: unknown;
 }
 
-/** 逐个产物合成 { key, label, url, path } */
+/** 逐个产物合成 { key, label, url, path, kind } */
 export function collectTracks(job: SovitsJob): JobTrack[] {
   const bag = (job.artifacts ?? {}) as ArtifactBag;
   const urls = (bag.urls ?? {}) as Record<string, unknown>;
@@ -72,25 +132,69 @@ export function collectTracks(job: SovitsJob): JobTrack[] {
   }
 
   const tracks: JobTrack[] = [];
+
+  // 批量任务（infer/batch）的产物在 results[] 里：每条成功音频单独一条，
+  // 顶层只有 zip_url/manifest_url/workdir，不能当播放器用。
+  if (Array.isArray(bag.results)) {
+    (bag.results as BatchResultItem[]).forEach((item, position) => {
+      if (!item || typeof item !== 'object' || item.ok !== true) return;
+      const audioUrl = typeof item.audio_url === 'string' ? item.audio_url : '';
+      if (!audioUrl) return;
+      const index = typeof item.index === 'number' ? item.index : position;
+      const filename = typeof item.filename === 'string' ? item.filename : '';
+      const text = typeof item.text === 'string' ? item.text.trim() : '';
+      const seconds = typeof item.duration_s === 'number' ? item.duration_s : null;
+      tracks.push({
+        key: `result:${index}`,
+        label: `第 ${index + 1} 条${filename ? ` · ${filename}` : ''}${seconds !== null ? ` · ${seconds.toFixed(1)}s` : ''}${text ? ` · ${text.slice(0, 24)}` : ''}`,
+        url: resolveAudioUrl(audioUrl),
+        path: null,
+        kind: 'audio',
+        ...(typeof item.bytes === 'number' ? { bytes: item.bytes } : {}),
+      });
+    });
+  }
+
   for (const key of keys) {
     const rawPath = paths[key];
     const rawUrl = urls[key];
     // `artifacts[key]` 只在是绝对路径时才当本机路径；Web 路径一律以 `urls` 为准
     const path = typeof rawPath === 'string' && looksLikeDiskPath(rawPath) ? rawPath : null;
+    // 批量任务的 zip_url/manifest_url 直接以 `/files/...` 字符串放在 artifacts 顶层，
+    // 不在 urls 里 —— 两种来源都要接住，否则只能看到 workdir。
+    const directUrl =
+      typeof rawPath === 'string' && !looksLikeDiskPath(rawPath) && (rawPath.startsWith('/') || /^https?:/i.test(rawPath))
+        ? rawPath
+        : null;
+    const effectiveUrl = typeof rawUrl === 'string' && rawUrl ? rawUrl : directUrl;
     // `urls` 是**服务内相对路径**（`/files/...`），直接塞给播放器会 404 ——
     // 必须补上网关前缀（坑：变声页最早就是这么拿不到音频的）。
-    const url = typeof rawUrl === 'string' && rawUrl ? resolveAudioUrl(rawUrl) : null;
+    let url = effectiveUrl ? resolveAudioUrl(effectiveUrl) : null;
+    const kind = trackKind(key, path, url);
+    // 只给了本机路径、且是音频产物：从 trainer 输出根推导 /files URL，让老任务也能试听
+    if (!url && kind === 'audio') {
+      const guessed = guessOutputUrl(path);
+      if (guessed) url = resolveAudioUrl(guessed);
+    }
     if (!path && !url) continue;
     tracks.push({
       key,
       label: TRACK_LABELS[key] ?? key,
       url,
       path,
+      kind,
     });
   }
 
-  // `output` 排最前（用户最关心的总是最终成品）
-  tracks.sort((a, b) => (a.key === 'output' ? -1 : b.key === 'output' ? 1 : a.key.localeCompare(b.key)));
+  // `output` 排最前（用户最关心的总是最终成品），批次条目按序号排在其后
+  tracks.sort((a, b) => {
+    if (a.key === 'output') return -1;
+    if (b.key === 'output') return 1;
+    if (a.key.startsWith('result:') && b.key.startsWith('result:')) return a.key.localeCompare(b.key, undefined, { numeric: true });
+    if (a.key.startsWith('result:')) return -1;
+    if (b.key.startsWith('result:')) return 1;
+    return a.key.localeCompare(b.key);
+  });
   return tracks;
 }
 

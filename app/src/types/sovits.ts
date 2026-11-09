@@ -213,6 +213,10 @@ export interface ModuleStates {
    * GPT-SoVITS v5：第五个运行时（gsv5/，:9885）；「未启动」是常态（按需启动）。
    */
   gsv5Tts: ModuleState;
+  /**
+   * CosyVoice3：第六个运行时（cosyvoice/，:9886）；「未启动」是常态（按需启动）。
+   */
+  cosyvoiceTts: ModuleState;
 }
 
 /**
@@ -362,6 +366,8 @@ export interface SovitsWeight {
   size_mb: number;
   mtime: number;
   trained: boolean;
+  /** install = 整合包权重目录；library = models/gpt-sovits（音色库导入/下载） */
+  origin?: 'install' | 'library';
 }
 
 export interface SovitsWeightList {

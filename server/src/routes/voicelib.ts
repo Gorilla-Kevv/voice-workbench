@@ -11,7 +11,6 @@
  * 响应形状与 trainer 对齐：成功 `{ ok: true, voice | voices }`，
  * 失败 `{ ok: false, error: { code, message, retryable, hint } }`。
  */
-import fs from 'node:fs';
 import path from 'node:path';
 import express, { type Request, type Response, type Router as RouterType } from 'express';
 import { Router } from 'express';
@@ -44,6 +43,17 @@ const AUDIO_MIME: Record<string, string> = {
   '.aac': 'audio/aac',
   '.wma': 'audio/x-ms-wma',
 };
+
+/** 试听音频：sendFile 会带 Content-Length / Accept-Ranges，浏览器才能拿到时长并拖动进度 */
+function sendAudioFile(res: Response, filePath: string): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.type(AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream');
+  res.sendFile(filePath, (error) => {
+    if (!error) return;
+    if (!res.headersSent) sendError(res, error);
+    else res.destroy();
+  });
+}
 
 function sendError(res: Response, error: unknown): void {
   if (error instanceof VoiceLibraryError) {
@@ -143,9 +153,7 @@ voicelibRouter.post('/:id/ref-clips', rawAudio, (req: Request, res: Response) =>
 voicelibRouter.get('/:id/ref-clips/:index/audio', (req: Request, res: Response) => {
   try {
     const filePath = getRefClipPath(req.params.id, Number(req.params.index));
-    res.setHeader('Cache-Control', 'no-store');
-    res.type(AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream');
-    fs.createReadStream(filePath).pipe(res);
+    sendAudioFile(res, filePath);
   } catch (error) {
     if (!res.headersSent) sendError(res, error);
     else res.destroy();
@@ -182,9 +190,7 @@ voicelibRouter.get('/:id', (req: Request, res: Response) => {
 voicelibRouter.get('/:id/audio', (req: Request, res: Response) => {
   try {
     const filePath = getVoiceAudioPath(req.params.id);
-    res.setHeader('Cache-Control', 'no-store');
-    res.type(AUDIO_MIME[path.extname(filePath).toLowerCase()] ?? 'application/octet-stream');
-    fs.createReadStream(filePath).pipe(res);
+    sendAudioFile(res, filePath);
   } catch (error) {
     if (!res.headersSent) sendError(res, error);
     else res.destroy();

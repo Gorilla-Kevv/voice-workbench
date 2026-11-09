@@ -1,0 +1,94 @@
+{
+  "runtime": {
+    "python": "3.12",
+    "pymss": "2.0.14",
+    "pymss_core": "0.1.4",
+    "torch": "2.11.0+cu128"
+  },
+  "model_dir": "pymss/models",
+  "source": "baicai1145/pymss (HuggingFace / ModelScope)",
+  "license_note": "逐个模型核对上游模型卡；未明确的模型不用于分发",
+  "models": [
+    {
+      "name": "7_HP2-UVR.pth",
+      "preset": "vocal_fast",
+      "selected": true,
+      "size_bytes": 550120123,
+      "sha256": "545ee733b704a263bf6f75328c5ed14f0fb439dcda7a6e8f53c8cecb92877afe",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    },
+    {
+      "name": "model_bs_roformer_ep_317_sdr_12.9755.ckpt",
+      "preset": "vocal_hifi",
+      "selected": true,
+      "size_bytes": 639331213,
+      "sha256": "5b84f37e8d444c8cb30c79d77f613a41c05868ff9c9ac6c7049c00aefae115aa",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    },
+    {
+      "name": "3_HP-Vocal-UVR.pth",
+      "preset": "vocal_main_candidate",
+      "selected": false,
+      "size_bytes": 126792647,
+      "sha256": "7d3f9be265b2f2c3d684f23a9905674627c2552e0f6b5f36325cef8dc1f0ff6b",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    },
+    {
+      "name": "4_HP-Vocal-UVR.pth",
+      "preset": "vocal_main_candidate",
+      "selected": false,
+      "size_bytes": 126792647,
+      "sha256": "295d1e1e3a52c17a040a4a6fe390214ad8ca0797f091b7c6d8db97d247a27271",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    },
+    {
+      "name": "5_HP-Karaoke-UVR.pth",
+      "preset": "vocal_main_candidate",
+      "selected": false,
+      "size_bytes": 126782699,
+      "sha256": "fe00891defbb61f4261500af22f7624f1a3df8dc75fa3998d1aece02e6be4537",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    },
+    {
+      "name": "6_HP-Karaoke-UVR.pth",
+      "preset": "vocal_main_candidate",
+      "selected": false,
+      "size_bytes": 126782699,
+      "sha256": "4ce7eaaa9e56f09366b788aebf6d3a72aec8145692c56f1e090e4e7e2d7ce65f",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    },
+    {
+      "name": "UVR-DeEcho-DeReverb.pth",
+      "preset": "dereverb",
+      "selected": true,
+      "size_bytes": 223650277,
+      "sha256": "e644028ec82865dc0fe082bc6fea85a43f7c71cfe375caee2da2d154aa661ee7",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    },
+    {
+      "name": "UVR-De-Echo-Normal.pth",
+      "preset": "deecho_normal",
+      "selected": true,
+      "size_bytes": 127139365,
+      "sha256": "b849dd575643b075c257fb7a96c2ef5a79d7a5e7df74a2b319ad47118f1ee769",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    },
+    {
+      "name": "UVR-De-Echo-Aggressive.pth",
+      "preset": "deecho_aggressive",
+      "selected": true,
+      "size_bytes": 127139365,
+      "sha256": "1bd1d79d9c5d1b17d20f96f8a9f8aff1b55a83014f70712446bf420c0188e0a0",
+      "source": "baicai1145/pymss",
+      "license": "待核对"
+    }
+  ]
+}

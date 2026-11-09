@@ -70,12 +70,12 @@ LANGUAGE_NOTES: Dict[str, str] = {
 
 #: 前端展示用的精简语言（合并 all_* 变体）
 LANGUAGE_PRESETS: List[Dict[str, Any]] = [
-    {"code": "zh", "label": "中文", "flag": "zh"},
-    {"code": "en", "label": "English", "flag": "en"},
-    {"code": "ja", "label": "日本語", "flag": "ja"},
-    {"code": "ko", "label": "한국어", "flag": "ko"},
-    {"code": "yue", "label": "粤语", "flag": "yue"},
-    {"code": "auto", "label": "自动识别", "flag": "auto"},
+    {"id": "zh", "code": "zh", "label": "中文", "flag": "zh"},
+    {"id": "en", "code": "en", "label": "English", "flag": "en"},
+    {"id": "ja", "code": "ja", "label": "日本語", "flag": "ja"},
+    {"id": "ko", "code": "ko", "label": "한국어", "flag": "ko"},
+    {"id": "yue", "code": "yue", "label": "粤语", "flag": "yue"},
+    {"id": "auto", "code": "auto", "label": "自动识别", "flag": "auto"},
 ]
 
 #: 训练语料 `list` 文件里允许的语种代码（官方 1-get-text.py 的映射表的键）

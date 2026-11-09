@@ -21,6 +21,7 @@ import { getVoiceAudioPath, getVoice } from '../services/voiceLibrary.js';
 import { baseUrlOf } from '../services/serviceCatalog.js';
 import { config } from '../config/index.js';
 import { gsv5Summary } from './gsv5.js';
+import { cosyvoiceSummary } from './cosyvoice.js';
 import { indexttsSummary } from './indextts.js';
 import { irodoriSummary } from './irodori.js';
 import { neteaseSummary } from './netease.js';
@@ -264,7 +265,7 @@ async function dispatchSpeech(
     };
   }
 
-  const base = baseUrlOf(spec.runtime as 'sovits' | 'netease' | 'indextts' | 'irodori' | 'gsv5');
+  const base = baseUrlOf(spec.runtime as 'sovits' | 'netease' | 'indextts' | 'irodori' | 'gsv5' | 'cosyvoice');
 
   if (spec.runtime === 'sovits') {
     const payload: Record<string, unknown> = {
@@ -336,6 +337,32 @@ async function dispatchSpeech(
     const result = await requestUpstream(base, spec.runtime, { path: spec.upstream.path, json: payload, timeoutMs });
     if (!result.ok) return { bytes: null as unknown as AudioBytes, meta: { __failure: result } };
     return { bytes: await audioBytesFrom(result.data, spec), meta: { upstream_status: result.status, ...pickDefined(result.data, ['ref_source', 'steps_used', 'retried', 'used_seed']) } };
+  }
+
+  if (spec.runtime === 'cosyvoice') {
+    const payload: Record<string, unknown> = {
+      text,
+      mode: pstr(params, 'mode') ?? 'zero_shot',
+      speed: pnum(params, 'speed') ?? 1.0,
+    };
+    if (reference.voiceId) payload.ref_voice = reference.voiceId;
+    else payload.ref_path = reference.path;
+    // 音色库自带逐字转写时直接复用，调用方不必再传 prompt_text
+    const promptText = pstr(params, 'prompt_text') ?? reference.promptText;
+    if (promptText) payload.prompt_text = promptText;
+    const instructText = pstr(params, 'instruct_text');
+    if (instructText) payload.instruct_text = instructText;
+    const language = pstr(params, 'language') ?? lang;
+    if (language) payload.language = language;
+    const result = await requestUpstream(base, spec.runtime, { path: spec.upstream.path, json: payload, timeoutMs });
+    if (!result.ok) return { bytes: null as unknown as AudioBytes, meta: { __failure: result } };
+    return {
+      bytes: await audioBytesFrom(result.data, spec),
+      meta: {
+        upstream_status: result.status,
+        ...pickDefined(result.data, ['rtf', 'mode', 'ref_source', 'duration_sec', 'sample_rate']),
+      },
+    };
   }
 
   // gsv5
@@ -639,14 +666,15 @@ async function fetchHealth(baseUrl: string, runtime: string): Promise<Record<str
 async function collectRuntimeStatus(): Promise<Record<string, RuntimeStatus>> {
   if (statusCache && Date.now() - statusCache.at < STATUS_CACHE_MS) return statusCache.value;
 
-  const [sovits, netease, indextts, irodori, gsv5] = await Promise.all([
+  const [sovits, netease, indextts, irodori, gsv5, cosyvoice] = await Promise.all([
     Promise.resolve(sovitsSummary()),
     neteaseSummary(),
     indexttsSummary(),
     irodoriSummary(),
     gsv5Summary(),
+    cosyvoiceSummary(),
   ]);
-  const [sovitsEngines, asrCatalog, neteaseHealth, indexttsHealth, indexttsCatalog, irodoriHealth, gsv5Health, gsv5Catalog] =
+  const [sovitsEngines, asrCatalog, neteaseHealth, indexttsHealth, indexttsCatalog, irodoriHealth, gsv5Health, gsv5Catalog, cosyvoiceHealth] =
     await Promise.all([
       requestUpstream(baseUrlOf('sovits'), 'sovits', { method: 'GET', path: '/v1/engines', timeoutMs: 5_000 }).catch(() => null),
       requestUpstream(baseUrlOf('sovits'), 'sovits', { method: 'GET', path: '/v1/asr/readiness', timeoutMs: 5_000 }).catch(() => null),
@@ -656,6 +684,7 @@ async function collectRuntimeStatus(): Promise<Record<string, RuntimeStatus>> {
       fetchHealth(baseUrlOf('irodori'), 'irodori'),
       fetchHealth(baseUrlOf('gsv5'), 'gsv5'),
       requestUpstream(baseUrlOf('gsv5'), 'gsv5', { method: 'GET', path: '/v1/catalog', timeoutMs: 5_000 }).catch(() => null),
+      fetchHealth(baseUrlOf('cosyvoice'), 'cosyvoice'),
     ]);
 
   const pickNum = (value: unknown): number | null => (typeof value === 'number' ? value : null);
@@ -764,6 +793,20 @@ async function collectRuntimeStatus(): Promise<Record<string, RuntimeStatus>> {
           : null,
       },
     },
+    cosyvoice: {
+      reachable: Boolean((cosyvoice as Params).reachable),
+      enabled: typeof (cosyvoice as Params).enabled === 'boolean' ? (cosyvoice.enabled as boolean) : null,
+      loadedByKind: {
+        tts: cosyvoiceHealth ? cosyvoiceHealth.loaded === true : null,
+      },
+      vram: {
+        free_mb: cosyvoiceHealth ? pickNum((cosyvoiceHealth.vram as Params | undefined)?.free_mb) : null,
+        total_mb: cosyvoiceHealth ? pickNum((cosyvoiceHealth.vram as Params | undefined)?.total_mb) : null,
+      },
+      vramRequired: {
+        tts: cosyvoiceHealth ? pickNum(((cosyvoiceHealth.configuration as Params | undefined)?.required_vram_mb)) : null,
+      },
+    },
     mimo: {
       reachable: true,
       enabled: Boolean(config.mimoApiKey),
@@ -815,7 +858,7 @@ export async function capabilitiesHandler(_req: import('express').Request, res: 
   sendJson(res, {
     generated_at: new Date().toISOString(),
     vram_free_mb:
-      status.netease.vram.free_mb ?? status.indextts.vram.free_mb ?? status.irodori.vram.free_mb ?? status.sovits.vram.free_mb ?? null,
+      status.netease.vram.free_mb ?? status.indextts.vram.free_mb ?? status.irodori.vram.free_mb ?? status.cosyvoice.vram.free_mb ?? status.sovits.vram.free_mb ?? null,
     capabilities,
   });
 }

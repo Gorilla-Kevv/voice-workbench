@@ -49,8 +49,8 @@ export function VoiceDesignPage({ settings, controller, maxTextLength }: VoiceDe
       {
         voiceLabel: description.trim().slice(0, 12) + (description.trim().length > 12 ? '…' : ''),
         voiceDescription: description.trim(),
-        providerId: settings.providerId,
-        providerFields: settings.providerFields[settings.providerId],
+        providerId: 'mimo',
+        providerFields: settings.providerFields['mimo'],
         apiKey: settings.apiKey || undefined,
         baseUrl: settings.baseUrl || undefined,
       },

@@ -8,6 +8,7 @@ import { GpuMonitorWindow } from '@/components/features/GpuMonitorWindow';
 import { cn } from '@/lib/utils';
 import { localServiceApi, notifyServiceEnabledChanged } from '@/lib/localService';
 import { arbiterApi, type FocusEngine } from '@/lib/arbiter';
+import { sovitsApi } from '@/lib/sovits';
 import {
   RESOURCE_TASK_LABEL,
   estimateTask,
@@ -34,6 +35,9 @@ function gb(mb: number | null | undefined): string {
   if (mb == null) return '未知';
   return `${(mb / 1024).toFixed(1)} GB`;
 }
+
+/** 这些任务本身就跑在 GPT-SoVITS 服务（:9881）里，不能建议「关掉它」 */
+const TRAINER_TASKS: ResourceTask[] = ['sovits', 'batch', 'training', 'rvc', 'svc', 'uvr5', 'asr'];
 
 interface ResourceBudgetProps {
   task: ResourceTask;
@@ -107,6 +111,7 @@ export function ResourceBudget({
     () => (snapshot ? estimateTask(task, snapshot) : null),
     [snapshot, task],
   );
+  const usesTrainer = TRAINER_TASKS.includes(task);
 
   // 不够 / 勉强时才去问「谁在占 GPU」——够用的场景不打扰这条读数
   const [gpuProcs, setGpuProcs] = useState<GpuProcessGroup[]>([]);
@@ -128,6 +133,15 @@ export function ResourceBudget({
   const handleFocus = useCallback(async () => {
     setFocusing(true);
     try {
+      // GPT-SoVITS / RVC / DDSP-SVC / ASR / UVR5 同属 :9881，网关 arbiter 只能按服务粒度让位；
+      // 目标模型还没加载时，必须再把同进程里其它引擎卸掉（典型：GPT-SoVITS 占着 3GB 卡住 RVC）。
+      if (usesTrainer && estimate && !estimate.engineLoaded) {
+        try {
+          await sovitsApi.unloadEngines();
+        } catch {
+          // 服务不在或本来就没有常驻引擎：不影响下一步
+        }
+      }
       // 批量走的是 GPT-SoVITS 引擎，仲裁器只认引擎名；
       // irodori-tts / irodori-training 已进两端的 FocusEngine（30-8 接入）
       const focusEngine: FocusEngine = task === 'batch' ? 'sovits' : task;
@@ -142,7 +156,7 @@ export function ResourceBudget({
     } finally {
       setFocusing(false);
     }
-  }, [refresh, task]);
+  }, [refresh, task, usesTrainer, estimate]);
 
   const handleStopSovits = useCallback(async () => {
     setStopping(true);
@@ -163,6 +177,16 @@ export function ResourceBudget({
     setReleasing(true);
     try {
       const done = await releaseVram({ neteaseTtsLoaded, neteaseAsrLoaded, indexttsLoaded, irodoriLoaded });
+      // 同进程的 trainer 引擎也要能释放：RVC/SVC/ASR 与 GPT-SoVITS 共用一个服务，
+      // 当前任务对应模型还没加载时，卸掉 GPT-SoVITS 才是真正的“释放常驻显存”。
+      if (usesTrainer && estimate && !estimate.engineLoaded) {
+        try {
+          await sovitsApi.unloadEngines();
+          done.push('本地推理引擎已卸载');
+        } catch {
+          // 服务不在/没有常驻引擎：忽略
+        }
+      }
       if (done.length > 0) {
         toast.success('已释放显存', { description: done.join(' · ') });
       } else {
@@ -172,7 +196,7 @@ export function ResourceBudget({
     } finally {
       setReleasing(false);
     }
-  }, [neteaseAsrLoaded, neteaseTtsLoaded, indexttsLoaded, irodoriLoaded, refresh]);
+  }, [neteaseAsrLoaded, neteaseTtsLoaded, indexttsLoaded, irodoriLoaded, refresh, usesTrainer, estimate]);
 
   if (!snapshot && loading) {
     return (
@@ -184,6 +208,17 @@ export function ResourceBudget({
   }
 
   if (!estimate) return null;
+
+  const taskModelLabel =
+    task === 'rvc'
+      ? 'RVC 变声模型'
+      : task === 'svc'
+        ? 'DDSP-SVC 模型'
+        : task === 'asr'
+          ? 'ASR 模型'
+          : task === 'training'
+            ? '训练模型'
+            : 'GPT-SoVITS 推理模型';
 
   const tone =
     estimate.verdict === 'insufficient'
@@ -265,6 +300,14 @@ export function ResourceBudget({
               「空闲 {gb(estimate.vram_free_mb)}」里已经扣掉了本模型的常驻占用（约 {gb(estimate.vram_need_mb)}），
               所以不再重复计算需求 —— 这是「已加载」与「未加载」判定的区别。
             </p>
+          ) : usesTrainer && snapshot?.sovits_enabled ? (
+            <p className="mt-0.5 opacity-80">
+              本地推理服务已启动，但{taskModelLabel}尚未加载 —— 「需要 {gb(estimate.vram_need_mb)}」是首次加载门槛，
+              不是当前占用；空闲读数来自 nvidia-smi（含桌面程序）。
+              {task === 'rvc' || task === 'svc'
+                ? ' 要跑这个任务，先点「只跑这一个模型」让 GPT-SoVITS 让出显存。'
+                : ''}
+            </p>
           ) : snapshot?.vram_source === 'nvidia-smi' && snapshot.vram_free_mb != null && snapshot.vram_total_mb ? (
             <p className="mt-0.5 opacity-80">
               读数来自 nvidia-smi（含其它进程占用）
@@ -286,9 +329,9 @@ export function ResourceBudget({
               {releasing ? <Loader2 className="mr-1.5 size-3.5 animate-spin" /> : null}
               释放常驻显存
             </Button>
-            {/* 报错里写「先关掉 GPT-SoVITS」，就得有地方能关 —— 这条链路默认停用，
-                关掉它等于把整块显存还回来（比只卸引擎彻底） */}
-            {snapshot?.sovits_enabled ? (
+            {/* 只在「任务不跑在这条服务上」时建议关它；批量/训练等本就依赖 :9881，
+                关掉等于把自己要用的服务停掉（用户在批量页实测报障） */}
+            {snapshot?.sovits_enabled && !usesTrainer ? (
               <Button
                 size="sm"
                 variant="outline"

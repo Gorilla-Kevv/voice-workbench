@@ -40,8 +40,8 @@ export function VoiceClonePage({ settings, controller, maxTextLength }: VoiceClo
       {
         voiceLabel: `克隆·${sample.name.replace(/\.[^.]+$/, '').slice(0, 10)}`,
         instruction: instruction.trim() || undefined,
-        providerId: settings.providerId,
-        providerFields: settings.providerFields[settings.providerId],
+        providerId: 'mimo',
+        providerFields: settings.providerFields['mimo'],
         apiKey: settings.apiKey || undefined,
         baseUrl: settings.baseUrl || undefined,
       },

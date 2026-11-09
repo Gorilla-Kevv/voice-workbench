@@ -18,7 +18,7 @@ import { baseUrlOf, releaseServiceModels } from './serviceCatalog.js';
  *  宁可加载前拦下，也不要让模型溢出共享内存假死。）
  */
 
-export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'irodori-tts' | 'gpt-sovits-v5' | 'sovits' | 'none';
+export type PreloadModel = 'netease-tts' | 'indextts-tts' | 'irodori-tts' | 'gpt-sovits-v5' | 'cosyvoice-tts' | 'sovits' | 'none';
 
 /**
  * 每个模型的显存账本。
@@ -98,6 +98,19 @@ const MODELS: Record<Exclude<PreloadModel, 'none'>, {
     },
     release: () => releaseServiceModels('gsv5'),
   },
+  'cosyvoice-tts': {
+    label: 'CosyVoice3（方言/多语种）',
+    // 估算 2.5~3.5GB；预加载账本先按服务端准入值 4096 取保守值（实测后回填）
+    vram_mb: 4096,
+    warmup: async () => {
+      await fetch(`${baseUrlOf('cosyvoice')}/v1/warmup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      });
+    },
+    release: () => releaseServiceModels('cosyvoice'),
+  },
   sovits: {
     label: 'GPT-SoVITS',
     vram_mb: 3072,
@@ -129,7 +142,7 @@ interface Preference {
 function readPreference(): Preference {
   try {
     const parsed = JSON.parse(fs.readFileSync(FLAG_FILE, 'utf8')) as Partial<Preference>;
-    if (parsed.model && ['netease-tts', 'indextts-tts', 'irodori-tts', 'gpt-sovits-v5', 'sovits', 'none', 'ask'].includes(parsed.model)) {
+    if (parsed.model && ['netease-tts', 'indextts-tts', 'irodori-tts', 'gpt-sovits-v5', 'cosyvoice-tts', 'sovits', 'none', 'ask'].includes(parsed.model)) {
       return { model: parsed.model as Preference['model'], updatedAt: parsed.updatedAt ?? 0 };
     }
   } catch {

@@ -5,6 +5,7 @@ import { RequestError } from '@/lib/errors';
 import { dropHighlight, applyFilesToInput, useFileDrop } from '@/hooks/useFileDrop';
 import { cn } from '@/lib/utils';
 import { ABPlayer } from '@/components/features/ABPlayer';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { JobPanel } from '@/components/features/JobPanel';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -564,7 +565,7 @@ function ConvertCard({
         />
       </div>
     ) : (
-      <audio src={entry.item.outputUrl} controls className="w-full" />
+      <SlimAudioPlayer src={entry.item.outputUrl} />
     ),
   }));
 
@@ -594,7 +595,7 @@ function ConvertCard({
               )}
             />
             {sourceUrl ? (
-              <audio src={sourceUrl} controls preload="metadata" className="mt-1 w-full" />
+              <SlimAudioPlayer src={sourceUrl} preload="metadata" compact className="mt-1" />
             ) : null}
           </div>
 

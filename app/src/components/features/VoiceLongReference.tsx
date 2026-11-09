@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { TermTip } from '@/components/features/TermTip';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { voiceApi } from '@/lib/voices';
 import { cn } from '@/lib/utils';
 import type { SovitsVoice } from '@/types';
@@ -131,7 +132,7 @@ export function VoiceLongReference({ voice, onChanged }: VoiceLongReferenceProps
                   </Button>
                 </div>
               </div>
-              <audio controls preload="none" className="h-7 w-full" src={voiceApi.refClipAudioUrl(voice.id, index)} />
+              <SlimAudioPlayer src={voiceApi.refClipAudioUrl(voice.id, index)} preload="none" compact />
               <div className="flex items-center gap-1.5">
                 <Input
                   className="h-7 text-[11px]"

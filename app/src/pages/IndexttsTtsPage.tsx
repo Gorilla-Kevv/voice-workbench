@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, AudioLines, Download, Eraser, Flame, Loader2, Mic2, RefreshCw, Sparkles, Waves } from 'lucide-react';
+import { AlertTriangle, AudioLines, Download, Eraser, Flame, Loader2, Mic2, Plus, RefreshCw, Sparkles, Trash2, Waves } from 'lucide-react';
 import { toast } from 'sonner';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
 import { useResultStack } from '@/hooks/useResultStack';
 import { RequestError } from '@/lib/errors';
@@ -27,6 +28,16 @@ type RefSource = 'upload' | 'voice';
 
 /** 情感控制方式：跟随参考音频（不传参数）/ 8 维向量 / 情感参考音频 */
 type EmoMode = 'follow' | 'vector' | 'audio';
+
+/** 单段 / 分段情感（阶段 46） */
+type SynthMode = 'single' | 'segments';
+
+interface SegmentDraft {
+  text: string;
+  /** -1 = 跟随参考音频；0~7 = 目录里的 8 维情感下标 */
+  emotion: number;
+  alpha: number;
+}
 
 interface TtsResultItem {
   result: IndexttsSynthResult;
@@ -61,6 +72,10 @@ export function IndexttsTtsPage() {
   const [emoVector, setEmoVector] = useState<number[]>(ZERO_VEC);
   const [emoFile, setEmoFile] = useState<File | null>(null);
   const [emoAlpha, setEmoAlpha] = useState(0.65);
+  // 分段情感：每段独立 preset + 强度；参考音频/语言/语速仍共用
+  const [synthMode, setSynthMode] = useState<SynthMode>('single');
+  const [segments, setSegments] = useState<SegmentDraft[]>([{ text: '', emotion: -1, alpha: 0.65 }]);
+  const [gapMs, setGapMs] = useState(120);
   const [refSource, setRefSource] = useState<RefSource>('upload');
   const [file, setFile] = useState<File | null>(null);
   const [voices, setVoices] = useState<SovitsVoice[]>([]);
@@ -228,6 +243,28 @@ export function IndexttsTtsPage() {
 
   const emoVectorActive = emoMode === 'vector' && emoVector.some((v) => v > 0);
 
+  /** 统一取参考音频：上传文件直接用；音色库音色走网关试听接口取回 Blob。 */
+  const resolveRefUpload = useCallback(async (): Promise<File | null> => {
+    if (refSource === 'upload') return file;
+    if (refSource === 'voice' && selectedVoice) {
+      // 磁盘路径不能当 URL 用（坑 21），只有网关的试听接口可访问
+      const url = voiceApi.voiceAudioUrl(selectedVoice.id);
+      const blob = await fetch(url).then((response) => {
+        if (!response.ok) {
+          throw new RequestError(response.status, {
+            code: 'REF_AUDIO_FETCH_FAILED',
+            message: `参考音频取回失败（HTTP ${response.status}）`,
+            retryable: true,
+            hint: `音色「${selectedVoice.name}」登记的音频可能已不在本机；可改用「上传音频」。`,
+          });
+        }
+        return response.blob();
+      });
+      return new File([blob], `${selectedVoice.name}.wav`, { type: blob.type || 'audio/wav' });
+    }
+    return null;
+  }, [refSource, file, selectedVoice]);
+
   const handleSynthesize = () => {
     if (!text.trim()) return;
     if (refSource === 'upload' && !file) {
@@ -250,21 +287,7 @@ export function IndexttsTtsPage() {
       timerRef.current = window.setInterval(() => setElapsed((value) => value + 1), 1000);
       setError(null);
       try {
-        let upload: File | null = refSource === 'upload' ? file : null;
-        if (refSource === 'voice' && selectedVoice) {
-          // 磁盘路径不能当 URL 用（坑 21），只有网关的试听接口可访问
-          const url = voiceApi.voiceAudioUrl(selectedVoice.id);
-          const blob = await fetch(url).then((response) => {
-            if (!response.ok) throw new RequestError(response.status, {
-              code: 'REF_AUDIO_FETCH_FAILED',
-              message: `参考音频取回失败（HTTP ${response.status}）`,
-              retryable: true,
-              hint: `音色「${selectedVoice.name}」登记的音频可能已不在本机；可改用「上传音频」。`,
-            });
-            return response.blob();
-          });
-          upload = new File([blob], `${selectedVoice.name}.wav`, { type: blob.type || 'audio/wav' });
-        }
+        const upload = await resolveRefUpload();
         const response = await indexttsApi.synthesize({
           text,
           lang,
@@ -306,6 +329,77 @@ export function IndexttsTtsPage() {
     void run();
   };
 
+  const handleSynthesizeSegments = () => {
+    const filled = segments
+      .map((item) => ({ ...item, text: item.text.trim() }))
+      .filter((item) => item.text);
+    if (filled.length === 0) {
+      toast.error('至少填写一段文本');
+      return;
+    }
+    if (refSource === 'upload' && !file) {
+      toast.error('请先上传参考音频');
+      return;
+    }
+    if (refSource === 'voice' && !selectedVoice) {
+      toast.error('请先从音色库选择一条音色');
+      return;
+    }
+
+    const run = async () => {
+      setLoading(true);
+      setElapsed(0);
+      stopTimer();
+      timerRef.current = window.setInterval(() => setElapsed((value) => value + 1), 1000);
+      setError(null);
+      try {
+        const upload = await resolveRefUpload();
+        const payloadSegments = filled.map((item) => ({
+          text: item.text,
+          // 预设只给一维 1.0，其余 0；强度交给 emo_alpha
+          emoVector:
+            item.emotion >= 0
+              ? emoDims.map((_, index) => (index === item.emotion ? 1 : 0))
+              : null,
+          emoAlpha: item.emotion >= 0 ? item.alpha : undefined,
+        }));
+        const response = await indexttsApi.synthesizeSegments({
+          segments: payloadSegments,
+          lang,
+          file: upload,
+          durationFactor,
+          gapMs,
+        });
+        results.push({
+          result: response,
+          audioUrl: base64ToUrl(response.audio_base64),
+          text: `[${filled.length} 段] ${filled.map((item) => item.text).join(' / ')}`,
+          refLabel: upload ? upload.name : '未命名参考音频',
+        });
+        toast.success('分段合成完成', {
+          description: `${response.duration_sec.toFixed(1)} 秒 · ${response.elapsed_sec.toFixed(1)} 秒生成 · ${filled.length} 段`,
+        });
+      } catch (rawError) {
+        const requestError =
+          rawError instanceof RequestError
+            ? rawError
+            : new RequestError(0, {
+                code: 'SYNTH_FAILED',
+                message: (rawError as Error)?.message || '分段合成请求未能发出',
+                retryable: true,
+                hint: '确认网关与 IndexTTS 服务在跑（npm run dev + npm run dev:indextts），再重试。',
+              });
+        setError(requestError);
+        toast.error('分段合成失败', { description: requestError.fullMessage });
+      } finally {
+        stopTimer();
+        setLoading(false);
+        refreshEngine();
+      }
+    };
+    void run();
+  };
+
   const ttsEntries: ResultStackEntry[] = results.entries.map((entry) => ({
     id: entry.id,
     createdAt: entry.createdAt,
@@ -314,7 +408,7 @@ export function IndexttsTtsPage() {
     summary: entry.item.text,
     content: (
       <div className="space-y-3 pt-1">
-        <audio controls src={entry.item.audioUrl} className="w-full" autoPlay={false} />
+        <SlimAudioPlayer src={entry.item.audioUrl} />
         <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
           <div className="rounded-lg bg-muted/50 p-2.5">
             <p className="opacity-70">时长</p>
@@ -347,6 +441,29 @@ export function IndexttsTtsPage() {
   }));
 
   const emoDims = catalog?.emo_dimensions ?? ['喜', '怒', '哀', '惧', '厌恶', '低落', '惊喜', '平静'];
+  const maxSegments = catalog?.segment_synthesis?.max_segments ?? 20;
+
+  const updateSegment = (index: number, patch: Partial<SegmentDraft>) => {
+    setSegments((prev) => prev.map((item, i) => (i === index ? { ...item, ...patch } : item)));
+  };
+  const addSegment = () => {
+    setSegments((prev) =>
+      prev.length >= maxSegments ? prev : [...prev, { text: '', emotion: -1, alpha: 0.65 }],
+    );
+  };
+  const removeSegment = (index: number) => {
+    setSegments((prev) => (prev.length <= 1 ? prev : prev.filter((_, i) => i !== index)));
+  };
+  const switchSynthMode = (mode: SynthMode) => {
+    if (mode === 'segments' && segments.every((item) => !item.text.trim())) {
+      const parts = text
+        .split(/\n+/)
+        .map((line) => line.trim())
+        .filter(Boolean);
+      setSegments((parts.length > 0 ? parts : ['']).map((part) => ({ text: part, emotion: -1, alpha: 0.65 })));
+    }
+    setSynthMode(mode);
+  };
 
   return (
     <div className="grid gap-5 lg:grid-cols-5">
@@ -444,7 +561,7 @@ export function IndexttsTtsPage() {
                       ? '松手即可作为参考音频'
                       : '点击选择，或把音频拖到这里（3 秒以上）'}
                 </Label>
-                {previewUrl ? <audio controls src={previewUrl} className="w-full" /> : null}
+                {previewUrl ? <SlimAudioPlayer src={previewUrl} compact /> : null}
               </div>
             ) : (
               <div className="space-y-2">
@@ -529,6 +646,15 @@ export function IndexttsTtsPage() {
               </div>
             </div>
 
+            <Tabs value={synthMode} onValueChange={(value) => switchSynthMode(value as SynthMode)}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="single">单段合成</TabsTrigger>
+                <TabsTrigger value="segments">分段情感（按段拼接）</TabsTrigger>
+              </TabsList>
+            </Tabs>
+
+            {synthMode === 'single' ? (
+              <>
             <div className="space-y-2">
               <Label htmlFor="indextts-text">目标文本</Label>
               <Textarea
@@ -622,14 +748,123 @@ export function IndexttsTtsPage() {
                 </div>
               ) : null}
             </div>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <Label>分段情感</Label>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    同一个参考音频/音色；每段单独设情感，服务端逐段合成后拼成一条。适合旁白里的情绪转折。
+                  </p>
+                </div>
+
+                {segments.map((segment, index) => (
+                  <div key={index} className="space-y-2 rounded-lg border p-3">
+                    <div className="flex items-center justify-between">
+                      <Label className="text-xs">第 {index + 1} 段</Label>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 px-2 text-xs"
+                        onClick={() => removeSegment(index)}
+                        disabled={segments.length <= 1}
+                      >
+                        <Trash2 className="mr-1 size-3" />
+                        删除
+                      </Button>
+                    </div>
+                    <Textarea
+                      value={segment.text}
+                      onChange={(event) => updateSegment(index, { text: event.target.value })}
+                      rows={2}
+                      placeholder="这一段要说什么"
+                      className="resize-y text-sm"
+                    />
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs">情感</Label>
+                        <Select
+                          value={String(segment.emotion)}
+                          onValueChange={(value) => updateSegment(index, { emotion: Number(value) })}
+                        >
+                          <SelectTrigger className="h-9">
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="-1">跟随参考音频</SelectItem>
+                            {emoDims.map((dim, dimIndex) => (
+                              <SelectItem key={dim} value={String(dimIndex)}>
+                                {dim}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      {segment.emotion >= 0 ? (
+                        <div className="space-y-1.5">
+                          <Label className="text-xs">情感强度：{segment.alpha.toFixed(2)}</Label>
+                          <Slider
+                            value={[segment.alpha]}
+                            onValueChange={([value]) => updateSegment(index, { alpha: value ?? 0.65 })}
+                            min={0}
+                            max={1}
+                            step={0.05}
+                          />
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                ))}
+
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={addSegment}
+                  disabled={segments.length >= maxSegments}
+                >
+                  <Plus className="mr-1.5 size-3.5" />
+                  添加一段（{segments.length}/{maxSegments}）
+                </Button>
+
+                <div className="space-y-1">
+                  <Label className="text-xs">段间停顿：{gapMs} ms</Label>
+                  <Slider
+                    value={[gapMs]}
+                    onValueChange={([value]) => setGapMs(value ?? 120)}
+                    min={catalog?.segment_synthesis?.gap_ms.min ?? 0}
+                    max={catalog?.segment_synthesis?.gap_ms.max ?? 500}
+                    step={20}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    每段只用预设情感（跟随参考 / 喜 / 怒 / ...）；需要精细 8 维向量时用「单段合成」。
+                  </p>
+                </div>
+              </div>
+            )}
 
             <Button
-              onClick={handleSynthesize}
-              disabled={loading || !text.trim() || (refSource === 'upload' ? !file : !selectedVoice) || (emoMode === 'audio' && !emoFile)}
+              onClick={synthMode === 'segments' ? handleSynthesizeSegments : handleSynthesize}
+              disabled={
+                loading ||
+                (synthMode === 'single'
+                  ? !text.trim() ||
+                    (refSource === 'upload' ? !file : !selectedVoice) ||
+                    (emoMode === 'audio' && !emoFile)
+                  : segments.every((segment) => !segment.text.trim()) ||
+                    (refSource === 'upload' ? !file : !selectedVoice))
+              }
               className="w-full bg-gradient-to-r from-violet-600 to-indigo-500 text-white shadow-lg shadow-violet-500/20 hover:brightness-110"
             >
               {loading ? <Loader2 className="mr-2 size-4 animate-spin" /> : <Sparkles className="mr-2 size-4" />}
-              {loading ? `正在合成（已等待 ${elapsed} 秒）…` : '开始合成'}
+              {loading
+                ? synthMode === 'segments'
+                  ? `正在分段合成（已等待 ${elapsed} 秒）…`
+                  : `正在合成（已等待 ${elapsed} 秒）…`
+                : synthMode === 'segments'
+                  ? `开始分段合成（${segments.filter((segment) => segment.text.trim()).length} 段）`
+                  : '开始合成'}
             </Button>
             {loading && elapsed > 60 ? (
               <p className="text-center text-xs text-muted-foreground">

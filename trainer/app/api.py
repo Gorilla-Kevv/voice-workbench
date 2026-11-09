@@ -29,8 +29,7 @@ from urllib.parse import quote
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from . import __version__
 from . import annotations
@@ -42,6 +41,7 @@ from .batch import BatchRunner
 from .config import AUDIO_SUFFIXES, Settings
 from .engine import EngineRegistry
 from .errors import BadRequestError, NotFoundError, SovitsError
+from .file_serve import serve_file_with_range
 from .inference import SynthesisEngine
 from .jobs import Job, JobKind, JobState, JobStore
 from .models import (
@@ -58,7 +58,8 @@ from .models import (
     WeightLoadRequest,
 )
 from .queue import AdmissionError, Scheduler
-from .sovits import bootstrap, catalog
+from .discovery import WeightEntry
+from .sovits import bootstrap, catalog, weight_meta
 from .sovits.pipeline import Pipeline
 from .sovits.voices import VoiceLibrary
 from .svc.pipeline import SvcEngine
@@ -67,6 +68,83 @@ from .vc.pipeline import VcEngine
 from . import weights
 
 MAX_UPLOAD_BYTES = 512 * 1024 * 1024  # 单个语料文件上限
+
+_VERSION_KEYS = {item.lower(): item for item in catalog.VERSIONS}
+
+
+def _version_from_parts(path: Path, root: Path) -> Optional[str]:
+    try:
+        parts = path.relative_to(root).parts
+    except ValueError:
+        parts = path.parts
+    for part in parts:
+        found = _VERSION_KEYS.get(part.lower())
+        if found is not None:
+            return found
+    return None
+
+
+def _library_weights(root: Path, version: str) -> List[WeightEntry]:
+    """扫 `models/gpt-sovits/`：纯 .pth 也算可用模型（配同版本预训练 GPT）。
+
+    版本优先读文件头（与官方加载一致），读不出才看路径里的版本目录名。
+    .ckpt 没有可靠的版本标记，按同目录同名 .pth（其次同目录任一 .pth）推断。
+    """
+    if not root.is_dir():
+        return []
+
+    pth_by_dir: Dict[Path, List[tuple]] = {}
+    found: List[WeightEntry] = []
+    for path in root.rglob("*.pth"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        detected = weight_meta.detect_sovits_version(path) or _version_from_parts(path, root)
+        pth_by_dir.setdefault(path.parent, []).append((path, detected))
+        if detected == version:
+            found.append(
+                WeightEntry(
+                    path=path,
+                    version=version,
+                    kind="sovits",
+                    name=path.stem,
+                    size_mb=stat.st_size / 1024 / 1024,
+                    mtime=stat.st_mtime,
+                    trained=False,
+                    origin="library",
+                )
+            )
+
+    for path in root.rglob("*.ckpt"):
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        detected: Optional[str] = None
+        siblings = pth_by_dir.get(path.parent, [])
+        for candidate, candidate_version in siblings:
+            if candidate.stem == path.stem and candidate_version:
+                detected = candidate_version
+                break
+        if detected is None:
+            detected = next((item[1] for item in siblings if item[1]), None)
+        if detected is None:
+            detected = _version_from_parts(path, root)
+        if detected == version:
+            found.append(
+                WeightEntry(
+                    path=path,
+                    version=version,
+                    kind="gpt",
+                    name=path.stem,
+                    size_mb=stat.st_size / 1024 / 1024,
+                    mtime=stat.st_mtime,
+                    trained=False,
+                    origin="library",
+                )
+            )
+    return found
 
 
 class Context:
@@ -308,7 +386,20 @@ def create_app(ctx: Context) -> FastAPI:
     )
 
     settings.ensure_dirs()
-    app.mount("/files", StaticFiles(directory=str(settings.outputs_dir)), name="files")
+
+    @app.api_route("/files/{file_path:path}", methods=["GET", "HEAD"], tags=["files"])
+    def serve_output_file(file_path: str, request: Request) -> Any:
+        """输出目录静态文件（支持 Range：长音频/视频进度条可拖动）。"""
+        root = settings.outputs_dir.resolve()
+        target = (root / file_path).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError:
+            raise NotFoundError("文件不存在：%s" % file_path)
+        if not target.is_file():
+            raise NotFoundError("文件不存在：%s" % file_path)
+        return serve_file_with_range(request, target)
+
     app.state.ctx = ctx
 
     _register_meta(app, ctx)
@@ -448,6 +539,10 @@ def _register_pipeline(app: FastAPI, ctx: Context) -> None:
             )
         target_version = version or ctx.pipeline.version
         entries = installation.layout.weights_by_version()
+        # 音色库（models/gpt-sovits）里的下载权重也参与选择：纯 .pth 配同版本预训练 GPT
+        entries.extend(
+            _library_weights(ctx.settings.voices_lib_dir.parent / "models" / "gpt-sovits", target_version)
+        )
         gpt = [item.to_dict() for item in entries if item.kind == "gpt" and item.version == target_version]
         sovits = [
             item.to_dict() for item in entries if item.kind == "sovits" and item.version == target_version
@@ -523,7 +618,7 @@ def _register_voices(app: FastAPI, ctx: Context) -> None:
         return {"ok": True, "voice": ctx.voices.get(voice_id).to_dict()}
 
     @app.get("/v1/voices/{voice_id}/audio", tags=["voices"])
-    def get_voice_audio(voice_id: str) -> Any:
+    def get_voice_audio(voice_id: str, request: Request) -> Any:
         """回放音色的参考音频。
 
         没有这个接口，用户在音色库里就只能看到一行文件名 ——
@@ -537,7 +632,7 @@ def _register_voices(app: FastAPI, ctx: Context) -> None:
                 "音色的音频文件已丢失：%s" % voice.name,
                 hint="请重新上传，或修正音色的音频路径。",
             )
-        return FileResponse(path, media_type=_guess_audio_type(path.suffix), filename=path.name)
+        return serve_file_with_range(request, path)
 
     @app.post("/v1/voices", tags=["voices"])
     async def create_voice(
@@ -956,7 +1051,7 @@ def _register_annotations(app: FastAPI, ctx: Context) -> None:
         }
 
     @app.get("/v1/annotations/audio", tags=["train"])
-    def get_annotation_audio(path: str) -> Any:
+    def get_annotation_audio(path: str, request: Request) -> Any:
         """回放清单里某条对应的音频。
 
         清单存的是绝对路径，而它可能来自用户（`list_file`），
@@ -969,7 +1064,7 @@ def _register_annotations(app: FastAPI, ctx: Context) -> None:
                 "音频文件不存在：%s" % target.name,
                 hint="原始音频可能被清理或移动了，这条标注建议直接丢弃。",
             )
-        return FileResponse(target, media_type=_guess_audio_type(target.suffix), filename=target.name)
+        return serve_file_with_range(request, target)
 
 
 # --------------------------------------------------------------------------
@@ -1125,22 +1220,6 @@ def _dump(model: Any) -> Dict[str, Any]:
 
 def _split_tags(raw: str) -> List[str]:
     return [token.strip() for token in str(raw or "").replace("，", ",").split(",") if token.strip()]
-
-
-_AUDIO_MIME = {
-    ".wav": "audio/wav",
-    ".mp3": "audio/mpeg",
-    ".flac": "audio/flac",
-    ".ogg": "audio/ogg",
-    ".m4a": "audio/mp4",
-    ".webm": "audio/webm",
-    ".aac": "audio/aac",
-    ".wma": "audio/x-ms-wma",
-}
-
-
-def _guess_audio_type(suffix: str) -> str:
-    return _AUDIO_MIME.get(suffix.lower(), "application/octet-stream")
 
 
 def _line(payload: Dict[str, Any]) -> bytes:

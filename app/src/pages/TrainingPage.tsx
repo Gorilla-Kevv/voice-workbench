@@ -31,6 +31,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { TermTip } from '@/components/features/TermTip';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import { focusBeforeRun } from '@/lib/arbiter';
 import { RequestError } from '@/lib/errors';
@@ -1878,11 +1879,9 @@ function AnnotationPanel({
             </div>
 
             {current.exists ? (
-              <audio
+              <SlimAudioPlayer
                 key={current.audio_url}
-                controls
                 src={resolveAudioUrl(current.audio_url) ?? current.audio_url}
-                className="w-full"
                 preload="metadata"
               />
             ) : (

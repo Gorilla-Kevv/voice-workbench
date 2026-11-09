@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import gc
+import os
 import sys
 import threading
 import time
@@ -63,10 +64,13 @@ class Gsv5Engine:
         """sys.path 注入（防多次注入）：坑 69 同源，直接合成也要能 import，指回 warmup 等。"""
         upstream = str(self.settings.upstream_dir)
         gpt_sovits = str(self.settings.upstream_dir / "GPT_SoVITS")
-        if upstream not in sys.path:
-            sys.path.insert(0, upstream)
-        if gpt_sovits not in sys.path:
-            sys.path.insert(0, gpt_sovits)
+        # 上游 TTS.py / sv.py 在 import 时用 os.getcwd() 拼 GPT_SoVITS 相对路径
+        # （BigVGAN、sv 权重、eres2net），cwd 不在 upstream 时 v5 加载会报
+        # No module named 'ERes2NetV2'，随后相对权重路径也会失效。
+        os.chdir(upstream)
+        for path in (upstream, gpt_sovits, os.path.join(gpt_sovits, "eres2net")):
+            if path not in sys.path:
+                sys.path.insert(0, path)
 
     def _variant_ready(self, variant: str) -> None:
         if variant not in VARIANTS:
@@ -106,14 +110,20 @@ class Gsv5Engine:
             try:
                 from TTS_infer_pack.TTS import TTS, TTS_Config
 
+                # 上游 TTS_Config 只接受 dict/str；version 必须是具体变体名（不接受 "custom"），
+                # 且必须放在 "custom" 键下，否则会被回落到 v2 默认配置。
                 cfg = TTS_Config(
-                    device=device,
-                    is_half=(device == "cuda"),
-                    version="custom",
-                    t2s_weights_path="GPT_SoVITS/pretrained_models/s1v3.ckpt",
-                    vits_weights_path=self.settings.variant_weights_path(variant),
-                    cnhuhbert_base_path="GPT_SoVITS/pretrained_models/chinese-hubert-base",
-                    bert_base_path="GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large",
+                    {
+                        "custom": {
+                            "device": device,
+                            "is_half": (device == "cuda"),
+                            "version": variant,
+                            "t2s_weights_path": "GPT_SoVITS/pretrained_models/s1v3.ckpt",
+                            "vits_weights_path": self.settings.variant_weights_path(variant),
+                            "cnhuhbert_base_path": "GPT_SoVITS/pretrained_models/chinese-hubert-base",
+                            "bert_base_path": "GPT_SoVITS/pretrained_models/chinese-roberta-wwm-ext-large",
+                        }
+                    }
                 )
                 self.tts_pipeline = TTS(cfg)
                 self.loaded_variant = variant

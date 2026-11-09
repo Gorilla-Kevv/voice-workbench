@@ -162,6 +162,18 @@ const MODULE_STATUS_TEXT: Record<
       offline: { title: 'GSV5 · 未启动', hint: '按需模块：设置页打开，或 npm run dev:gsv5（:9885）' },
     },
   },
+  cosyvoiceTts: {
+    label: 'CosyVoice',
+    states: {
+      checking: { title: 'CosyVoice · 正在连接', hint: 'cosyvoice 服务探测中，稍候自动恢复' },
+      ready: { title: 'CosyVoice · 已就绪', hint: 'CosyVoice3 权重就绪（9 语言 + 18 中文方言 / 自然语言 instruct）' },
+      incomplete: {
+        title: 'CosyVoice · 待补齐',
+        hint: 'CUDA 不可用或权重缺失：跑 npm run cosyvoice:check 体检，再 npm run cosyvoice:weights',
+      },
+      offline: { title: 'CosyVoice · 未启动', hint: '按需模块：设置页打开，或 npm run dev:cosyvoice（:9886）' },
+    },
+  },
 };
 
 /** 导航按「用哪个模型」分组，避免用户在两条链路之间迷路 */
@@ -202,6 +214,14 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     ],
   },
   {
+    // CosyVoice3（阶段 48）：第六个运行时 :9886。差异点是**中文方言**与
+    // 自然语言 instruct；它不替代上面任何一组，所以独立成组。
+    title: 'CosyVoice3 · 方言/多语种',
+    items: [
+      { key: 'cosyvoice-tts', label: '方言合成', icon: Languages, hint: '9 语言 + 18 中文方言 · 自然语言 instruct / 零样本克隆' },
+    ],
+  },
+  {
     title: 'MiMo 云端',
     items: [
       { key: 'synthesis', label: '通用合成', icon: AudioLines, hint: '官方预置音色' },
@@ -222,7 +242,7 @@ const NAV_GROUPS: { title: string; items: { key: NavKey; label: string; icon: ty
     items: [
       // 与「音色库管理」区分开：这里是 GPT-SoVITS 专属的**训练**链路
       // （训出专属权重后，再回音色库登记用）；批量合成也走这条微调模型。
-      { key: 'batch', label: '批量合成', icon: ListMusic, hint: '一份清单生成一批音频' },
+      { key: 'batch', label: '批量合成', icon: ListMusic, hint: '本地 GPT-SoVITS · 零样本 / 微调权重（含 .pth）' },
       { key: 'training', label: '音色微调训练', icon: FlaskConical, hint: '切分 / 标注 / 微调 · 训出 GPT-SoVITS 专属权重' },
     ],
   },
@@ -307,6 +327,7 @@ const SETTINGS_SECTION_OF: Record<string, string> = {
   indexttsTts: 'service-indextts',
   irodoriTts: 'service-irodori',
   gsv5Tts: 'service-gsv5',
+  cosyvoiceTts: 'service-cosyvoice',
   sovits: 'service-sovits',
   rvc: 'service-sovits',
   svc: 'service-sovits',
@@ -328,7 +349,7 @@ export function AppShell({
   moduleStates = {
     rvc: 'checking', svc: 'checking', asr: 'checking',
     neteaseTts: 'checking', neteaseAsr: 'checking', indexttsTts: 'checking', irodoriTts: 'checking',
-    gsv5Tts: 'checking',
+    gsv5Tts: 'checking', cosyvoiceTts: 'checking',
   },
   onOpenSettingsSection,
 }: AppShellProps) {
@@ -343,7 +364,7 @@ export function AppShell({
       return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;
     }),
     { id: 'sovits', state: sovitsState, title: sovits.title, hint: sovits.hint, icon: 'server' },
-    ...(['rvc', 'svc', 'asr', 'indexttsTts', 'irodoriTts', 'gsv5Tts'] as const).map((key) => {
+    ...(['rvc', 'svc', 'asr', 'indexttsTts', 'irodoriTts', 'gsv5Tts', 'cosyvoiceTts'] as const).map((key) => {
       const module = MODULE_STATUS_TEXT[key];
       const state = moduleStates[key];
       return { id: key, state, title: module.states[state].title, hint: module.states[state].hint, icon: 'server' } as const;

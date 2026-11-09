@@ -44,6 +44,8 @@ function jobToRecord(job: SovitsJob): OutputRecord {
       label: track.label,
       url: track.url ?? undefined,
       path: track.path ?? undefined,
+      kind: track.kind,
+      ...(track.bytes ? { bytes: track.bytes } : {}),
     })),
   };
 }
@@ -66,6 +68,7 @@ function modelToRecord(entry: ModelEntry): OutputRecord {
       label: ROLE_LABELS[file.role] ? `${file.name}（${ROLE_LABELS[file.role]}）` : file.name,
       path: file.abs,
       bytes: file.bytes,
+      kind: 'file',
     })),
   };
 }

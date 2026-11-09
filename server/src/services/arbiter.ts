@@ -7,12 +7,13 @@ import { RUNTIME_SERVICES, RUNTIME_SERVICE_IDS, baseUrlOf, type RuntimeServiceId
  * ============================================================
  * 作用域的硬边界（这是本文件存在的第一前提）
  * ============================================================
- * 本系统 = 本项目自己拉起的四个 Python 服务：
+ * 本系统 = 本项目自己拉起的六个 Python 服务：
  *   - GPT-SoVITS 本地服务（`config.sovits.baseUrl`，默认 127.0.0.1:9881）
  *   - 网易模块服务（`config.netease.baseUrl`，默认 127.0.0.1:9882）
  *   - IndexTTS 服务（`config.indextts.baseUrl`，默认 127.0.0.1:9883）
  *   - Irodori 服务（`config.irodori.baseUrl`，默认 127.0.0.1:9884）
  *   - GPT-SoVITS v5 服务（`config.gsv5.baseUrl`，默认 127.0.0.1:9885）
+ *   - CosyVoice3 服务（`config.cosyvoice.baseUrl`，默认 127.0.0.1:9886）
  * 仲裁器**只向这几个地址发请求**，而且发之前会校验目标是回环地址（见 `assertOwnService`）。
  * 它不扫描进程、不 taskkill 任何 PID、不认识也不触碰电脑上其它任何程序 ——
  * 浏览器、安卓模拟器、游戏占的显存一概不管（那部分由界面提示用户自己处理）。
@@ -34,6 +35,7 @@ export type FocusEngine =
   | 'irodori-tts'
   | 'irodori-training'
   | 'gpt-sovits-v5'
+  | 'cosyvoice-tts'
   | 'sovits'
   | 'training'
   | 'rvc'
@@ -52,6 +54,7 @@ function serviceOf(engine: FocusEngine): ServiceName {
   // 仲裁负责的是「另一端」三个服务
   if (engine === 'irodori-tts' || engine === 'irodori-training') return 'irodori';
   if (engine === 'gpt-sovits-v5') return 'gsv5';
+  if (engine === 'cosyvoice-tts') return 'cosyvoice';
   return 'sovits';
 }
 

@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { notifyVcRunChanged, type VcRunKind, useVcRunHistory } from '@/hooks/useVcRunHistory';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { cn } from '@/lib/utils';
 
 /**
@@ -151,7 +152,7 @@ export function RunResultCard({
                         <div key={track.key} className="rounded-md bg-muted/40 p-2">
                           <p className="mb-1 text-[11px] font-medium text-muted-foreground">{track.label}</p>
                           {track.url ? (
-                            <audio className="h-8 w-full" controls preload="none" src={track.url} />
+                            <SlimAudioPlayer src={track.url} preload="none" compact />
                           ) : (
                             <p className="text-[11px] text-muted-foreground">该产物没有可播放的 Web 地址。</p>
                           )}

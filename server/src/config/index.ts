@@ -139,6 +139,15 @@ export const config = {
     /** 代理请求超时（毫秒）。v5turbo 很快、v5dev 32 步较慢，0 = 不超时 */
     proxyTimeoutMs: num(process.env.GSV5_PROXY_TIMEOUT_MS, 0),
   },
+  /**
+   * CosyVoice3 本地服务（cosyvoice/，第六个 Python 运行时，阶段 48）。
+   * 与 netease / indextts / irodori / gsv5 同一模式：supervisor 托管（设置页开关，默认停用）。
+   */
+  cosyvoice: {
+    baseUrl: (process.env.COSYVOICE_URL?.trim() || 'http://127.0.0.1:9886').replace(/\/+$/, ''),
+    /** 代理请求超时（毫秒）。0.5B 单路推理可能到分钟级，0 = 不超时 */
+    proxyTimeoutMs: num(process.env.COSYVOICE_PROXY_TIMEOUT_MS, 0),
+  },
 } as const;
 
 export const isProduction = config.env === 'production';

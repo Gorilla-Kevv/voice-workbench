@@ -18,6 +18,7 @@ import { irodoriApi } from '@/lib/irodori';
 import { gsv5Api } from '@/lib/gsv5';
 import { neteaseApi } from '@/lib/netease';
 import { sovitsApi } from '@/lib/sovits';
+import { svcApi, vcApi } from '@/lib/vc';
 import { api } from '@/lib/api';
 import type { HealthInfo } from '@/types';
 
@@ -125,6 +126,11 @@ export interface ResourceSnapshot {
   };
   /** GPT-SoVITS 本地服务是否被启用（默认关闭；它占着显存时才有「关掉它」这一说） */
   sovits_enabled: boolean;
+  /** GPT-SoVITS 推理管线是否已把模型载入显存（`/health.pipeline.loaded`） */
+  sovits_loaded: boolean;
+  /** RVC / DDSP-SVC 自己的模型加载状态（`/v1/vc|svc/pipeline.loaded`） */
+  vc_loaded: boolean;
+  svc_loaded: boolean;
   fetched_at: number;
 }
 
@@ -181,15 +187,19 @@ const UPGRADE_TIP =
 
 /** 采一次资源快照：各来源并发，任一失败都降级而不是整体失败 */
 export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
-  const [health, engines, netease, indextts, indexttsCatalog, irodori, gsv5] = await Promise.all([
-    api.health().catch(() => null),
-    sovitsApi.engines().catch(() => null),
-    neteaseApi.health().catch(() => null),
-    indexttsApi.health().catch(() => null),
-    indexttsApi.catalog().catch(() => null),
-    irodoriApi.health().catch(() => null),
-    gsv5Api.health().catch(() => null),
-  ]);
+  const [health, engines, netease, indextts, indexttsCatalog, irodori, gsv5, sovitsHealth, vc, svc] =
+    await Promise.all([
+      api.health().catch(() => null),
+      sovitsApi.engines().catch(() => null),
+      neteaseApi.health().catch(() => null),
+      indexttsApi.health().catch(() => null),
+      indexttsApi.catalog().catch(() => null),
+      irodoriApi.health().catch(() => null),
+      gsv5Api.health().catch(() => null),
+      sovitsApi.health().catch(() => null),
+      vcApi.pipeline().catch(() => null),
+      svcApi.pipeline().catch(() => null),
+    ]);
 
   const engineRequired: Record<string, number> = {};
   for (const engine of engines?.engines ?? []) {
@@ -234,18 +244,36 @@ export async function fetchResourceSnapshot(): Promise<ResourceSnapshot> {
       'gpt-sovits-v5': gsv5?.engine?.loaded === true,
     },
     sovits_enabled: (health as HealthInfo | null)?.sovits?.enabled === true || engines != null,
+    // `active` 只是引擎锁（任务持有期间），模型在两次任务之间仍可能常驻；
+    // 「模型是否已加载」的真值是 worker 管线状态。
+    sovits_loaded: sovitsHealth?.pipeline?.loaded === true,
+    vc_loaded: vc?.loaded === true,
+    svc_loaded: svc?.loaded === true,
     fetched_at: Date.now(),
   };
 }
 
-/** 某个任务对应的常驻引擎是否已加载（只有这三个是「常驻多 GB」的量级） */
+/** trainer 侧任务 → 引擎名（`/v1/engines` 的 `active` 对上就说明模型已在显存里） */
+const TRAINER_TASK_ENGINE: Partial<Record<ResourceTask, string>> = {
+  training: 'train',
+  uvr5: 'uvr5',
+  asr: 'asr',
+};
+
+/** 某个任务对应的常驻引擎是否已加载（常驻多 GB 的模型） */
 function isEngineLoaded(task: ResourceTask, snapshot: ResourceSnapshot): boolean {
   if (task === 'netease-tts') return snapshot.loaded_engines['netease-tts'];
   if (task === 'netease-asr') return snapshot.loaded_engines['netease-asr'];
   if (task === 'indextts-tts') return snapshot.loaded_engines['indextts-tts'];
   if (task === 'irodori-tts') return snapshot.loaded_engines['irodori-tts'];
   if (task === 'gpt-sovits-v5') return snapshot.loaded_engines['gpt-sovits-v5'];
-  return false;
+  // 批量与单条都走 GPU 上的 GPT-SoVITS 管线；已加载时不能再扣一次门槛
+  if (task === 'sovits' || task === 'batch') return snapshot.sovits_loaded;
+  // RVC / DDSP-SVC 有自己的管线状态；active 锁释放后模型仍常驻，不能只看 active
+  if (task === 'rvc') return snapshot.vc_loaded;
+  if (task === 'svc') return snapshot.svc_loaded;
+  const engine = TRAINER_TASK_ENGINE[task];
+  return engine != null && snapshot.active_engine === engine;
 }
 
 /** 某个任务需要多少显存（服务端优先） */

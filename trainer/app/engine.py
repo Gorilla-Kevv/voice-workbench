@@ -226,9 +226,23 @@ class EngineRegistry:
         self._since = 0.0
 
     def unload_all(self) -> None:
-        """释放一切。用于服务关闭与「手动释放显存」按钮。"""
+        """释放一切。用于服务关闭与「手动释放显存」按钮。
+
+        注意：`active` 只是任务锁；模型可能在两次任务之间仍常驻（例如 GPT-SoVITS
+        的 worker 管线）。只 `_release_active_locked()` 会漏掉这些「已加载但不活跃」
+        的引擎，所以这里要把注册过的 unloader 全跑一遍（活跃的那个已经在 release
+        里卸过，跳过避免重复）。
+        """
         with self._lock:
+            active = self._active
             self._release_active_locked(force=True)
+            for name, unloader in list(self._unloaders.items()):
+                if name == active:
+                    continue
+                try:
+                    unloader()
+                except Exception:  # noqa: BLE001 - 一个卸载失败不能挡住其它
+                    pass
             self._training_engine = None
 
     # ---------- 状态 ----------

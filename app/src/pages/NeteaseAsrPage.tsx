@@ -10,6 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TermTip } from '@/components/features/TermTip';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { useResultStack } from '@/hooks/useResultStack';
 import { dropHighlight, useFileDrop } from '@/hooks/useFileDrop';
 import { cn } from '@/lib/utils';
@@ -407,7 +408,7 @@ export function NeteaseAsrPage({ onFallback }: { onFallback?: () => void } = {})
                   ? '松手即可开始转写'
                   : '点击选择，或把音频 / 音频文件夹拖到这里（wav / mp3 / flac）'}
             </Label>
-            {previewUrl ? <audio controls src={previewUrl} className="w-full" /> : null}
+            {previewUrl ? <SlimAudioPlayer src={previewUrl} compact /> : null}
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">

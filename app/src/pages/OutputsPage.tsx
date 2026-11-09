@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { AudioPlayer } from '@/components/features/AudioPlayer';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { SovitsServiceNotice } from '@/components/features/SovitsServiceNotice';
 import {
   buildAudioFilename,
@@ -467,8 +468,20 @@ export function OutputsPage({
                             <span className="shrink-0 text-[11px] text-muted-foreground">{formatBytes(artifact.bytes)}</span>
                           ) : null}
                         </div>
-                        {artifact.url ? (
-                          <audio className="h-8 w-full" controls preload="none" src={artifact.url} />
+                        {artifact.url && artifact.kind === 'audio' ? (
+                          <SlimAudioPlayer src={artifact.url} preload="none" compact />
+                        ) : null}
+                        {artifact.url && artifact.kind !== 'audio' ? (
+                          <a
+                            href={artifact.url}
+                            download
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-1 text-xs text-violet-600 underline-offset-2 hover:underline dark:text-violet-400"
+                          >
+                            <Download className="size-3" />
+                            下载 / 打开
+                          </a>
                         ) : null}
                         {artifact.path ? (
                           <CopyPathButton path={artifact.path} copied={copied} onCopy={(path) => void copyPath(path)} />

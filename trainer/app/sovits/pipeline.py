@@ -368,13 +368,21 @@ class Pipeline:
         """解析当前实际会用的权重组合。"""
         version = version or self._target_version
         pair = self.resolve_defaults(version)
-        # 显式指定的权重覆盖默认选择
+        installation = bootstrap.require()
+        # 显式指定的权重覆盖默认选择；只给一侧时另一侧用预训练底模，
+        # 与 worker `_pair()` 的口径保持一致（不能落到「最新训练产物」上）
         if self._target_gpt is not None:
             pair.gpt = self._target_gpt
             pair.gpt_source = "explicit"
+        elif self._target_sovits is not None:
+            pair.gpt = installation.path(catalog.PRETRAINED_GPT[version])
+            pair.gpt_source = "pretrained"
         if self._target_sovits is not None:
             pair.sovits = self._target_sovits
             pair.sovits_source = "explicit"
+        elif self._target_gpt is not None:
+            pair.sovits = installation.path(catalog.PRETRAINED_SOVITS_G[version])
+            pair.sovits_source = "pretrained"
         return pair
 
     # ------------------------------------------------------------------

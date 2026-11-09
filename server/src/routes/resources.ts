@@ -24,6 +24,7 @@ const ENGINES: FocusEngine[] = [
   'irodori-tts',
   'irodori-training',
   'gpt-sovits-v5',
+  'cosyvoice-tts',
   'sovits',
   'training',
   'rvc',

@@ -10,6 +10,8 @@
     "dev:cloud": "concurrently -n server,app -c magenta,cyan \"npm --prefix server run dev\" \"npm --prefix app run dev\"",
     "dev:server": "npm --prefix server run dev",
     "dev:app": "npm --prefix app run dev",
+    "say": "node scripts/say.mjs",
+    "say:batch": "node scripts/say.mjs batch",
     "dev:sovits": "node scripts/sovits.mjs",
     "sovits:check": "node scripts/sovits.mjs --check",
     "dev:netease": "node scripts/netease.mjs",
@@ -27,7 +29,10 @@
     "gsv5:check": "node scripts/gsv5.mjs --check",
     "dev:irodori": "node scripts/irodori.mjs",
     "irodori:check": "node scripts/irodori.mjs --check",
-    "irodori:weights": "node scripts/irodori.mjs --weights"
+    "irodori:weights": "node scripts/irodori.mjs --weights",
+    "dev:cosyvoice": "node scripts/cosyvoice.mjs",
+    "cosyvoice:check": "node scripts/cosyvoice.mjs --check",
+    "cosyvoice:weights": "node scripts/cosyvoice.mjs --weights"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

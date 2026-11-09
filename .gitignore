@@ -85,6 +85,14 @@ gsv5/upstream/
 gsv5/.uvcache/
 gsv5/smoke-out/
 
+# CosyVoice3（cosyvoice/）：第六运行时（阶段 60，py3.10 + torch 2.3.1 cu121）。
+# 上游只读 clone + 权重约 5.4GB + 独立 venv；清单 weights.manifest.json 进版本库。
+cosyvoice/.venv/
+cosyvoice/upstream/
+cosyvoice/models/
+cosyvoice/.data/
+cosyvoice/.tmp/
+
 # 知识收集缓存：用户手动收集物（可能含大文件），不进库；整合成果走 knowledge-atlas
 knowledge-inbox/*
 !knowledge-inbox/README.md
@@ -92,3 +100,8 @@ knowledge-inbox/*
 # design-studio 工作区产物（方向回合草图与渲染证据）；契约与 sidecar（surfaces/、design.json）进库
 knowledge-atlas/.impeccable/mocks/
 knowledge-atlas/.impeccable/review/
+
+# PyMSS runtime (阶段 47)
+pymss/.venv/
+pymss/models/
+pymss/.uv-cache/

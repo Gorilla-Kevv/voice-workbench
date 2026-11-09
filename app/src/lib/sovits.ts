@@ -66,6 +66,9 @@ export function writeBaseUrl(url: string): void {
 export function resolveAudioUrl(path: string | null | undefined, baseUrl?: string): string | null {
   if (!path) return null;
   if (/^(https?:|blob:|data:)/i.test(path)) return path;
+  // 已经是网关前缀（例如旧持久化结果里存过 /api/sovits/files/...）时不要再拼一次，
+  // 否则会得到 /api/sovits/api/sovits/files/... → 404（批量页下载按钮踩过）
+  if (path.startsWith('/api/')) return path;
   const base = normalizeBaseUrl(baseUrl ?? readBaseUrl());
   if (base.startsWith('http')) return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
   return `${base}${path.startsWith('/') ? '' : '/'}${path}`;
@@ -186,8 +189,23 @@ export const sovitsApi = {
   health: (baseUrl?: string): Promise<SovitsHealth> =>
     request<SovitsHealth>('/health', { method: 'GET', timeoutMs: 20_000 }, baseUrl),
 
-  catalog: (baseUrl?: string): Promise<{ ok: boolean; catalog: SovitsCatalog }> =>
-    request('/v1/catalog', { method: 'GET', timeoutMs: 20_000 }, baseUrl),
+  catalog: async (baseUrl?: string): Promise<{ ok: boolean; catalog: SovitsCatalog }> => {
+    const result = await request<{ ok: boolean; catalog: SovitsCatalog }>(
+      '/v1/catalog',
+      { method: 'GET', timeoutMs: 20_000 },
+      baseUrl,
+    );
+    // 后端历史上 languages 用 `code` 字段，前端契约用 `id`。不统一的话
+    // 所有 SelectItem 的 value 都是 undefined，Radix 会把它们当成同一个值
+    // → 下拉里全部打勾、且选不中别的语种（2026-10-28 用户实测）。
+    const languages = (result.catalog.languages ?? [])
+      .map((item) => {
+        const raw = item as typeof item & { code?: string };
+        return { ...item, id: raw.id || raw.code || '' };
+      })
+      .filter((item) => item.id);
+    return { ...result, catalog: { ...result.catalog, languages } };
+  },
 
   /**
    * 本机**实际可用**的 UVR5 模型。

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AudioLines,
   Dices,
@@ -18,6 +18,7 @@ import { Slider } from '@/components/ui/slider';
 import { ResourceBudget } from '@/components/features/ResourceBudget';
 import { ErrorAlert } from '@/components/features/ErrorAlert';
 import { ResultStack, type ResultStackEntry } from '@/components/features/ResultStack';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
@@ -77,6 +78,24 @@ export function IrodoriTtsPage() {
   const [voices, setVoices] = useState<SovitsVoice[]>([]);
 
   const [text, setText] = useState('これは日本語の音声合成のテストです。今日はいい天気ですね。');
+  const textRef = useRef<HTMLTextAreaElement | null>(null);
+
+  /** emoji 是官方风格标记：插到光标位置，放在句中/句尾都能修饰前一句。 */
+  const insertEmoji = (emoji: string) => {
+    const textarea = textRef.current;
+    if (!textarea) {
+      setText((prev) => `${prev}${emoji}`);
+      return;
+    }
+    const start = textarea.selectionStart ?? text.length;
+    const end = textarea.selectionEnd ?? start;
+    setText(`${text.slice(0, start)}${emoji}${text.slice(end)}`);
+    requestAnimationFrame(() => {
+      textarea.focus();
+      const cursor = start + emoji.length;
+      textarea.setSelectionRange(cursor, cursor);
+    });
+  };
   const [caption, setCaption] = useState('');
   const [schedule, setSchedule] = useState<'linear' | 'sway'>('linear');
   const [steps, setSteps] = useState<number | null>(null);
@@ -292,7 +311,7 @@ export function IrodoriTtsPage() {
     summary: entry.item.text,
     content: (
       <div className="space-y-3 pt-1">
-        <audio controls src={entry.item.audioUrl} className="w-full" autoPlay={false} />
+        <SlimAudioPlayer src={entry.item.audioUrl} />
         <div className="grid grid-cols-2 gap-2 text-xs text-muted-foreground">
           <div className="rounded-lg bg-muted/50 p-2.5">
             <p className="opacity-70">时长</p>
@@ -457,12 +476,18 @@ export function IrodoriTtsPage() {
                 <span className="text-[11px] tabular-nums text-muted-foreground">{text.length} 字</span>
               </div>
               <Textarea
+                ref={textRef}
                 value={text}
                 onChange={(event) => setText(event.target.value)}
                 rows={4}
                 placeholder="今日の会議は午後三時に変更になりました。"
                 className="resize-y"
               />
+              <p className="text-[11px] leading-snug text-muted-foreground">
+                支持句内 emoji 语气标记：<strong>🤭 偷笑</strong>、<strong>😮‍💨 叹气</strong>、
+                <strong>😆 喜び</strong>、<strong>😭 哭泣</strong>、<strong>🥱 哈欠</strong>。
+                放在句中或句尾都生效，修饰它前面的句子，不改变音色。
+              </p>
             </div>
 
             {/* emoji：官方训练时就带在文本里的风格标记，点一下追加到末尾 */}
@@ -478,13 +503,17 @@ export function IrodoriTtsPage() {
                       key={item.emoji}
                       type="button"
                       title={item.description || item.label || item.emoji}
-                      onClick={() => setText((prev) => `${prev}${item.emoji}`)}
+                      onClick={() => insertEmoji(item.emoji)}
                       className="rounded-lg border px-2 py-1 text-base leading-none transition-colors hover:bg-accent"
                     >
                       {item.emoji}
                     </button>
                   ))}
                 </div>
+                <p className="text-[11px] leading-snug text-muted-foreground">
+                  点 emoji 会插入到光标位置。常用：🤭 偷笑 / 😮‍💨 叹气 / 😆 喜び / 😭 哭泣 / 🥱 哈欠。
+                  它们修饰前一句，不改变音色；男声参考下主要影响节奏与插入音。
+                </p>
                 <p className="text-[11px] text-muted-foreground">{catalog?.emoji.note}</p>
               </div>
             ) : null}

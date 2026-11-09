@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
+import { SlimAudioPlayer } from '@/components/features/SlimAudioPlayer';
 
 export interface ABTrack {
   label: string;
@@ -24,6 +25,7 @@ export function ABPlayer({ tracks, accentClass = 'bg-indigo-600 text-white' }: A
   const [requested, setRequested] = useState(0);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const timeRef = useRef(0);
+  const resumeRef = useRef(false);
 
   // 音轨列表变短时（比如重新提交任务后产物变化）把选中项收敛到有效范围，
   // 用派生值而不是 effect 里 setState —— 后者会触发级联渲染
@@ -33,15 +35,35 @@ export function ABPlayer({ tracks, accentClass = 'bg-indigo-600 text-white' }: A
     if (index === active) return;
     const audio = audioRef.current;
     timeRef.current = audio?.currentTime ?? 0;
+    resumeRef.current = audio ? !audio.paused : false;
     setRequested(index);
   };
 
+  // 换轨时保留播放位置：等新源元数据就绪后再 seek，避免 seek 被加载过程吞掉
   useEffect(() => {
     const audio = audioRef.current;
-    if (audio && timeRef.current > 0) {
-      audio.currentTime = timeRef.current;
-      void audio.play().catch(() => undefined);
+    if (!audio) return;
+    const target = timeRef.current;
+    const resume = resumeRef.current;
+    resumeRef.current = false;
+
+    const apply = () => {
+      if (target > 0) {
+        try {
+          audio.currentTime = Math.min(target, audio.duration || target);
+        } catch {
+          // 元数据未就绪时忽略，下一次换轨再续
+        }
+      }
+      if (resume) void audio.play().catch(() => undefined);
+    };
+
+    if (audio.readyState >= 1) {
+      apply();
+      return;
     }
+    audio.addEventListener('loadedmetadata', apply, { once: true });
+    return () => audio.removeEventListener('loadedmetadata', apply);
   }, [active]);
 
   if (tracks.length === 0) return null;
@@ -66,13 +88,11 @@ export function ABPlayer({ tracks, accentClass = 'bg-indigo-600 text-white' }: A
           </button>
         ))}
       </div>
-      <audio
-        ref={audioRef}
+      <SlimAudioPlayer
         key={current.url}
         src={current.url}
-        controls
+        audioRef={audioRef}
         preload="metadata"
-        className="w-full"
       />
       {current.hint ? <p className="text-xs text-muted-foreground">{current.hint}</p> : null}
     </div>
