@@ -212,7 +212,7 @@ curl -s -X POST "http://127.0.0.1:8787/api/voicelib?name=demo&prompt_text=%E5%8F
 
 返回 `{ok, text, language, elapsed_sec, segments?, timestamps?, warning?}`。
 
-- `sensevoice-small`：逐字、不做 ITN 标点；需 `weights_ready && runtime_ready`。
+- `sensevoice-small`：逐字、不做 ITN 标点，且已剥掉情绪/事件 emoji（2026-11-09）；需 `weights_ready && runtime_ready`。
 - `faster-whisper`：`params.size/precision`；大型号首次使用会下载权重。
 - `r2t2-offline`：长音频自动 240s 分段；时间戳未接 forced aligner。
 

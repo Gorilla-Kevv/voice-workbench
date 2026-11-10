@@ -644,7 +644,10 @@
   与 netease 修前的 378s 同源（算子首跑），但量级可接受，本轮不改。
 - **IndexTTS 的 RTF 2.68 是「桌面在抢卡」口径**：装载后 free 只剩 1375 MB，单段 2.47s 音频耗 6.62s。
   与网易（1.03~1.94）对比时必须同机同状态（坑 26 的老规矩）。
-- **SenseVoice 输出带 `😔` 情绪标记**：`rich_transcription_postprocess` 的副产物，worker 没剥。
+- **~~SenseVoice 输出带 😔 情绪标记~~ 已修（阶段 49补，11.09）**：使用者拍板「过滤」，已新增
+  `trainer/app/asr/sensevoice_text.py::strip_markers()`（情绪 6 + 事件 6 一起剥）并接进 worker，
+  A14~A16 回归 + 真机 ja/zh/en 冒烟确认无 emoji。以下为原始发现记录：
+- （原始发现）SenseVoice 输出带 `😔` 情绪标记：`rich_transcription_postprocess` 的副产物，worker 没剥。
   转写结果当参考文本/字幕时会混进表情。**是否在 worker 侧过滤（或单开 `emotion` 字段）需要产品决策**，
   本轮只写进 `docs/ASR.md` §7/§8.5，未改代码。
 - **CosyVoice3 仍缺权重**：`cosyvoice/models/Fun-CosyVoice3-0.5B/` 不存在，`available=false`；
@@ -656,6 +659,41 @@
   文档与知识库（14 文件）→ `b42a60a` `.tmp` 回归锁入库（31 份脚本）。`origin/feature/vc-svc`
   已同步到 `b42a60a`；工作区只剩 `.tmp` 的本地数据（bench 音频、venv、日志、证据 JSON）与
   `.zcode/` 未跟踪。此前各阶段写的「本次未提交 git」已失效。
+
+- 本次文档更新时间：11.09
+
+## 阶段 49补 — SenseVoice 标记过滤 + CosyVoice3 权重下载（限速/续传）[计划时间：11.09 BY Qoder][完成时间：11.09 BY Qoder]
+
+- 分支：feature/vc-svc
+- 背景：使用者拍板两件事 —— ① SenseVoice 输出里的 😔 情绪标记「用过滤」；② CosyVoice3 权重可以下，
+  但**不要占太多带宽**（网络卡了会告知，必要时走镜像或给链接手动下）。
+
+### 已完成明细
+
+| 模块 | 改动内容 |
+| --- | --- |
+| `trainer/app/asr/sensevoice_text.py`（新） | 纯函数：`EMOTION_MARKERS`（6 个）+ `EVENT_MARKERS`（6 个）+ `strip_markers()` —— 只删 emoji、收拢因此产生的连续空格，不改字、不补标点 |
+| `trainer/app/asr/sensevoice_worker.py` | `generate` 分支在 `rich_transcription_postprocess()` 之后调 `strip_markers()`；import 双路兜底（按路径启动 / 当模块 import） |
+| `scripts/cosyvoice-weights.mjs` | 新增 `--parallel` / `--limit-kbps`（每连接限速）/ `--urls-only`（直链导出）、HTTP Range **断点续传**、进度行带速度；修掉 `fs.createWriteStream(flags:'wb')` 在 Node 24 直接崩的问题 |
+| `.tmp/verify_asr_sensevoice.py` | 追加 A14（情绪标记）/ A15（事件标记 + 空格收拢）/ A16（逐字保留） |
+| 文档 | `docs/ASR.md` §7/§8.5、`docs/AGENT-GUIDE.md`、`docs/COSYVOICE3-INTEGRATION.md`（礼貌模式 / 续传 / 直链）、`PROGRESS` 本段、`HANDOFF` 坑 99 追加 |
+
+### 测试结果
+
+| 测试项 | 结果 |
+| --- | --- |
+| `py_compile`（整合包 py3.9）+ sensevoice-venv py3.12 直接 import | 通过 |
+| `.tmp/verify_asr_sensevoice.py` | **15/15 + 2 SKIP**（A14~A16 为新增） |
+| `.tmp/smoke_sensevoice_worker.py` 真机（ja/zh/en 真实样例） | 三条输出**均无 emoji**；load 53.5s、常驻 +852MB、峰值 +917MB、unload 归还 6323MB |
+| `node --check` + `--dry-run` / `--only config-yaml` 单项真下 | 通过（config-yaml 6934 字节与清单一致） |
+
+### 披露与遗留
+
+- **事件标记与情绪标记一起剥**（🎼 👏 😀 😭 🤧 😷）：同一类非文本标注。若字幕想保留事件标记，
+  把 `sensevoice_text.EVENT_MARKERS` 清空即可，情绪标记仍会剥。
+- **CosyVoice3 权重下载**：12 项 / 5.05GB，按使用者要求限速 `--parallel 1 --limit-kbps 2500`
+  （实测稳定 **2.43 MB/s**，未打满带宽）。下载与真机冒烟结果见下一节补记。
+- 下载脚本的断点续传本次未制造真实中断；要验证可用 `--only hift` 造一个 `.part` 后重跑。
 
 - 本次文档更新时间：11.09
 

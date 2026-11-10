@@ -349,10 +349,13 @@ trainer/.data/asr/
 - **自动转写的结果必须人工核对**：错字会被直接学进音色，
   所以界面上的按钮文案保留了「标注 ASR 模型」这个提示，转写结果也只是**填入**文本框，
   不会被自动保存。
-- **SenseVoice 的输出可能带情绪标记**：上游 `rich_transcription_postprocess` 会在文本里留下
-  情绪 emoji（实测出现 `😔`）。本仓库的 worker 走 `use_itn=False` 逐字输出，**没有剥这个标记** ——
-  把转写结果当参考文本 / 字幕时会混进表情符号，调用方需要自行过滤。
-  是否在 worker 侧剥离（或另开 `emotion` 字段）是待定的产品决策；实测数据见 §8.5。
+- **SenseVoice 的非文本标记已在 worker 侧过滤（2026-11-09 使用者拍板）**：上游
+  `rich_transcription_postprocess` 会把标签**渲染成 emoji** —— 情绪 6 个（😊 😔 😡 😰 🤢 😮）
+  与事件 6 个（🎼 👏 😀 😭 🤧 😷）。`app/asr/sensevoice_text.py::strip_markers()` 把这两类
+  一起剥掉（只删 emoji，不改字、不补标点），所以转写文本 / 参考文本 / 字幕里不会再出现表情符号。
+  想让字幕保留事件标记（BGM / 掌声 / 咳嗽），把该模块的 `EVENT_MARKERS` 清空即可，情绪仍会剥。
+  回归锁：`.tmp/verify_asr_sensevoice.py` A14~A16（纯函数）+ `.tmp/smoke_sensevoice_worker.py`
+  （真机 ja/zh/en 三语输出无 emoji）。实测数据见 §8.5。
 
 ---
 
@@ -445,7 +448,6 @@ trainer/.data/asr/
 8 段 5.42%，speech-only RTF 1.373 / session RTF 0.755。也就是说：**日语要精度用 SenseVoice（离线），
 要流式用 Moonshine**。完整数据与复现脚本见 `docs/JA-ASR-STREAMING-HANDOFF.md`。
 
-**已知输出瑕疵（产品相关）**：SenseVoice 的 `rich_transcription_postprocess` 会在文本尾部带情绪标记
-（实测出现 `😔`）。本仓库的 worker 走 `use_itn=False` 逐字输出，**没有剥这个标记** ——
-转写结果直接当参考文本/字幕时会出现表情符号，调用方需要自行过滤。
-是否在 worker 侧剥离（或另开 `emotion` 字段）留作产品决策，见本文件 §7。
+**已知输出瑕疵（已修）**：SenseVoice 的 `rich_transcription_postprocess` 会在文本里渲染情绪与事件
+标记（本批实测出现 `😔`）。**2026-11-09 使用者拍板过滤**，worker 侧 `strip_markers()` 已统一剥掉
+两类 emoji（见 §7），真机三语冒烟无残留。

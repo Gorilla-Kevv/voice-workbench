@@ -31,7 +31,11 @@
 - 端口：**9886**
 - 入口：`scripts/cosyvoice.mjs`（`npm run dev:cosyvoice`）
 - 体检：`npm run cosyvoice:check`
-- 权重下载：`npm run cosyvoice:weights`（ModelScope；单连接约 3MB/s）
+- 权重下载：`npm run cosyvoice:weights`（ModelScope；单连接实测 3~5MB/s）。
+  **礼貌模式**（不占满家用带宽）：`node scripts/cosyvoice-weights.mjs --parallel 1 --limit-kbps 2500`
+  —— 单连接 + 每连接限速 2.5MB/s；`--urls-only` 只打印 12 个直链（便于手动下载或交给下载器），
+  `--only <id>` 只下某一项。**断点续传**：残件落 `<file>.part`，重跑同一命令会按 HTTP Range 续传
+  （ModelScope 的 resolve 会 302 到 CDN，跟随重定向后返回 206，2026-11-09 实测可用）。
 
 ### 端点
 

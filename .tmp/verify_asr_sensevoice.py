@@ -192,6 +192,29 @@ else:
     skipped.append("A13 权重已就绪，缺权重安全网由代码路径保持")
     print("SKIP A13 权重已就绪（安全网保留，不重复加载）")
 
+# ---- A14~A16：文本清洗（情绪/事件 emoji 过滤，2026-11-09 使用者拍板）----
+from app.asr.sensevoice_text import EMOTION_MARKERS, EVENT_MARKERS, strip_markers  # noqa: E402
+
+check(
+    "A14 情绪标记被剥掉（😔 等 6 个）",
+    all(ch not in strip_markers("录制时遇到过最搞笑的突发状况是什么" + ch) for ch in EMOTION_MARKERS)
+    and strip_markers("对就就是那个煮面的厅嗯😔") == "对就就是那个煮面的厅嗯",
+    repr(strip_markers("对就就是那个煮面的厅嗯😔")),
+)
+check(
+    "A15 事件标记同样剥掉且不留双空格",
+    all(ch not in strip_markers("前奏" + ch + " 后面 正文") for ch in EVENT_MARKERS)
+    and strip_markers("前奏🎼 后面 正文") == "前奏 后面 正文",
+    repr(strip_markers("前奏🎼 后面 正文")),
+)
+check(
+    "A16 纯文本逐字保留（不补标点、不改字）",
+    strip_markers("我这一次的ku100不是租来的了") == "我这一次的ku100不是租来的了"
+    and strip_markers("") == ""
+    and strip_markers("  ") == "",
+    repr(strip_markers("我这一次的ku100不是租来的了")),
+)
+
 print(("ALL %d CHECKS PASSED" % passed) if not failed else ("FAILED: %s" % failed))
 print("SKIPPED:", skipped)
 shutil.rmtree(WORK, ignore_errors=True)

@@ -7,6 +7,18 @@
 
 ---
 
+## [2026-11-09 BY Qoder] 阶段 49补：SenseVoice 标记过滤 + CosyVoice3 权重下载（限速/续传）
+
+- **文件改动**：新增 `trainer/app/asr/sensevoice_text.py`（`EMOTION_MARKERS` 6 个 + `EVENT_MARKERS` 6 个 + `strip_markers()`）；`trainer/app/asr/sensevoice_worker.py`（`generate` 分支在 `rich_transcription_postprocess` 之后接 `strip_markers()`，import 走「按路径启动 / 当模块」双路兜底）；`scripts/cosyvoice-weights.mjs`（新增 `--parallel` / `--limit-kbps` / `--urls-only`、HTTP Range 断点续传、进度行带速度；修掉 `fs.createWriteStream(flags:'wb')` 在 Node 24 非法的崩溃）；`.tmp/verify_asr_sensevoice.py` 追加 A14~A16；文档 `docs/ASR.md` §7/§8.5、`docs/AGENT-GUIDE.md`、`docs/COSYVOICE3-INTEGRATION.md`、`PROGRESS.md`、`HANDOFF.md`（坑 99 追加）、本 changelog。
+- **决策（使用者 2026-11-09 拍板）**：①「😔 情绪标记用过滤」→ 实现为**情绪 6 个 + 事件 6 个一起剥**（同一类非文本标注；只删 emoji，不改字不补标点）；若字幕想保留事件标记（BGM/掌声/咳嗽），把 `sensevoice_text.EVENT_MARKERS` 清空即可，情绪仍会剥。②「权重可以下，但不要占太多带宽」→ 下载脚本加限速与续传，本次以 `--parallel 1 --limit-kbps 2500`（实测稳定 **2.43 MB/s**）跑，未打满带宽。
+- **操作记录（网络）**：ModelScope `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` 12 项 / 5.05GB 下到 `cosyvoice/models/Fun-CosyVoice3-0.5B/`（gitignore，不进库）；残件落 `<file>.part`，重跑同命令按 Range 续传；单项直链可用 `node scripts/cosyvoice-weights.mjs --urls-only` 导出（也可手动/下载器接管）。
+- **验证**：`py_compile`（整合包 py3.9）通过、sensevoice-venv py3.12 直接 import 通过；`.tmp/verify_asr_sensevoice.py` **15/15 + 2 SKIP**（A14 情绪、A15 事件+空格收拢、A16 逐字保留为新增）；真机 worker 冒烟（整合包解释器 → sensevoice-venv worker）ja/zh/en 三条真实样例**输出均无 emoji**：load 53.5s、常驻 +852MB / 峰值 +917MB、unload 归还到 6323MB。
+- **对其他 Agent 的影响**：ASR 文本契约不变（仍逐字、无 ITN 标点），只是不再带 emoji；`/v1/asr/*`、`/api/capabilities`、错误码均未变。`scripts/cosyvoice-weights.mjs` 新开关向后兼容（默认并行 2、不限速）；权重目录仍是 gitignore。
+- **回滚方式**：删 `trainer/app/asr/sensevoice_text.py` 并回滚 worker 中调用即可恢复「带 emoji」行为；`git checkout -- scripts/cosyvoice-weights.mjs` 回滚下载脚本；无数据迁移。
+
+---
+
+
 ## [2026-11-09 BY Qoder] 阶段 49：遗留项真机验证窗口 + 中文轻语基准归档（零生产代码改动）
 
 - **文件改动**：仅文档与 `.tmp` 回归资产 —— `docs/ASR.md`（新增 §8.5 轻语/耳语基准，并把「SenseVoice `😔` 情绪标记」「Paraformer `status.device=null`」写进 §7/§8.5 已知边界）、`PROGRESS.md`（阶段 49 台账 + 看板 + 下一阶段入口重排 + 速览表补 49 行）、`HANDOFF.md`（当前状态 + 命令表两行 + 坑 112~116 + 建议清单 + 时间戳）、本 changelog；`.tmp/verify_open_gateway.mts`（能力数 13→14、tts 6→7，收敛成 `EXPECTED_TOTAL`/`EXPECTED_TTS`）、`.tmp/verify_sovits_pair.py`（夹具改 `rglob` 按文件名找）、`.tmp/smoke_r2t2_transcribe.py`（子进程补 `PYTHONIOENCODING=utf-8`/`PYTHONUNBUFFERED=1`；GPU 护栏改成进程内等窗口最多 180s，阈值 6200 不变）、新增 `.tmp/gpu-verify-20261109/`（四个真机脚本 + 日志 + nvidia-smi 采样）。

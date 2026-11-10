@@ -1467,6 +1467,9 @@
     **别把「已知模型缺权重」退回 remote 别名静默下载**：现在只允许未知自定义 model 走 remote。
 
 99. **SenseVoice 的能力元数据不能沿用 Paraformer：没有 size、不挂 VAD、逐字无 ITN、门槛 1536（阶段 44补2）**
+    （2026-11-09 追加）**富文本 emoji 要剥**：`rich_transcription_postprocess` 会把情绪（😊😔😡😰🤢😮）
+    与事件（🎼👏😀😭🤧😷）渲染进文本，worker 已用 `app/asr/sensevoice_text.py::strip_markers()`
+    统一剥掉；以后换 SenseVoice 版本或改 postprocess 时要同步核对这两个集合。
     `capabilityCatalog` 原来给 SenseVoice 固定 `size:large`、vram 2048（引擎静态档），
     但 SenseVoice 没有尺寸概念，实际 ASR 参数化门槛是 1536；`_build_funasr()` 的
     non-Paraformer 分支也只传 model。**决定**：保留「不挂 VAD」——耳语/ASMR 的气声会被 VAD

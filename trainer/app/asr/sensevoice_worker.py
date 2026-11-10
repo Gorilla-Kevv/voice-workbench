@@ -20,6 +20,13 @@ import sys
 import traceback
 from pathlib import Path
 
+# 纯函数模块（无副作用）：剥掉 rich postprocess 渲染出来的情绪/事件 emoji。
+# worker 是按文件路径启动的，脚本目录就是 sys.path[0]；被当模块 import 时走 app.asr 前缀。
+try:  # pragma: no cover - 两条路径都只是 import
+    from sensevoice_text import strip_markers
+except ImportError:  # pragma: no cover
+    from app.asr.sensevoice_text import strip_markers
+
 # 必须在 import funasr 之前隔离协议通道：fd1 -> stderr，协议走 dup 出来的私有 fd。
 _PROTO_FD = os.dup(1)
 os.dup2(2, 1)
@@ -97,6 +104,9 @@ def main() -> int:
                     batch_size_s=60,
                 )
                 text = rich_transcription_postprocess(result[0]["text"]) if result else ""
+                # 2026-11-09：上游 postprocess 会把情绪/事件标签渲染成 emoji（实测带 😔），
+                # 转写文本要进参考文本/字幕，这里统一剥掉。见 app/asr/sensevoice_text.py。
+                text = strip_markers(text)
                 emit({"id": request_id, "ok": True, "text": text, "language": language})
             except Exception as exc:  # noqa: BLE001
                 emit(
