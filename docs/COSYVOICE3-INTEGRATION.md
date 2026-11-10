@@ -3,9 +3,11 @@
 > 目标：把 **Fun-CosyVoice3-0.5B-2512** 作为第六个本地 TTS 运行时接入，补上现有栈缺的
 > **中文方言**与**自然语言 instruct** 能力。**只接推理，不接训练**。
 >
-> **当前状态（2026-11-05）**：代码、网关、前端全部接入并通过 typecheck/build；**权重未下载**
-> （下载占用带宽被用户叫停，约 3.6GB 分片已移入回收站），因此真机冒烟未执行。服务可启动，
-> `/health.weights.ready=false`，界面显示「待补齐」。恢复下载前必须征得用户同意。
+> **当前状态（2026-11-10）**：代码 / 网关 / 前端早前已接入；**权重已下载并逐文件校验**（12 项 / 5.05GB，
+> ModelScope；礼貌模式 1 连接 @2.5MB/s，约 35 分钟）；**三模式真机冒烟全部通过**（零样本 / instruct2 四川话 /
+> 跨语种日语，24kHz）。真机暴露并修掉两个 bug：① venv 缺**导入期依赖**（lightning / rich / gdown /
+> matplotlib / wget / pyarrow，见 §3.3）；② CosyVoice3 的 `<|endofprompt|>` **硬断言**（见 §3.4）。
+> **实测 RTF 4.5~6.2**（8GB 卡、fp16、桌面占 1.5~2.5GB），比预估的 0.6~2.0 慢一个量级 —— 短句可用、长文不实用。
 
 ## 1. 定位（为什么不替代现有引擎）
 
@@ -16,7 +18,7 @@
 | 情感精度 | IndexTTS 8 维向量 / 拼音 / 语速 | 自然语言 instruct（宽而不精） | IndexTTS 更可控 |
 | 语种 | 网易 14 | 9 | 网易更宽 |
 | 采样率 | GSV v5 / Irodori 48k | 24k | 低于高保真档 |
-| 速度 | GSV 0.46 / Irodori 0.121 | 待实测（预计 0.6~2.0） | 不是速度卖点 |
+| 速度 | GSV 0.46 / Irodori 0.121 | **实测 RTF 4.5~6.2**（8GB 卡；4.5s 音频约 28s） | 不是速度卖点，长文不实用 |
 | 显存 | 4.6~5.3GB | 2.5~3.5GB（准入 4096） | 更轻 |
 | 流式 | 无 | 官方 150ms（Windows PyTorch 路径未验） | 未来可做 |
 
@@ -54,6 +56,47 @@
    `map_location='cpu'`（并默认 `weights_only=True`），再 `load_state_dict` 逐张量上卡。
 2. **ONNX provider 回落**：上游在 CUDA 可用时请求 `CUDAExecutionProvider`，Windows 装的是 CPU 版
    onnxruntime；构造前过滤不可用 provider，自动回落 `CPUExecutionProvider`。
+
+### 3.3 导入期依赖：`requirements.txt` 里「看着只在训练用」的包**不能删**
+
+推理侧 import 链：`cosyvoice.cli.cosyvoice → cosyvoice.flow.flow_matching → matcha.utils`。
+而 `matcha/utils/__init__.py` 是**全量 re-export**（instantiators / logging_utils / pylogger /
+rich_utils / utils），所以少任何一个都会在 `engine.load()` 直接
+`ENGINE_LOAD_FAILED: ModuleNotFoundError`：
+
+| 包 | 谁在导入期要它 |
+| --- | --- |
+| `lightning`（+ `lightning-utilities` / `pytorch-lightning` / `torchmetrics`） | `matcha.utils` 的 logger / instantiators |
+| `rich` | `matcha.utils.rich_utils` |
+| `gdown` / `matplotlib` | `matcha.utils.utils`（下载/画图的工具函数，import 期就拉） |
+| `wget` | `matcha.utils.utils` |
+| `pyarrow` | `cosyvoice.dataset.processor` |
+
+这些包都**不依赖 torch 版本**，`uv pip install --no-deps` 安装不会动 `torch 2.3.1+cu121`（已核对）。
+本项目的 venv 由 uv 建，**没有 pip**，所以装包必须：
+`C:/Users/kevin/.local/bin/uv.exe pip install --python cosyvoice/.venv/Scripts/python.exe <pkg>`。
+
+### 3.4 CosyVoice3 的 `<|endofprompt|>` 硬断言（零样本 / 跨语种必需）
+
+上游 `cosyvoice/llm/llm.py:479` 在 LLM 前向之前断言：喂进去的 `prompt_text + text` 必须含
+`<|endofprompt|>`（token 151646），否则直接 `AssertionError: <|endofprompt|> not detected...`。
+上游 `example.py` 的写法是在**前缀**带上它：
+
+- 零样本：`prompt_text = "You are a helpful assistant.<|endofprompt|>" + 参考音转写`
+- 跨语种（没有 prompt_text）：`text = "You are a helpful assistant.<|endofprompt|>" + 目标文本`
+- instruct2：`instruct_text` 以 `<|endofprompt|>` 结尾（本项目原本就补了，所以只有它能跑）
+
+本项目原先只补了 instruct2 → 零样本/跨语种 100% 失败、但 instruct2 正常，很容易误判成
+「模型只支持 instruct」。现在 `app/synth.py::_with_system_prompt()` 对两条链路都补（幂等：
+已有标记不再重复加）。
+
+### 3.5 体检现在带「导入冒烟」
+
+`python cosyvoice/server.py --check`（= `npm run cosyvoice:check`）会在子进程里把上游
+`cosyvoice.**` 的 **49 个模块全部 import 一遍**：缺依赖在体检阶段就暴露，不再等到 warmup 才炸。
+`deepspeed` / `vllm` 这类 Linux-only 依赖缺失按**警告**处理（不影响 Windows 推理）。
+嫌慢可加 `--skip-import`（省约 10 秒）。
+
 
 其它平台差异：vLLM / TensorRT / DeepSpeed 仅 Linux，不用；`ttsfrd` 无 Windows wheel，官方回退
 `wetext`（已装）；`pyworld` 有 cp310 Windows wheel。
@@ -95,4 +138,4 @@
 - [x] `npm run build`（app + server）
 - [x] `python -m py_compile cosyvoice/server.py cosyvoice/app/*.py`
 - [x] `npm run cosyvoice:check`：py3.10 / torch / CUDA / 上游代码 / 权重清单
-- [ ] 真机零样本冒烟（显存峰值 + RTF + 24kHz 频响）：**未执行**——权重未下载；用户 2026-11-05 叫停下载并清理分片
+- [x] **真机三模式冒烟（2026-11-10）**：zero_shot 4.52s/28.1s（RTF 6.19）、instruct2 四川话 8.28s/37.1s（4.47）、cross_lingual 日语 2.64s/13.1s（4.90），均 24kHz；加载 147.8s、常驻净增 ≈3.6GB、峰值 ≈3.8GB、unload 归还（used 6132 → 2751）

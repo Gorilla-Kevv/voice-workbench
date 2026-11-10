@@ -26,6 +26,22 @@ from .hardware import vram_mb
 LANGUAGE_CODES = {"zh", "en", "ja", "ko", "de", "es", "fr", "it", "ru"}
 MODES = {"zero_shot", "cross_lingual", "instruct2"}
 
+#: CosyVoice3 的 LLM 硬断言：喂给 `llm.inference()` 的 `prompt_text + text` 里必须含
+#: `<|endofprompt|>`（上游 `cosyvoice/llm/llm.py:479`，token 151646），否则直接
+#: `AssertionError: <|endofprompt|> not detected...`。上游 `example.py` 的做法就是在
+#: prompt_text（zero_shot）或 text（cross_lingual）前面加一句系统提示。
+#: 2026-11-10 真机踩到：零样本/跨语种两条链路全部 500，只有 instruct2 正常（它的
+#: instruct 文本本来就带这个标记）。
+ENDOFPROMPT = "<|endofprompt|>"
+SYSTEM_PROMPT = "You are a helpful assistant."
+
+
+def _with_system_prompt(value: str) -> str:
+    """给 prompt_text / text 补上 CosyVoice3 要求的系统提示前缀（幂等）。"""
+    if ENDOFPROMPT in value:
+        return value
+    return f"{SYSTEM_PROMPT}{ENDOFPROMPT}{value}"
+
 
 @dataclass
 class SynthPayload:
@@ -184,12 +200,17 @@ def _run_inference(settings: Settings, payload: SynthPayload, ref_path: str) -> 
     model, _ = engine.load(settings)
     text = payload.text
     if payload.mode == "cross_lingual":
-        text = _language_prefix(text, payload.language)
+        # 跨语种没有 prompt_text，标记只能落在 text 上（上游 example 的做法）
+        text = _with_system_prompt(_language_prefix(text, payload.language))
 
     with torch.inference_mode():
         if payload.mode == "zero_shot":
             generator = model.inference_zero_shot(
-                text, payload.prompt_text, ref_path, stream=False, speed=payload.speed
+                text,
+                _with_system_prompt(payload.prompt_text),
+                ref_path,
+                stream=False,
+                speed=payload.speed,
             )
         elif payload.mode == "cross_lingual":
             generator = model.inference_cross_lingual(

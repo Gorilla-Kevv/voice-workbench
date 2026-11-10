@@ -1,7 +1,11 @@
 # CosyVoice3 本地运行时（`cosyvoice/`，:9886）
 
 第六个 Python 运行时。模型：**Fun-CosyVoice3-0.5B-2512**（Apache-2.0，24kHz，9 语言 + 18 中文方言）。
-> **当前状态（2026-11-05）**：代码、网关与前端已接入，但权重**未下载**——下载占用带宽被用户叫停，约 3.6GB 分片已移入回收站。`cosyvoice/models/` 为空时服务仍可启动，`/health.weights.ready=false`，界面显示「待补齐」。**恢复下载前必须先征得用户同意，并建议 1–2 路低并发。**
+> **当前状态（2026-11-10）**：权重**已下载并逐文件校验**（12 项 / 5.05GB，ModelScope；礼貌模式
+> `--parallel 1 --limit-kbps 2500`，实测 2.43MB/s、约 35 分钟）；**三模式真机冒烟通过**
+> （零样本 / instruct2 四川话 / 跨语种日语，24kHz）。真机踩到两个 bug：venv 缺**导入期依赖**
+> （见 `requirements.txt` 注释）与 CosyVoice3 的 `<|endofprompt|>` **硬断言**（见 `app/synth.py`）。
+> **实测 RTF 4.5~6.2**（8GB 卡），短句可用、长文不实用。
 
 定位是**方言/多语种 + 自然语言 instruct 的补充**，不替代网易 / IndexTTS / GPT-SoVITS / Irodori：
 
@@ -41,8 +45,10 @@ npm run cosyvoice:weights
 
 ```bash
 npm run dev:cosyvoice      # 启动（127.0.0.1:9886）
-npm run cosyvoice:check    # 环境 + 权重体检
-npm run cosyvoice:weights  # 下载权重（支持 --force / --only <id> / --dry-run）
+npm run cosyvoice:check    # 环境 + 权重 + 导入冒烟体检（--skip-import 跳过导入，快 10s）
+npm run cosyvoice:weights  # 下载权重（--force / --only <id> / --dry-run / --urls-only）
+# 礼貌模式（不占满带宽）：node scripts/cosyvoice-weights.mjs --parallel 1 --limit-kbps 2500
+# 断点续传：残件留 <file>.part，重跑同一条命令即可（HTTP Range，实测可用）
 ```
 
 ## 端点

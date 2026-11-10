@@ -120,7 +120,7 @@ curl -s -X POST http://127.0.0.1:8787/api/netease/v1/r2t2/unload
 | tts | `indextts-2.5` | 8 维情感 + 语速；仅单段（分段是页面编排） |
 | tts | `irodori-tts` | **仅日语**；emoji 情感、固化音色 |
 | tts | `gpt-sovits-v5` | v5turbo（4 步）/ v5dev（32 步） |
-| tts | `cosyvoice3-tts` | 9 语言 + 18 中文方言；`mode` ∈ zero_shot / cross_lingual / instruct2；24kHz |
+| tts | `cosyvoice3-tts` | 9 语言 + 18 中文方言；`mode` ∈ zero_shot / cross_lingual / instruct2；24kHz；**实测 RTF 4.5~6.2**（8GB 卡），权重 5.05GB 已就位 |
 | tts | `mimo` | 云端；需服务端密钥；不占本机显存 |
 | asr | `paraformer-zh` | 中文逐字 + 标点首选 |
 | asr | `sensevoice-small` | 中英日韩粤；耳语友好；独立 worker |

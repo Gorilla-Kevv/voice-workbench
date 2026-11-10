@@ -22,7 +22,7 @@
 | IndexTTS `indextts/` | 第四个运行时之一：独立 venv + FastAPI；端口 9883 |
 | GPT-SoVITS v5 `gsv5/` | **第五个运行时**（阶段 36）：`gsv5/.venv`（**py3.12 + torch 2.7.1+cu128**）+ FastAPI；端口 **9885**，`npm run dev:gsv5` 拉起。上游 main 只读 clone 在 `gsv5/upstream/`；v5 权重 `gsv5/upstream/GPT_SoVITS/pretrained_models/gsv-v5-pretrained/`（s2Gv5dev/s2Gv5turbo/vocoder）+ s1v3.ckpt hardlink 共享整合包；端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；`GSV5_DEVICE=cpu` 可显式 CPU。**纯推理底模**（上游无 v5 训练配置，训练仍走整合包 v2ProPlus） |
 | Irodori-TTS `irodori/` | **日语特化**（阶段 30 接入中：30-1 环境 + 30-2 推理链路 + 30-3 长尾护栏 + 30-4 长参考 + **30-5 训练 S1+S2 已完成**，剩 30-6 训练编排 / 30-7 前端）：独立 venv（**py3.12 + torch 2.10.0+cu128**）+ FastAPI；端口 9884 |
-| CosyVoice3 `cosyvoice/` | **第六个运行时**（阶段 48）：`cosyvoice/.venv`（**py3.10 + torch 2.3.1+cu121**）+ FastAPI；端口 **9886**，`npm run dev:cosyvoice` 拉起。上游只读 clone 在 `cosyvoice/upstream/CosyVoice`；权重 `cosyvoice/models/Fun-CosyVoice3-0.5B/`（约 5.4GB，ModelScope）；端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；Windows 加载补丁（`torch.load`→cpu / ONNX provider 回落）在 `app/engine.py`。**只接推理，不接训练**（0.5B 全量微调显存账 >13GB + Linux DeepSpeed）。**权重未下载**（2026-11-05 用户叫停下载，3.6GB 分片已入回收站）；恢复下载前必须征得同意 |
+| CosyVoice3 `cosyvoice/` | **第六个运行时**（阶段 48）：`cosyvoice/.venv`（**py3.10 + torch 2.3.1+cu121**）+ FastAPI；端口 **9886**，`npm run dev:cosyvoice` 拉起。上游只读 clone 在 `cosyvoice/upstream/CosyVoice`；权重 `cosyvoice/models/Fun-CosyVoice3-0.5B/`（约 5.4GB，ModelScope）；端点 `/health` `/v1/catalog` `/v1/warmup|unload` `/v1/synth`；Windows 加载补丁（`torch.load`→cpu / ONNX provider 回落）在 `app/engine.py`。**只接推理，不接训练**（0.5B 全量微调显存账 >13GB + Linux DeepSpeed）。**权重已就位**（2026-11-10 下载并逐文件校验：12 项 / 5.05GB，`cosyvoice/models/Fun-CosyVoice3-0.5B/`，gitignore）；**三模式真机冒烟通过**（零样本 / instruct2 四川话 / 跨语种日语，24kHz），**实测 RTF 4.5~6.2**（8GB 卡，比预估 0.6~2.0 慢一个量级；短句可用、长文不实用）；导入期依赖与 `<|endofprompt|>` 两个真 bug 见坑 117 |
 | 模型 | GPT-SoVITS v2ProPlus（本地 GPU）、MiMo（云端 API）、Confucius4-TTS / R2T2（本地，需自行下载权重）、Irodori v4.1-Small（日语，int4 推理档 + bf16 训练基座）、CosyVoice3-0.5B（方言/多语种，24kHz） |
 
 ### 运行环境路径（新会话直接照抄，别重新找）
@@ -35,7 +35,7 @@
 | IndexTTS | `indextts/.venv/`（`scripts/indextts.mjs` 会自己找） |
 | **Irodori** | `irodori/.venv/Scripts/python.exe`；权重在 `irodori/models/`、上游代码在 `irodori/upstream/`（都在 gitignore 里）；清单 `irodori/weights.manifest.json` **进版本库** |
 | **GPT-SoVITS v5** | `gsv5/.venv/Scripts/python.exe`（py3.12+cu128）；入口 `scripts/gsv5.mjs`（:9885）；体检 `npm run gsv5:check` |
-| **CosyVoice3** | `cosyvoice/.venv/Scripts/python.exe`（py3.10+cu121）；入口 `scripts/cosyvoice.mjs`（:9886）；体检 `npm run cosyvoice:check`；权重 `npm run cosyvoice:weights` |
+| **CosyVoice3** | `cosyvoice/.venv/Scripts/python.exe`（py3.10+cu121）；入口 `scripts/cosyvoice.mjs`（:9886）；体检 `npm run cosyvoice:check`（含**导入冒烟**，见坑 117）；权重 `npm run cosyvoice:weights`（`--parallel N --limit-kbps N --urls-only`，支持 Range 续传）。⚠️ venv 由 uv 建、**没有 pip**，装包用 `uv pip install --python <venv python>` |
 | uv（建 venv 用） | `C:\Users\kevin\.local\bin\uv`；⚠️ **缓存默认在 `D:\AI_Cache\uv`，沙箱里写不进去** → 先 `export UV_CACHE_DIR=<工作区内>` |
 
 ### 分支
@@ -941,6 +941,9 @@
   修前 378s）、IndexTTS 5500 门槛 + `/v1/synth/segments`（逐段和 + gap 与总时长差 0.5ms）、
   gsv5 v5turbo GPU（稳态 RTF 0.246 / 48kHz）；并归档了中文轻语 8 段 CER 基准
   （SenseVoice 29.5% / Paraformer 44.6% / R2T2 23.0%，`docs/ASR.md` §8.5）。
+  **同日另一轮（阶段 49补，BY Qoder）**：SenseVoice 富文本 emoji 已在 worker 侧过滤（`app/asr/sensevoice_text.py`，
+  情绪 6 + 事件 6 一起剥）；CosyVoice3 权重 5.05GB 以**礼貌模式**（1 连接 @2.5MB/s）下载完成、三种模式真机冒烟通过，
+  顺带修掉两个只有真机才暴露的 bug（导入期缺依赖 / `<|endofprompt|>` 硬断言，见坑 117）。
   新增坑 112~116（gsv5 unload 一次性成本 / R2T2 画像口径 / worker 协议编码 / 夹具漂移 / fp16 余量）；
   真机峰值净增（nvidia-smi 采样）：R2T2 **6134MB**、netease 6039MB、IndexTTS 5541MB、gsv5 4039MB。
 - 功能可用；本地服务、网关、前端三进程由 `start.bat` 统一拉起
@@ -1655,5 +1658,24 @@
 > 本次文档更新时间：10.25 00:31 [BY Qoder]（阶段 44补2：ASR SenseVoice 路由与权重就绪修复——显式 model 的 backend/语种为权威（不再 backend/model 错配）、funasr 的 ja/en/ko/yue 由 SenseVoice 承接、不匹配语种 400；新增 `/v1/asr/readiness`/`resident_model_status`、acquire 前 503 `WEIGHTS_MISSING`；`/api/capabilities` ASR `available=可达 && weights_ready===true`，SenseVoice 1536/无 size/无 VAD；坑 97~99；回归 14/14 + 25/25 + 29/29；**真实 SenseVoice 权重仍缺，未做加载/CER**）
 
 > 本次文档更新时间：10.25 11:41 [BY Qoder]（阶段 44补2续：SenseVoice 落地——权重 897MB + 独立 `trainer/sensevoice-venv` 6.1GB + 常驻 worker；整合包 FunASR 1.0.27 不支持 SenseVoiceSmall（坑 100）；GPU 实测常驻 +1050 / 峰值 +1099MB、热态 zh/en 0.27~0.29s，真实 ja/zh/en 正确；HTTP load→transcribe→unload 全 200；`runtime_ready` 进入 capabilities，缺运行时 503 `SENSEVOICE_RUNTIME_MISSING`；回归 12/12+2 SKIP + 25/25 + 30/30；llama-server 按用户选择未自动重启）
+
+117. **CosyVoice3 真机才暴露的两件事：导入期缺依赖、`<|endofprompt|>` 硬断言（阶段 49补2）**
+     ① **requirements 里「看着只在训练用」的那几个包不能删**：推理 import 链是
+     `cosyvoice.cli.cosyvoice → cosyvoice.flow.flow_matching → matcha.utils`，而
+     `matcha/utils/__init__.py` 是**全量 re-export** —— 少 `lightning` / `rich` / `gdown` /
+     `matplotlib` / `wget` 任何一个都会在 `engine.load()` 抛
+     `ENGINE_LOAD_FAILED: ModuleNotFoundError`；另外 `dataset.processor` 需要 `pyarrow`。
+     这些包都不依赖 torch 版本，`uv pip install --no-deps` 装**不会动 torch 2.3.1+cu121**（已核对）。
+     ② **CosyVoice3 的 LLM 有 `<|endofprompt|>` 硬断言**（token 151646，`cosyvoice/llm/llm.py:479`）：
+     `llm.inference()` 在 `prompt_text + text` 里找不到它就 `AssertionError`。上游 example 的做法是
+     **在 prompt_text（zero_shot）或 text（cross_lingual）前面加 `You are a helpful assistant.<|endofprompt|>`**。
+     本项目原先只在 instruct2 的 instruct 文本里补标记 → 零样本/跨语种 100% 失败、只有 instruct2 正常，
+     极易误判成「模型只支持 instruct」。`cosyvoice/app/synth.py::_with_system_prompt()` 现在两条链路都补（幂等）。
+     ③ **`--check` 现在带「导入冒烟」**：子进程把上游 `cosyvoice.**` 49 个模块全 import 一遍
+     （`deepspeed`/`vllm` 这类 Linux-only 失败按警告处理），缺依赖在体检阶段就暴露，不再等 warmup 才炸；
+     嫌慢用 `python cosyvoice/server.py --check --skip-import`。
+     ④ 实测 **RTF 4.5~6.2**（fp16 / 24kHz / 8GB 卡 / 桌面占 1.5~2.5GB）：4.5s 音频约 28s，
+     与预估 0.6~2.0 差一个量级（`flash-attn` 不可用、走 sdpa 数学实现）。**定位仍是「方言/指令补充」，
+     不要当主力或长文合成用。**
 
 > 本次文档更新时间：11.09 [BY Qoder]（阶段 49：遗留项真机验证窗口 —— R2T2 GPU bf16（load 60s / 8.4s 输入 RTF 0.18 / 峰值增量 ≈4162MB）、netease `warmup_real` 生效实证（首条真实合成 9.64s，修前 378s）、IndexTTS 5500 门槛 + `/v1/synth/segments` 两段情感拼接（逐段和+gap 与总时长差 0.5ms）、gsv5 v5turbo GPU（稳态 RTF 0.246 / 48kHz）；中文轻语 8 段 CER 基准归档 `docs/ASR.md` §8.5；回归资产修正（能力数 13→14 / sovits 夹具 rglob / R2T2 冒烟编码与等窗口）；新增坑 112~116。零生产代码改动）

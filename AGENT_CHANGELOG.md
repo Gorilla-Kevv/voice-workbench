@@ -7,6 +7,18 @@
 
 ---
 
+## [2026-11-10 BY Qoder] 阶段 49补2：CosyVoice3 权重下载 + 三模式真机冒烟（修两处只有真机才暴露的 bug）
+
+- **文件改动**：`cosyvoice/requirements.txt`（补回**导入期**必需包 lightning / lightning-utilities / pytorch-lightning / torchmetrics / rich / gdown / matplotlib / wget / rootutils / pyarrow，并把「为什么不能删」写进注释）；`cosyvoice/app/synth.py`（新增 `_with_system_prompt()`：CosyVoice3 的 `<|endofprompt|>` 硬断言，zero_shot 补到 prompt_text、cross_lingual 补到 text，幂等）；`cosyvoice/server.py`（`--check` 增加**导入冒烟**——子进程 import 上游 49 个模块，Linux-only 缺依赖降级为警告——以及 `--skip-import`）；文档 `docs/COSYVOICE3-INTEGRATION.md`（§3.3/3.4/3.5 + 真机数据）、`docs/AGENT-GUIDE.md`、`cosyvoice/README.md`、`PROGRESS.md`（阶段 49补补记）、`HANDOFF.md`（技术栈/运行时行 + 坑 117）、本 changelog。
+- **操作记录（网络 + GPU）**：① 按使用者要求用**礼貌模式**下载权重：`node scripts/cosyvoice-weights.mjs --parallel 1 --limit-kbps 2500`，12 项 / 5.05GB，全程稳定 **2.43 MB/s**、约 35 分钟，未打满带宽；② 用 `uv pip install --no-deps`（venv 无 pip）补装 10 个导入期依赖，**torch 始终是 2.3.1+cu121**（每步核对）；③ GPU 上 warmup 104~148s、三种模式各合成一次、`/v1/unload` 归还后停服务，9886 已释放、无残留进程。
+- **修掉的两个真 bug**：① `ENGINE_LOAD_FAILED: ModuleNotFoundError: No module named 'lightning'`（后续还有 rich/gdown/matplotlib/wget/pyarrow）——上游 `matcha/utils/__init__.py` 是全量 re-export，推理 import 期就会拉训练用的工具模块；② 零样本/跨语种 100% 500：`cosyvoice/llm/llm.py:479` 断言 `prompt_text + text` 必须含 `<|endofprompt|>`，原先只有 instruct2 补了标记。
+- **验证**：`npm run cosyvoice:check` 全绿（含「导入冒烟：上游 49 个模块全部可 import」，deepspeed/vllm 记为警告）；三模式真机 **zero_shot 4.52s/28.1s（RTF 6.19）、instruct2 四川话 8.28s/37.1s（4.47）、cross_lingual 日语 2.64s/13.1s（4.90）**，均 24kHz；加载 147.8s、常驻净增 ≈3.6GB、峰值 ≈3.8GB、unload 后 used 6132→2751；断点续传实测（造 10MB `.part` → 「续传，从 10.0 MB 继续」→ 83202622 字节与清单一致）。
+- **对其他 Agent 的影响**：`/v1/synth` 契约不变；`zero_shot` / `cross_lingual` 现在会**自动补系统提示前缀**（调用方已自带 `<|endofprompt|>` 则不重复）；`--check` 默认多花约 10 秒（可 `--skip-import` 关掉）；**实测 RTF 4.5~6.2 远慢于文档预估 0.6~2.0**，长文不要用它；权重 5.05GB 在 gitignore 目录，不进仓库。
+- **回滚方式**：`git revert` 上述文件；删 `cosyvoice/models/Fun-CosyVoice3-0.5B/` 即回到「待补齐」态（服务仍可启动）；无数据迁移。
+
+---
+
+
 ## [2026-11-09 BY Qoder] 阶段 49补：SenseVoice 标记过滤 + CosyVoice3 权重下载（限速/续传）
 
 - **文件改动**：新增 `trainer/app/asr/sensevoice_text.py`（`EMOTION_MARKERS` 6 个 + `EVENT_MARKERS` 6 个 + `strip_markers()`）；`trainer/app/asr/sensevoice_worker.py`（`generate` 分支在 `rich_transcription_postprocess` 之后接 `strip_markers()`，import 走「按路径启动 / 当模块」双路兜底）；`scripts/cosyvoice-weights.mjs`（新增 `--parallel` / `--limit-kbps` / `--urls-only`、HTTP Range 断点续传、进度行带速度；修掉 `fs.createWriteStream(flags:'wb')` 在 Node 24 非法的崩溃）；`.tmp/verify_asr_sensevoice.py` 追加 A14~A16；文档 `docs/ASR.md` §7/§8.5、`docs/AGENT-GUIDE.md`、`docs/COSYVOICE3-INTEGRATION.md`、`PROGRESS.md`、`HANDOFF.md`（坑 99 追加）、本 changelog。

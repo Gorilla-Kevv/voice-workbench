@@ -1,11 +1,30 @@
 # CosyVoice3 推理运行时（py3.10 + torch 2.3.1/cu121）
-# 基线来自上游 requirements.txt，仅删掉 WebUI/训练/ Linux-only 组件：
-#   gradio / tensorboard / matplotlib / pyarrow / lightning / gdown / wget
+# 基线来自上游 requirements.txt，删掉的是**真的只在 WebUI/训练/Linux 用**的组件：
+#   gradio / tensorboard / pyarrow / gdown(原以为只是下载器) /
 #   deepspeed / tensorrt-cu12* / onnxruntime-gpu（均为 sys_platform == 'linux'）
+#
+# ⚠️ 2026-11-10 真机踩到：`lightning` / `rich` / `gdown` / `matplotlib` / `wget` **不能删** ——
+#   推理侧的 import 链是
+#       cosyvoice.cli.cosyvoice → cosyvoice.flow.flow_matching → matcha.utils
+#       → (lightning.pytorch.utilities / rich / gdown / matplotlib / wget)
+#   `matcha/utils/__init__.py` 是「全量 re-export」，少任何一个都会在 `load()` 时报
+#   `ENGINE_LOAD_FAILED ... ModuleNotFoundError`，而 `--check` 当时只查权重/上游代码，看不出来。
+#   这些包都**不依赖 torch 版本**，用 `uv pip install --no-deps` 装也不会动 torch。
 # 注意：torch 必须显式走 cu121 索引，PyPI 的 Windows 轮子是 CPU 版。
 --extra-index-url https://download.pytorch.org/whl/cu121
 torch==2.3.1
 torchaudio==2.3.1
+# ---- 导入期必需（推理也要；见上面的 import 链）----
+lightning==2.6.6
+lightning-utilities==0.15.3
+pytorch-lightning==2.6.6
+torchmetrics==1.9.0
+rich==15.0.0
+gdown==6.5.1
+matplotlib==3.10.9
+wget==3.2
+rootutils==1.0.7
+# ---- 上游主依赖 ----
 conformer==0.3.2
 diffusers==0.29.0
 fastapi==0.115.6

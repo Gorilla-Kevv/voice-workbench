@@ -662,7 +662,7 @@
 
 - 本次文档更新时间：11.09
 
-## 阶段 49补 — SenseVoice 标记过滤 + CosyVoice3 权重下载（限速/续传）[计划时间：11.09 BY Qoder][完成时间：11.09 BY Qoder]
+## 阶段 49补 — SenseVoice 标记过滤 + CosyVoice3 权重下载与真机冒烟（限速/续传）[计划时间：11.09 BY Qoder][完成时间：11.09 BY Qoder]
 
 - 分支：feature/vc-svc
 - 背景：使用者拍板两件事 —— ① SenseVoice 输出里的 😔 情绪标记「用过滤」；② CosyVoice3 权重可以下，
@@ -675,6 +675,9 @@
 | `trainer/app/asr/sensevoice_text.py`（新） | 纯函数：`EMOTION_MARKERS`（6 个）+ `EVENT_MARKERS`（6 个）+ `strip_markers()` —— 只删 emoji、收拢因此产生的连续空格，不改字、不补标点 |
 | `trainer/app/asr/sensevoice_worker.py` | `generate` 分支在 `rich_transcription_postprocess()` 之后调 `strip_markers()`；import 双路兜底（按路径启动 / 当模块 import） |
 | `scripts/cosyvoice-weights.mjs` | 新增 `--parallel` / `--limit-kbps`（每连接限速）/ `--urls-only`（直链导出）、HTTP Range **断点续传**、进度行带速度；修掉 `fs.createWriteStream(flags:'wb')` 在 Node 24 直接崩的问题 |
+| `cosyvoice/requirements.txt` | 补回**导入期**必需包（lightning / lightning-utilities / pytorch-lightning / torchmetrics / rich / gdown / matplotlib / wget / rootutils / pyarrow），并把「为什么不能删」写进注释 |
+| `cosyvoice/app/synth.py` | 新增 `_with_system_prompt()`：CosyVoice3 的 `<|endofprompt|>` 硬断言，zero_shot 补到 prompt_text、cross_lingual 补到 text（幂等） |
+| `cosyvoice/server.py` | `--check` 增加**导入冒烟**（子进程 import 上游 49 个模块，Linux-only 缺依赖降级为警告）+ `--skip-import` |
 | `.tmp/verify_asr_sensevoice.py` | 追加 A14（情绪标记）/ A15（事件标记 + 空格收拢）/ A16（逐字保留） |
 | 文档 | `docs/ASR.md` §7/§8.5、`docs/AGENT-GUIDE.md`、`docs/COSYVOICE3-INTEGRATION.md`（礼貌模式 / 续传 / 直链）、`PROGRESS` 本段、`HANDOFF` 坑 99 追加 |
 
@@ -686,14 +689,21 @@
 | `.tmp/verify_asr_sensevoice.py` | **15/15 + 2 SKIP**（A14~A16 为新增） |
 | `.tmp/smoke_sensevoice_worker.py` 真机（ja/zh/en 真实样例） | 三条输出**均无 emoji**；load 53.5s、常驻 +852MB、峰值 +917MB、unload 归还 6323MB |
 | `node --check` + `--dry-run` / `--only config-yaml` 单项真下 | 通过（config-yaml 6934 字节与清单一致） |
+| **CosyVoice3 权重下载**（`--parallel 1 --limit-kbps 2500`） | **12/12 完成、5.05GB**，全程稳定 **2.43 MB/s**（未打满带宽）；`npm run cosyvoice:check` 全绿；**断点续传实测**：造 10MB `.part` 后重跑 → 「续传，从 10.0 MB 继续」→ 产物 83202622 字节与清单一致 |
+| **CosyVoice3 三模式真机冒烟** | **全部通过**：zero_shot 4.52s/28.1s（RTF 6.19）、instruct2 四川话 8.28s/37.1s（4.47）、cross_lingual 日语 2.64s/13.1s（4.90），均 24kHz；加载 147.8s、常驻净增 ≈3.6GB、峰值 ≈3.8GB、unload 归还（used 6132 → 2751） |
+| `--check` 新增导入冒烟 | `✓ 上游 49 个模块全部可 import`；`--json` 里 `deepspeed` / `vllm` 记为警告（Linux-only） |
 
 ### 披露与遗留
 
 - **事件标记与情绪标记一起剥**（🎼 👏 😀 😭 🤧 😷）：同一类非文本标注。若字幕想保留事件标记，
   把 `sensevoice_text.EVENT_MARKERS` 清空即可，情绪标记仍会剥。
-- **CosyVoice3 权重下载**：12 项 / 5.05GB，按使用者要求限速 `--parallel 1 --limit-kbps 2500`
-  （实测稳定 **2.43 MB/s**，未打满带宽）。下载与真机冒烟结果见下一节补记。
-- 下载脚本的断点续传本次未制造真实中断；要验证可用 `--only hift` 造一个 `.part` 后重跑。
+- **CosyVoice3 已真正跑起来（2026-11-10）**：权重 12 项 / 5.05GB 全部校验通过，三模式真机冒烟通过。
+  真机暴露并修掉两个 bug：① venv 缺导入期依赖（lightning / rich / gdown / matplotlib / wget / pyarrow）；
+  ② 零样本与跨语种必须带 `<|endofprompt|>`（原先只有 instruct2 补了，导致另两条 100% 失败）。
+  **RTF 4.5~6.2 远慢于预估 0.6~2.0**：4.5s 音频约 28s，短句可用、长文不实用；定位仍是方言/指令补充。
+  详见 HANDOFF 坑 117。
+- 断点续传已实测（`--only hift` 造 10MB `.part` 后重跑，续传+校验通过）；`--urls-only` 可导出 12 条直链
+  供手动下载，若后续要从镜像（HF/hf-mirror）走，脚本目前只认 ModelScope，需要另加 source 分支。
 
 - 本次文档更新时间：11.09
 
