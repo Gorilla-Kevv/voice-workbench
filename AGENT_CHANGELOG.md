@@ -7,6 +7,15 @@
 
 ---
 
+## [2026-11-11 BY Qoder] 更正：CosyVoice3 性能结论（撤回过重表述，改为条件化区间）
+
+- **文件改动**：docs/COSYVOICE3-INTEGRATION.md（头部状态与 §1 速度行）、HANDOFF.md（坑 117 ④⑤）、PROGRESS.md（阶段 49补披露）、本 changelog。
+- **原因**：11-09 只在「桌面占 2.5GB + 首次加载」这一种状态下测过一次（RTF 4.5~6.2），据此写下「Windows 上只能做短句演示/离线批处理」并把主因归到「每 kernel ~150µs 的提交开销」。11-10 同脚本复测：干净环境 **RTF 1.6~2.3**、加载 42s（vs 148s）；同形状 matmul 复测 39µs（vs 152µs）、裸 Qwen2.5-0.5B 44.8ms/token（vs 95.8ms）。**两次测量差 2.5~3 倍，原结论不成立为定论。**
+- **保留的事实**：LLM 逐 token 自回归占端到端 70~90%（多次测量一致）；RTF 在本机 1.6~6.2 区间波动。**未验证**：Linux/WSL2 对照、HAGS 开关、前端缓存/真半精度的收益。
+- **影响**：仅文档表述；产品行为未变。回滚：回滚上述三份文档即可。
+
+---
+
 ## [2026-11-10 BY Qoder] 阶段 49补2：CosyVoice3 权重下载 + 三模式真机冒烟（修两处只有真机才暴露的 bug）
 
 - **文件改动**：`cosyvoice/requirements.txt`（补回**导入期**必需包 lightning / lightning-utilities / pytorch-lightning / torchmetrics / rich / gdown / matplotlib / wget / rootutils / pyarrow，并把「为什么不能删」写进注释）；`cosyvoice/app/synth.py`（新增 `_with_system_prompt()`：CosyVoice3 的 `<|endofprompt|>` 硬断言，zero_shot 补到 prompt_text、cross_lingual 补到 text，幂等）；`cosyvoice/server.py`（`--check` 增加**导入冒烟**——子进程 import 上游 49 个模块，Linux-only 缺依赖降级为警告——以及 `--skip-import`）；文档 `docs/COSYVOICE3-INTEGRATION.md`（§3.3/3.4/3.5 + 真机数据）、`docs/AGENT-GUIDE.md`、`cosyvoice/README.md`、`PROGRESS.md`（阶段 49补补记）、`HANDOFF.md`（技术栈/运行时行 + 坑 117）、本 changelog。

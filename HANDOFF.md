@@ -1674,8 +1674,11 @@
      ③ **`--check` 现在带「导入冒烟」**：子进程把上游 `cosyvoice.**` 49 个模块全 import 一遍
      （`deepspeed`/`vllm` 这类 Linux-only 失败按警告处理），缺依赖在体检阶段就暴露，不再等 warmup 才炸；
      嫌慢用 `python cosyvoice/server.py --check --skip-import`。
-     ④ 实测 **RTF 4.5~6.2**（fp16 / 24kHz / 8GB 卡 / 桌面占 1.5~2.5GB）：4.5s 音频约 28s，
-     与预估 0.6~2.0 差一个量级（`flash-attn` 不可用、走 sdpa 数学实现）。**定位仍是「方言/指令补充」，
-     不要当主力或长文合成用。**
+     ④ **性能结论要带条件**：同一台机器两次测量差 2.5~3 倍 —— 干净环境（桌面占 1.4GB）**RTF 1.6~2.3**、
+     模型加载 42s；桌面占 2.5GB + 首次加载时 **4.5~6.2**、加载 148s。**结构性事实**只有一条：
+     LLM 逐 token 自回归占端到端 70~90%（多次测量一致，4s 音频 ≈ 100 个 token × 每次一遍 0.5B 前向）。
+     至于「为什么这么慢」：曾归因为 Windows 逐 kernel 提交开销（~150µs），但**次日复测同形状 matmul 只要 39µs**，
+     该归因不成立为定论；目前的解释是「逐 token 解码 + fp32 权重(autocast) + 无 flash-attn + GPU 低频/被桌面抢占」，
+     其中**哪些是主因还没做受控 A/B**。⑤「放到 Linux/WSL2 能到 0.6~2.0」是**未验证的假设**，别写进结论。
 
 > 本次文档更新时间：11.09 [BY Qoder]（阶段 49：遗留项真机验证窗口 —— R2T2 GPU bf16（load 60s / 8.4s 输入 RTF 0.18 / 峰值增量 ≈4162MB）、netease `warmup_real` 生效实证（首条真实合成 9.64s，修前 378s）、IndexTTS 5500 门槛 + `/v1/synth/segments` 两段情感拼接（逐段和+gap 与总时长差 0.5ms）、gsv5 v5turbo GPU（稳态 RTF 0.246 / 48kHz）；中文轻语 8 段 CER 基准归档 `docs/ASR.md` §8.5；回归资产修正（能力数 13→14 / sovits 夹具 rglob / R2T2 冒烟编码与等窗口）；新增坑 112~116。零生产代码改动）
